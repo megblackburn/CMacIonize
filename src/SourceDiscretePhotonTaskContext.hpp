@@ -199,6 +199,7 @@ public:
 
 
 
+      photon.set_source_index(_photon_source.get_index(source_index));
 
 
       photon.set_energy(frequency);

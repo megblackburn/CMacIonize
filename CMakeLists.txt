@@ -416,10 +416,9 @@ endif(HYDROGEN_ONLY)
 
 if(HAS_MAGNESIUM)
   message(STATUS "Compiling with magnesium.")
-  add_configuration_option(HAS_MAGNESIUM True)
+  add_definitions(-DHAS_MAGNESIUM)
 else(HAS_MAGNESIUM)
   message(STATUS "Compiling without magnesium.")
-  add_configuration_option(HAS_MAGNESIUM False)
 endif(HAS_MAGNESIUM)
 
 if(ACTIVATE_VARIABLE_ABUNDANCES)

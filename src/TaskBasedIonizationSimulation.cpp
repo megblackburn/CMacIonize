@@ -206,7 +206,9 @@ TaskBasedIonizationSimulation::TaskBasedIonizationSimulation(
       _time_dependent_ionization(_parameter_file.get_value< bool >(
           "TaskBasedIonizationSimulation:time dependent ionization", false)), 
         _time_dependent_timestep(_parameter_file.get_physical_value<QUANTITY_TIME >(
-          "TaskBasedIonizationSimulation:time dependent timestep", "0.5 Myr")){
+          "TaskBasedIonizationSimulation:time dependent timestep", "0.5 Myr")),
+          _initial_neutral_fraction(_parameter_file.get_value< double >(
+            "TaskBasedIonizationSimulation:initial neutral fraction", -1.0)){
 
   set_number_of_threads(num_thread);
 
@@ -654,6 +656,10 @@ void TaskBasedIonizationSimulation::run(
               cellit.get_ionization_variables().copy_previous_fractions();
         } else {
               cellit.get_ionization_variables().set_prev_ionic_fraction(ION_H_n,-1.);
+              if (_initial_neutral_fraction > 0){
+                cellit.get_ionization_variables().set_ionic_fraction(ION_H_n,_initial_neutral_fraction);
+              }
+              
           }      
          } 
       }
@@ -685,7 +691,12 @@ void TaskBasedIonizationSimulation::run(
 
     // define photon scattering stats
 
-    PhotonPacketStatistics statistics(5);
+    PhotonPacketStatistics statistics(_parameter_file);
+    if (iloop == 0) {
+      std::cout << "Tracked source xpos = " << _photon_source_distribution->get_position(statistics.get_tracked_source())[0]/3.086e16 << std::endl;
+      std::cout << "Tracked source xpos = " << _photon_source_distribution->get_position(statistics.get_tracked_source())[1]/3.086e16 << std::endl;
+      std::cout << "Tracked source zpos = " << _photon_source_distribution->get_position(statistics.get_tracked_source())[2]/3.086e16 << std::endl;
+    }
     if (_trackers != nullptr && iloop == _number_of_iterations - 1) {
       if (_log) {
         _log->write_status("Adding trackers...");

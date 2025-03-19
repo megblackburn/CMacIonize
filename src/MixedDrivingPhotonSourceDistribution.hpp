@@ -145,7 +145,7 @@ private:
     static double kroupa_imf(double mass) {
       if (mass > 0.5) {
         return std::pow(mass,-2.3);
-      } else if (mass < 0.08){
+      } else if (mass > 0.08){
         return 2*std::pow(mass,-1.3);
       } else {
         return 25*std::pow(mass,-0.3);
@@ -857,7 +857,7 @@ public:
 
       // 0.073 factor is to take into account we only form stars over 8Msol
       // mass_to_generate in units of Msol to match IMF
-      double mass_to_generate = _update_interval*_star_formation_rate/1.988e30*0.073*(std::pow(running_mass/init_running_mass,1.4));
+      double mass_to_generate = _update_interval*_star_formation_rate/1.988e30*0.207*(std::pow(running_mass/init_running_mass,1.4));
 
 
        std::cout << "SHOULD BE GENERATING " << mass_to_generate - _excess_mass<< std::endl;

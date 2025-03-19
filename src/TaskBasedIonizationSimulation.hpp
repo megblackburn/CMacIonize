@@ -184,6 +184,8 @@ private:
 
   const double _time_dependent_timestep;
 
+  const double _initial_neutral_fraction;
+
 public:
   TaskBasedIonizationSimulation(const int_fast32_t num_thread,
                                 const std::string parameterfile_name,
