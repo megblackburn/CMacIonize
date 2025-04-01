@@ -112,7 +112,7 @@ double PhysicalDiffuseReemissionHandler::reemit(
         type = PHOTONTYPE_ABSORBED;
         //num_abs_dust.pre_increment();
         if (statistics != nullptr){
-          if (photon.get_source_index() == statistics->get_tracked_source()){
+          if (photon.get_source_index() == statistics->get_tracked_source() || statistics->get_tracked_source() == -1){
             ionization_variables.increment_counter(true);
           }
           statistics->absorb_photon_dust();
@@ -147,7 +147,7 @@ double PhysicalDiffuseReemissionHandler::reemit(
       type = PHOTONTYPE_ABSORBED;
     //  num_abs_gas.pre_increment();
       if (statistics != nullptr){
-        if (photon.get_source_index() == statistics->get_tracked_source()){
+        if (photon.get_source_index() == statistics->get_tracked_source() || statistics->get_tracked_source() == -1){
           ionization_variables.increment_counter(false);
         }
         if (ionization_variables.get_number_density() > dens_thresh){
@@ -204,7 +204,7 @@ double PhysicalDiffuseReemissionHandler::reemit(
         type = PHOTONTYPE_ABSORBED;
       //  num_abs_gas.pre_increment();
       if (statistics != nullptr){
-        if (photon.get_source_index() == statistics->get_tracked_source()){
+        if (photon.get_source_index() == statistics->get_tracked_source() || statistics->get_tracked_source() == -1){
           ionization_variables.increment_counter(false);
         }
         if (ionization_variables.get_number_density() > dens_thresh){
@@ -253,7 +253,7 @@ double PhysicalDiffuseReemissionHandler::reemit(
           type = PHOTONTYPE_ABSORBED;
          // num_abs_gas.pre_increment();
         if (statistics != nullptr){
-          if (photon.get_source_index() == statistics->get_tracked_source()){
+          if (photon.get_source_index() == statistics->get_tracked_source() || statistics->get_tracked_source() == -1){
             ionization_variables.increment_counter(false);
           }
           if (ionization_variables.get_number_density() > dens_thresh){
@@ -281,7 +281,7 @@ double PhysicalDiffuseReemissionHandler::reemit(
           type = PHOTONTYPE_ABSORBED;
         //  num_abs_gas.pre_increment();
         if (statistics != nullptr){
-          if (photon.get_source_index() == statistics->get_tracked_source()){
+          if (photon.get_source_index() == statistics->get_tracked_source() || statistics->get_tracked_source() == -1){
             ionization_variables.increment_counter(false);
           }
           if (ionization_variables.get_number_density() > dens_thresh){
@@ -300,7 +300,7 @@ double PhysicalDiffuseReemissionHandler::reemit(
       type = PHOTONTYPE_ABSORBED;
     //  num_abs_gas.pre_increment();
       if (statistics != nullptr){
-        if (photon.get_source_index() == statistics->get_tracked_source()){
+        if (photon.get_source_index() == statistics->get_tracked_source() || statistics->get_tracked_source() == -1){
           ionization_variables.increment_counter(false);
         }
         if (ionization_variables.get_number_density() > dens_thresh){
