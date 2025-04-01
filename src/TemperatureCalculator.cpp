@@ -614,7 +614,7 @@ void TemperatureCalculator::calculate_temperature(
 
 #ifdef HAS_HELIUM
     ionization_variables.set_ionic_fraction(ION_He_n, 1.);
-    ionization_variables.set_ionic_fraction(ION_He_p1, 1.);
+    ionization_variables.set_ionic_fraction(ION_He_p1, 0.);
 #endif
 
 #ifdef HAS_CARBON
