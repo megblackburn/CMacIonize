@@ -634,11 +634,11 @@ public:
   }
 
 
-  virtual void float_sources(DensitySubGridCreator< HydroDensitySubGrid > *grid_creator, double timestep) {
+  virtual void float_sources(DensitySubGridCreator< HydroDensitySubGrid > *grid_creator, double timestep, double current_time) { // added current_time mgb 27.10.2025
 
 
 
-    for (size_t i=0;i<_source_lifetimes.size();i++){
+    for (size_t i=0;i<_source_lifetimes.size();i++){ // mgb want this 
       //float sources
       HydroDensitySubGrid subgrid = *grid_creator->get_subgrid(_source_positions[i]);
       auto cell = subgrid.get_hydro_cell(_source_positions[i]);

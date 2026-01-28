@@ -1,0 +1,2 @@
+/usr/bin/ar qc ../lib/libEmissionEngine.a CMakeFiles/EmissionEngine.dir/EmissivityCalculator.cpp.o CMakeFiles/EmissionEngine.dir/EmissivityCalculationSimulation.cpp.o
+/usr/bin/ranlib ../lib/libEmissionEngine.a

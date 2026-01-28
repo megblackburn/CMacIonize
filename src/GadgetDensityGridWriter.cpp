@@ -108,6 +108,13 @@ void GadgetDensityGridWriter::write(DensityGrid &grid, uint_fast32_t iteration,
                                     ParameterFile &params, double time,
                                     const InternalHydroUnits *hydro_units) {
 
+//  const bool _restart_flag = params.get_value< bool >("DensityGridWriter:restart flag", false);
+ // const double _restart_time = params.get_value< double >("DensityGridWriter:restart time", 0);         
+                    
+ // if (_restart_flag == true) { // mgb edit 11.10.2025 
+  //  iteration = iteration + _restart_time;
+ // }
+
   std::string filename = Utilities::compose_filename(
       _output_folder, _prefix, "hdf5", iteration, _padding);
 

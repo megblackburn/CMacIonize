@@ -47,6 +47,7 @@ private:
   // sources can move now
   double _velocity;
 
+  std::vector< CoordinateVector<double>> _source_velocities; // mgb edit 16.10.2025
 
 public:
   /**
@@ -131,6 +132,24 @@ public:
 
 
   }
+/*
+    virtual void float_sources(DensitySubGridCreator< HydroDensitySubGrid > *grid_creator, double timestep, double current_time) {
+  //  CoordinateVector<> cell_vel = cell.get_hydro_variables().get_primitives_velocity();
+    //_source_velocities[0] = cell_vel;
+
+      //float sources
+      HydroDensitySubGrid subgrid = *grid_creator->get_subgrid(_position[0]);
+      auto cell = subgrid.get_hydro_cell(_position[0]);
+      CoordinateVector<double> accel = cell.get_hydro_variables().get_gravitational_acceleration();
+      if (current_time == 0.0) {
+        _source_velocities[0] = 0.0;
+      }
+      else {
+        _source_velocities = _source_velocities ;//+ accel; // * 8;
+        _position[0] = _position[0] +  _source_velocities[0]; // * 10;
+      }
+  }
+  */
 
   /**
    * @brief Write the distribution to the given restart file.

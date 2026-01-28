@@ -232,7 +232,7 @@ public:
   /**
    * @brief Virtual destructor.
    */
-  virtual ~DiscPatchDensityFunction() {}
+  virtual ~DiscPatchDensityFunction() {} /// Lewis's edited density function: mgb note 30.10.2025
 
   /**
    * @brief Function that gives the density for a given cell.

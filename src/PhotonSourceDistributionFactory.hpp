@@ -46,6 +46,9 @@
 #include "IMFDiscPhotonSourceDistribution.hpp"
 #include "PeakDrivingPhotonSourceDistribution.hpp"
 #include "MixedDrivingPhotonSourceDistribution.hpp"
+#include "BurstyPhotonSourceDistribution.hpp"
+#include "BurstyPhotonSourceDistributionAsymmetric.hpp"
+#include "SteadySFRPhotonSourceDistribution.hpp" // mgb 20.01.2026
 #include "StellarClusterPhotonSourceDistribution.hpp"
 #include "SinkStarPhotonSourceDistribution.hpp"
 
@@ -130,6 +133,12 @@ public:
       return new PeakDrivingPhotonSourceDistribution(params, log);
     } else if (type == "MixedDriving") {
       return new MixedDrivingPhotonSourceDistribution(params,log);
+    } else if (type == "Bursty")  {
+      return new BurstyPhotonSourceDistribution(params, log); // edit mgb 19.09.2025
+    } else if (type == "BurstyAsymmetric"){
+      return new BurstyPhotonSourceDistributionAsymmetric(params,log); // mgb edit 14.11.2025 
+    } else if (type == "SteadySFR"){
+      return new SteadySFRPhotonSourceDistribution(params,log); // mgb edit 20.01.2026
     } else if (type == "SILCC") {
       return new SILCCPhotonSourceDistribution(params, log);
     } else if (type == "SingleStar") {
@@ -198,6 +207,12 @@ public:
       return new PeakDrivingPhotonSourceDistribution(restart_reader);
     } else if (tag == typeid(MixedDrivingPhotonSourceDistribution).name()) {
       return new MixedDrivingPhotonSourceDistribution(restart_reader);
+    } else if (tag == typeid(BurstyPhotonSourceDistribution).name()) {
+      return new BurstyPhotonSourceDistribution(restart_reader); // edit mgb 19.09.2025
+    } else if (tag == typeid(BurstyPhotonSourceDistributionAsymmetric).name()){
+      return new BurstyPhotonSourceDistributionAsymmetric(restart_reader); // mgb edit 14.11.2025
+    } else if (tag == typeid(SteadySFRPhotonSourceDistribution).name()){
+      return new SteadySFRPhotonSourceDistribution(restart_reader); // mgb edit 20.01.2026
     } else if (tag == typeid(SingleStarPhotonSourceDistribution).name()) {
       return new SingleStarPhotonSourceDistribution(restart_reader);
     } else if (tag == typeid(SingleSupernovaPhotonSourceDistribution).name()) {

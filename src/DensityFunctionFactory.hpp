@@ -39,6 +39,7 @@
 #include "CoredDMProfileDensityFunction.hpp"
 #include "DiscICDensityFunction.hpp"
 #include "DiscPatchDensityFunction.hpp"
+#include "DiscPatchDIGDensityFunction.hpp"
 #include "HomogeneousDensityFunction.hpp"
 #include "InterpolatedDensityFunction.hpp"
 #include "PhantomSnapshotDensityFunction.hpp"
@@ -149,6 +150,8 @@ public:
       return new DiscICDensityFunction(params, log);
     } else if (type == "DiscPatch") {
       return new DiscPatchDensityFunction(params);
+    } else if (type == "DiscPatchDIG"){
+      return new DiscPatchDIGDensityFunction(params);
     } else if (type == "Homogeneous") {
       return new HomogeneousDensityFunction(params, log);
     } else if (type == "HDF5") {

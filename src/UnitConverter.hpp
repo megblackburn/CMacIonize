@@ -75,6 +75,10 @@ enum Quantity {
   QUANTITY_LENGTH,
   QUANTITY_MASS,
   QUANTITY_MASS_RATE,
+  QUANTITY_LENGTH_OF_BURST,
+  QUANTITY_TIME_OF_BURST_PEAK,
+  QUANTITY_BURST_AMPLITUDE,
+  QUANTITY_ASYMMETRIC_OFFSET,
   QUANTITY_MOMENTUM,
   QUANTITY_NUMBER_DENSITY,
   QUANTITY_OPACITY,
@@ -207,6 +211,14 @@ public:
       return "kg";
     case QUANTITY_MASS_RATE:
       return "kg s^-1";
+    case QUANTITY_LENGTH_OF_BURST:
+      return "s";
+    case QUANTITY_TIME_OF_BURST_PEAK:
+      return "s";
+    case QUANTITY_BURST_AMPLITUDE:
+      return "kg s^-1";
+    case QUANTITY_ASYMMETRIC_OFFSET:
+      return "m";
     case QUANTITY_MOMENTUM:
       return "kg m s^-1";
     case QUANTITY_NUMBER_DENSITY:

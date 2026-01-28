@@ -1,0 +1,11 @@
+{
+	"InstallScripts" : 
+	[
+		"/Users/meg/Desktop/PhD/newcmac/CMacIonize/src/cmake_install.cmake",
+		"/Users/meg/Desktop/PhD/newcmac/CMacIonize/src/src/cmake_install.cmake",
+		"/Users/meg/Desktop/PhD/newcmac/CMacIonize/src/test/cmake_install.cmake",
+		"/Users/meg/Desktop/PhD/newcmac/CMacIonize/src/timing/cmake_install.cmake",
+		"/Users/meg/Desktop/PhD/newcmac/CMacIonize/src/c/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

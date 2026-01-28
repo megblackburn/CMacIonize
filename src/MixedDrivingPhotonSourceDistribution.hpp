@@ -233,17 +233,21 @@ size_t findClosestIndex(double value, const std::vector<double>& values) {
 
     double lum_from_mass(double mass) {
 
-      std::vector<double> tablemasses= {57.95, 46.94, 38.08, 34.39, 30.98, 28.0, 25.29, 22.90, 20.76, 18.80, 17.08, 15.55};
+      std::vector<double> tablemasses= {57.95, 46.94, 38.08, 34.39, 30.98, 28.0, 25.29, 22.90, 20.76, 18.80, 17.08, 15.55}; // O star mass range so if < O star then no lum mgb comment 06.10.25
       std::vector<double> tablelums = {49.64,49.44,49.22,49.10,48.99,48.88,48.75,48.61,48.44,48.27,48.06,47.88};
       double lum = 0.0;
-
+      std::cout << "Within lum_from_mass =  " << lum << std::endl; // mgb 06.10
       if (mass > tablemasses.front()){
+        std::cout << " Greater than set mass limit, mass =  " << mass << std::endl; // mgb 06.10
         lum = tablelums.front();
         lum = std::pow(10,lum);
         lum = lum*_lum_adjust;
         return lum;
       } else if (mass < tablemasses.back()) {
+        std::cout << "Lower than O star limit, mass =  " << mass << std::endl; // mgb 06.10 
+        std::cout << "luminosity set to zero " << std::endl; // mgb 06.10 
         return 0.0;
+        std::cout << "after return =  " << std::endl; // mgb 06.10 
       }
 
 
@@ -251,16 +255,18 @@ size_t findClosestIndex(double value, const std::vector<double>& values) {
       for (size_t i = 0; i < tablemasses.size() - 1; ++i) {
           if (tablemasses[i] >= mass && mass >= tablemasses[i + 1]) {
               // Perform linear interpolation
+              std::cout << "Within the limit of O star masses, mass =  " << mass << std::endl; // mgb 06.10
               double x1 = tablemasses[i];
               double x2 = tablemasses[i + 1];
               double y1 = tablelums[i];
               double y2 = tablelums[i + 1];
               lum = y1 + (mass - x1) * (y2 - y1) / (x2 - x1);
-          }
+          } 
       }
-
+      std::cout << "luminosity in lum_from_mass before power =  " << lum << std::endl; // mgb 06.10
       lum = std::pow(10,lum);
       lum = lum*_lum_adjust;
+      std::cout << "luminosity in lum_from_mass  after power and adjust =  " << lum << std::endl; // mgb 06.10
       return lum;
 
     }
@@ -335,8 +341,6 @@ public:
 
 
 
-
-
     // form cumulative IMF
     double imf_start = 8.0;
     double imf_end = 120;
@@ -365,7 +369,9 @@ public:
 
     }
 
+
     if (_read_file){
+
       std::ifstream file;
       file.open(_filename);
       if (!file.is_open()) {
@@ -375,9 +381,9 @@ public:
       }
 
 
+
       double time_val,posx,posy,posz,luminosity,mass;
       int event,index;
-
 
       std::string dummyLine,star_type;
 
@@ -393,10 +399,10 @@ public:
         }
       }
 
-
-
-    file.close();
-
+     
+      file.close();
+      
+              
     file.open(_filename);
 
 
@@ -420,6 +426,7 @@ public:
             lifetime = lifetime*3.154e+7;
             lifetime -= (_time - time_val);
             _source_lifetimes.push_back(lifetime);
+            std::cout << "Source lifetime pushed "<< lifetime << std::endl; 
             _source_indices.push_back(_next_index);
             if (star_type == "HOLMES") {
               _spectrum_index.push_back(14);
@@ -432,6 +439,7 @@ public:
                           << "HOLMES\n";
               }
             } else {
+
               double interpolatedTemp = interpolate(mass, stellarMasses, temperatures);
               size_t closestIndex = findClosestIndex(interpolatedTemp, avail_temps);
               std::cout << "Adding star of mass " << mass << " temp of " << interpolatedTemp << " for spec index " << closestIndex << std::endl;
@@ -449,6 +457,7 @@ public:
 
       }
     }
+ 
   }
 
 
@@ -637,12 +646,11 @@ public:
    *
    * @return Total luminosity (in s^-1).
    */
-
-
   virtual double get_total_luminosity() const {
     double tot_lum = 0.0;
+
     for (uint_fast32_t i=0;i<_source_luminosities.size();++i) {
-      tot_lum += _source_luminosities[i];
+      tot_lum += _source_luminosities[i];   
     }
     return tot_lum;
   }
@@ -699,7 +707,7 @@ public:
         ++i;
       }
     }
-
+    std::cout << "_source_luminosities after being erased " << sizeof(_source_luminosities)<< std::endl;
     //get simulation box limits
 
     double _anchor_x = grid_creator->get_box().get_anchor()[0];
@@ -712,7 +720,7 @@ public:
     double area_kpc = _sides_x*_sides_y/(3.086e+19)/(3.086e+19);
 
 
-    int should_have_done = int(4*area_kpc*_total_time/3.15576e13)*0;
+    int should_have_done = int(4*area_kpc*_total_time/3.15576e13); // what is this doing mgb take out the x0 
 
     int do_type1 = should_have_done-type1done;
 
@@ -855,8 +863,10 @@ public:
 
 
 
-      // 0.073 factor is to take into account we only form stars over 8Msol
+      // 0.207 factor is to take into account we only form stars over 8Msol - mgb
       // mass_to_generate in units of Msol to match IMF
+      // Where we want to update the star_formation_rate to time dependent mgb
+      // if (_total_time >= start_time_of_burst) && (_total_time < end_time_of_burst) {star_formation_rate = _star_formation_rate * burst_factor;} else {star_formation_rate = _star_formation_rate;} mgb
       double mass_to_generate = _update_interval*_star_formation_rate/1.988e30*0.207*(std::pow(running_mass/init_running_mass,1.4));
 
 
@@ -927,19 +937,38 @@ public:
         _source_positions.push_back(CoordinateVector<double>(x,y,z));
 
       }
+       
+
+        std::cout << "source positions defined " << sizeof(_source_positions)<< std::endl; // mgb 06.10
+       // _source_luminosities.push_back(0.0);
+
         double a0z = 9.955209529401348;
         double a1z = -3.3370109454102326;
         double a2z = 0.8116654874025604;
        // double lifetime = 1.e10 * std::pow(m_cur,-2.5) * 3.154e+7;
-       double lifetime = a0z + a1z*std::log10(m_cur) + a2z*(std::log10(m_cur)*std::log10(m_cur));
-       lifetime = std::pow(10.0,lifetime);
-       lifetime = lifetime*3.154e+7;
+        double lifetime = a0z + a1z*std::log10(m_cur) + a2z*(std::log10(m_cur)*std::log10(m_cur));
+        lifetime = std::pow(10.0,lifetime);
+        lifetime = lifetime*3.154e+7;
+        std::cout << "lifetime defined " << lifetime << std::endl; // mgb 06.10
+
         double offset =
               _random_generator.get_uniform_random_double() * _update_interval;
-        _source_lifetimes.push_back(lifetime-offset);
-        _source_luminosities.push_back(lum_from_mass(m_cur));
+        std::cout << "offset =  " << offset<< std::endl; // mgb 06.10
+        double lifetime_minus_offset = lifetime - offset;  
+        std::cout << "source lifetime-offset defined =  " << lifetime_minus_offset << std::endl; // mgb 06.10
+        _source_lifetimes.push_back(lifetime_minus_offset);
+        std::cout << "source lifetimes pushed =  " << sizeof(_source_lifetimes)<< std::endl; // mgb 06.10
+        double luminosity_from_mass = lum_from_mass(m_cur);
+        std::cout << "source luminosity =  " << luminosity_from_mass << " mass = " << m_cur << std::endl; // mgb 06.10
+        _source_luminosities.push_back(luminosity_from_mass);
+        std::cout << "source luminosities pushed =  " << offset<< std::endl; // mgb 06.10
+        std::cout << "source indices =  " << _next_index<< std::endl; // mgb 06.10
         _source_indices.push_back(_next_index);
+        std::cout << "source indices pushed, before ++next_index " << _next_index<< std::endl; // mgb 06.10 
         ++_next_index;
+
+        std::cout << "lifetimes, luminosities and indices pushed " << sizeof(_source_luminosities)<< std::endl; // mgb 06.10
+
         double interpolatedTemp = interpolate(m_cur, stellarMasses, temperatures);
         size_t closestIndex = findClosestIndex(interpolatedTemp, avail_temps);
         _spectrum_index.push_back(closestIndex);

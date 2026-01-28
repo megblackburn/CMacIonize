@@ -1,0 +1,29 @@
+Original README:
+
+Supporting Information accompanying the paper "New composition
+  dependent cooling and heating curves for galaxy evolution
+  simulations", S. De Rijcke, J. Schroyen, B. Vandenbroucke,
+  N. Jachowicz, J. Decroos, A. Cloet-Osselaer, and M. Koleva.
+
+The names of the files with the cooling and heating rates encode the
+parameter values for which the rates were calculated:
+
+RadLoss_val1_val2_val3_val4.rates
+
+contains the rates for Iron abundance       [Fe/H]  = val1
+                       Magnesium-Iron ratio [Mg/Fe] = val2
+		       redshift                z    = val3
+		       Hydrogen number density nH   = val4
+
+The zero-metallicity curves are labeled with [Fe/H]=-99.00 and
+[Mg/Fe]=0.0, such as "RadLoss_-99.00_0.00_0.50_1.00e-03.rates".
+
+The first number in each file gives the gas density in
+grams/cm^3. Then follows a table of three columns:
+
+temperature (in Kelvin)  |  cooling rate (in erg/cm^3/sec)  | heating rate (in erg/cm^3/sec)
+
+Additional notes:
+
+2018/09/12, Bert Vandenbroucke:
+Note that we only include the solar metallicity, high-redshift curve.

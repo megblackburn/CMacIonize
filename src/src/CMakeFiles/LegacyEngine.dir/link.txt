@@ -1,0 +1,2 @@
+/usr/bin/ar qc ../lib/libLegacyEngine.a CMakeFiles/LegacyEngine.dir/CartesianDensityGrid.cpp.o CMakeFiles/LegacyEngine.dir/DensityGrid.cpp.o CMakeFiles/LegacyEngine.dir/IonizationSimulation.cpp.o CMakeFiles/LegacyEngine.dir/NewVoronoiCellConstructor.cpp.o CMakeFiles/LegacyEngine.dir/NewVoronoiGrid.cpp.o CMakeFiles/LegacyEngine.dir/OldVoronoiCell.cpp.o CMakeFiles/LegacyEngine.dir/OldVoronoiGrid.cpp.o CMakeFiles/LegacyEngine.dir/RadiationHydrodynamicsSimulation.cpp.o CMakeFiles/LegacyEngine.dir/VoronoiDensityGrid.cpp.o
+/usr/bin/ranlib ../lib/libLegacyEngine.a

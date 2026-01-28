@@ -71,7 +71,7 @@ enum ReemissionProbabilityName {
  */
 enum HeatingTermName {
   /*! @brief Heating by hydrogen ionization. */
-  HEATINGTERM_H = 0,
+  HEATINGTERM_H = 0, //mgb 11.10.2025 
 #ifdef HAS_HELIUM
   /*! @brief Heating by helium ionization. */
   HEATINGTERM_He,

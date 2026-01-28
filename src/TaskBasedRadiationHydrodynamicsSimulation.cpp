@@ -63,6 +63,8 @@
 #include "TimeLine.hpp"
 #include "TimeLogger.hpp"
 
+// #include"IonizationVariables.hpp" // mgb 11.10.2025
+
 /*! @brief Stop the serial time timer and start the parallel time timer. */
 #define start_parallel_timing_block()                                          \
   serial_timer.stop();                                                         \
@@ -772,6 +774,10 @@ double temp = ionization_variables.get_temperature();
 double logT = std::log(temp);
 double sqrtT = std::pow(temp,0.5);
 // get heating
+
+ // cmac_warning("heating term = %g, number density = %g, inverse volume = %g, ionic fraction H_n = %g ", ionization_variables.get_heating(HEATINGTERM_H), ionization_variables.get_number_density(), inverse_volume, ionization_variables.get_ionic_fraction(ION_H_n));
+
+
  gain = ionization_variables.get_heating(HEATINGTERM_H) *
                         ionization_variables.get_number_density() /
                         inverse_volume *
@@ -835,26 +841,26 @@ const double nenhp = ne*n*(1-h0);
 
   loss = std::max(loss,0.0);
 
-
-  //   if (ionization_variables.get_heating(HEATINGTERM_He) > 0.0 && n > 0.0) {
-  //   std::cout << "PHOTO = " << AHe*ionization_variables.get_heating(HEATINGTERM_He) *
-  //                       ionization_variables.get_number_density() /
+ // was commented out from here ... mgb 10.10.2025
+    // if (ionization_variables.get_heating(HEATINGTERM_He) > 0.0 && n > 0.0) {
+    // std::cout << "PHOTO = " << AHe*ionization_variables.get_heating(HEATINGTERM_He) *
+     //                    ionization_variables.get_number_density() /
+     //                    inverse_volume *
+     //                    ionization_variables.get_ionic_fraction(ION_He_n) << std::endl;
+    // std::cout << "Lyman Alpha = " << pHots * 1.21765423e-18 * alpha_e_2sP * nenhep/inverse_volume << std::endl;
+    // std::cout << "Hydrogen photo = " << ionization_variables.get_heating(HEATINGTERM_H) *
+    //                     ionization_variables.get_number_density() /
   //                       inverse_volume *
-  //                       ionization_variables.get_ionic_fraction(ION_He_n) << std::endl;
-  //   std::cout << "Lyman Alpha = " << pHots * 1.21765423e-18 * alpha_e_2sP * nenhep/inverse_volume << std::endl;
-  //   std::cout << "Hydrogen photo = " << ionization_variables.get_heating(HEATINGTERM_H) *
-  //                       ionization_variables.get_number_density() /
-  //                       inverse_volume *
-  //                       ionization_variables.get_ionic_fraction(ION_H_n) << std::endl;
-  //   std::cout << "Lhep  = " << Lhep/inverse_volume << std::endl;
+ //                        ionization_variables.get_ionic_fraction(ION_H_n) << std::endl;
+//     std::cout << "Lhep  = " << Lhep/inverse_volume << std::endl;
 
-  //     if (gain != gain) {
-  //       cmac_error("GAIN IS NAN");
-  //     } 
-  //     if (loss != loss) {
-  //       cmac_error("Loss in NAN");
+      // if (gain != gain) {
+        // cmac_error("GAIN IS NAN");
+      // } 
+      // if (loss != loss) {
+    //     cmac_error("Loss in NAN");
   //     }
-  // }
+//  } // to here ... mgb 10.10.2025 
   } else {
     loss = radiative_cooling->get_cooling_rate(temp)*n*n/inverse_volume;
 
@@ -992,9 +998,9 @@ while (clock < total_dt) {
   
   if (gain != gain || loss != loss){
 #ifdef HAS_HELIUM
-    cmac_warning("Nans in the gain/loss - T=%g,xh=%g,xhe=%g,rho=%g",ionization_variables.get_temperature(),
+    cmac_warning("Nans in the gain/loss - T=%g,xh=%g,xhe=%g,rho=%g,gain=%g,loss=%g",ionization_variables.get_temperature(),
           ionization_variables.get_ionic_fraction(ION_H_n),ionization_variables.get_ionic_fraction(ION_He_n),
-          hydro_variables.get_primitives_density());
+          hydro_variables.get_primitives_density(),gain,loss);
 #endif
     break;
   }
@@ -1495,9 +1501,23 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     
   double maximum_neutral_fraction;
 
+  const bool _moving_sources_flag = params->get_value< bool >( // mgb edit 10.11.2025
+    "PhotonSourceDistribution:moving sources flag", false
+  );
 
+  const bool _restart_flag = params->get_value< bool >( // mgb edit 10.11.2025
+    "TaskBasedRadiationHydrodynamicsSimulation:restart flag", false
+  );
 
-  const bool _time_dependent_ionization = params->get_value<bool> (
+  const double _restart_time = params->get_value< double >( // mgb edit 10.11.2025
+    "TaskBasedRadiationHydrodynamicsSimulation:restart time", 0.0
+  );
+
+  const double _restart_iteration = params->get_value< double >( // mgb edit 10.11.2025
+    "TaskBasedRadiationHydrodynamicsSimulation:restart iteration", 0.0
+  );
+
+  const bool _time_dependent_ionization = params->get_value<bool> ( 
     "TaskBasedRadiationHydrodynamicsSimulation:time dependent ionization", false);
 #ifndef HAVE_GSL
  // if (_time_dependent_ionization) {
@@ -1935,6 +1955,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 #ifdef HAVE_OPENMP
 #pragma omp parallel default(shared)
 #endif
+// good reference point mgb 
     while (igrid.value() < grid_creator->number_of_original_subgrids()) {
       const size_t this_igrid = igrid.post_increment();
       if (this_igrid < grid_creator->number_of_original_subgrids()) {
@@ -1975,7 +1996,11 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
  }
   if (write_output && restart_reader == nullptr && hydro_firstsnap == 0) {
     time_logger.start("snapshot");
-    writer->write(*grid_creator, 0, *params, 0.);
+    if (_restart_flag == true) { // mgb edit 14.11.2025
+      writer->write(*grid_creator, _restart_iteration, *params, _restart_time);
+    } else {
+      writer->write(*grid_creator, 0, *params, 0.);
+    }
     time_logger.end("snapshot");
   }
 
@@ -2106,6 +2131,8 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     delete restart_reader;
     restart_reader = nullptr;
   }
+
+ // double current_time_restarted = current_time + _restart_time; //current_time + _restart_time; // mgb edit 10.11.2025
 
   time_logger.end("initialization");
 
@@ -2493,7 +2520,11 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 #ifdef HAVE_OPENMP
 #pragma omp parallel default(shared)
 #endif
+         // if (log) {
+        //    log->write_status("OpenMP is present, Source distribution!");
+         // }
           while (igrid.value() < grid_creator->number_of_original_subgrids()) {
+           
             const size_t this_igrid = igrid.post_increment();
             if (this_igrid < grid_creator->number_of_original_subgrids()) {
               auto gridit = grid_creator->get_subgrid(this_igrid);
@@ -2515,6 +2546,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
               temperature_calculator->calculate_temperature(0, 0,
                                                             *gridit,current_time - lastrad_time,false, true);
               }
+            
             }
           }
           stop_parallel_timing_block();
@@ -2523,9 +2555,9 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
       }
     } else {
 
-        if (log) {
-          log->write_status("No source distribution!");
-        }
+      //  if (log) {
+        //  log->write_status("No source distribution!");
+       // }
 
         // there are no ionising sources: skip radiation for this step
         // still call temperature_calculator to get collisional ionised gas
@@ -2535,6 +2567,9 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 #ifdef HAVE_OPENMP
 #pragma omp parallel default(shared)
 #endif
+         // if (log) {
+          //  log->write_status("Last call before done with radiation timestep!");
+         // }
           while (igrid.value() < grid_creator->number_of_original_subgrids()) {
             const size_t this_igrid = igrid.post_increment();
             if (this_igrid < grid_creator->number_of_original_subgrids()) {
@@ -2833,7 +2868,14 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     }
 
     if (sourcedistribution != nullptr) {
+
+      if (_moving_sources_flag == true) { // mgb edit
+      sourcedistribution->set_initial_velocity(grid_creator,actual_timestep);
       sourcedistribution->float_sources(grid_creator,actual_timestep);
+      log->write_status("Source positions have been updated in float_sources");
+      }
+     //sourcedistribution->float_sources(grid_creator,actual_timestep); # taken out and replaced with if flag mgb 16.10.2025
+
       sourcedistribution->accrete_gas(grid_creator,hydro);
     }
 
@@ -2926,18 +2968,30 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
       time_logger.end("cooling");
       if (log) {
         log->write_status("Done with cooling step.");
+       // log->write_status("Current time restart ", current_time_restarted);
       }
     }
+    double current_time_restarted = current_time + _restart_time; //current_time + _restart_time; // mgb edit 10.11.2025
 
+//    if (_restart_flag == true) {
+  //    cmac_warning("Current time restarted = %g, restart time = %g, current time = %g, iteration = %g", current_time_restarted, _restart_time, current_time, _restart_iteration+hydro_lastsnap);
+   // }
     // write snapshot
     // we don't write if this is the last snapshot, because then it is written
     // outside the integration loop
     if (write_output && hydro_lastsnap * hydro_snaptime <= current_time-actual_timestep &&
         has_next_step) {
       if (hydro_firstsnap <= hydro_lastsnap) {
-        time_logger.start("snapshot");
-        writer->write(*grid_creator, hydro_lastsnap, *params, current_time);
-        time_logger.end("snapshot");
+        if (_restart_flag == true) { // mgb edit 10.11.2025
+          time_logger.start("snapshot");
+          double hydro_lastsnap_restart = hydro_lastsnap + _restart_iteration;
+          writer->write(*grid_creator, hydro_lastsnap_restart, *params, current_time_restarted);
+          time_logger.end("snapshot");
+        } else {
+          time_logger.start("snapshot");
+          writer->write(*grid_creator, hydro_lastsnap, *params, current_time);
+          time_logger.end("snapshot");
+        }
       }
       ++hydro_lastsnap;
     }
@@ -3200,6 +3254,8 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     time_logger.output("time_log.txt", true);
   }
 
+  double current_time_restarted = current_time + _restart_time; //current_time + _restart_time; // mgb edit 10.11.2025
+
   if (stop_simulation) {
     if (log) {
       log->write_status("Prematurely stopping simulation on request.");
@@ -3207,10 +3263,18 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     restart_manager.resubmit();
   } else {
     // the final snapshot is always written
+
     if (write_output) {
-      time_logger.start("snapshot");
-      writer->write(*grid_creator, hydro_lastsnap, *params, current_time);
-      time_logger.end("snapshot");
+      if (_restart_flag == true) {
+        time_logger.start("snapshot");
+        double hydro_lastsnap_restart = hydro_lastsnap + _restart_iteration;
+        writer->write(*grid_creator, hydro_lastsnap_restart, *params, current_time_restarted); // mgb edit 10.11.2025
+        time_logger.end("snapshot");
+      } else {
+          time_logger.start("snapshot");
+          writer->write(*grid_creator, hydro_lastsnap, *params, current_time);
+          time_logger.end("snapshot");
+      }
     }
   }
 

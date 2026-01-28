@@ -1,0 +1,12 @@
+Data downloaded from https://www.fractal-es.com/PopStar/#download on 27/02/2020
+
+The data corresponds to all models with a Chabrier (2003) IMF and stellar
+mass limits m_low = 0.15 Msol and m_up = 100 Msol.
+
+Hard links (if they still work):
+ - https://www.fractal-es.com/PopStar/docs/sp-cha-z0001.zip
+ - https://www.fractal-es.com/PopStar/docs/sp-cha-z0004.zip
+ - https://www.fractal-es.com/PopStar/docs/sp-cha-z0040.zip
+ - https://www.fractal-es.com/PopStar/docs/sp-cha-z0080.zip
+ - https://www.fractal-es.com/PopStar/docs/sp-cha-z0200.zip
+ - https://www.fractal-es.com/PopStar/docs/sp-cha-z0500.zip
