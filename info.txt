@@ -22,7 +22,7 @@ Then go through tutorials:
 
 Notes:
 
-- Lewis uses MixedDriving as photon source
+- Lewis uses MixedDriving as photon source for tallbox - this is a combination of peak driving and random driving for sources
 - I've added Bursty, BursyAsymmetric and StationarySFR
 - Bursty works the same as MixedDriving as long as 'bursty sfr flag = false' in param file
 - all of my comments and edits have 'mgb' noted in them, others are likely from Lewis
