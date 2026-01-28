@@ -20,7 +20,9 @@ git clone https://github.com/megblackburn/CMacIonize.git
 
 Code should now be compiled!
 
-Run test:
+7. cd build/rundir/benchmarks/stromgren/
+
+8. Run test:
  ../../CMacIonize --params stromgren.param --threads <number of parallel threads>
 
 Then go through tutorials:
