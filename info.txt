@@ -36,11 +36,17 @@ Notes:
 - I've added Bursty, BursyAsymmetric and StationarySFR
 - Bursty works the same as MixedDriving as long as 'bursty sfr flag = false' in param file
 - all of my comments and edits have 'mgb' noted in them, others are likely from Lewis
+- all files controlling simulation are in src
 
+Example parameter files are here:
 
 - bursty_sfr_tallbox.param.used-values contains all possible parameters
 - bursty_sfr_tallbox.param is an example of a parameter file I'm currently using
+- I've added quick comments about the most important parameters for tallbox sims
 
+Important files for Stellar winds:
+- MixedDrivingPhotonSourceDistribution.hpp or BurstyPhotonSourceDistribution.hpp
+- SupernovaHandler.hpp
 
 Only modules I have loaded for compilation are:
   1) slurm/23.02.6 (S)   2) lmod
