@@ -20,7 +20,7 @@
 
 # the most advanced feature we use is the ProcessorCount module, which is only
 # available since CMake 2.8.5
-cmake_minimum_required(VERSION 2.8.5)
+cmake_minimum_required(VERSION 3.7) # 2.8.5) mgb edit 
 
 # Set the default CMAKE_BUILD_TYPE
 if(NOT CMAKE_BUILD_TYPE)
