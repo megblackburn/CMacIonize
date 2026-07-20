@@ -65,6 +65,13 @@ private:
 
   double _dust_gas_ratio;
 
+  double _B_scalar;
+
+  double _neutral_gas_field;
+
+  double _initial_neutral_gas_field;
+
+
 public:
   /**
    * @brief Empty constructor.
@@ -132,6 +139,28 @@ public:
     _magnetic_field = magnetic_field;
   }
 
+  inline void set_B_scalar(double B_scalar){
+    _B_scalar = B_scalar;
+  }
+
+  /**
+   * @brief Set the neutral gas scalar field 
+   *
+   * @param neutral_gas_field 
+   */
+  inline void set_cooled_neutral_scalar_field(double neutral_gas_field) { // mgb edit 26.05.2026 - add in a field to track the initialised cold gas cells
+    _neutral_gas_field = neutral_gas_field;
+  }
+
+  /**
+   * @brief Set the neutral gas scalar field 
+   *
+   * @param neutral_gas_field 
+   */
+  inline void set_initial_neutral_scalar_field(double initial_neutral_gas_field) { // mgb edit 26.05.2026 - add in a field to track the initialised cold gas cells
+    _initial_neutral_gas_field = initial_neutral_gas_field;
+  }
+
   /**
    * @brief Set the cosmic ray energy.
    *
@@ -192,6 +221,32 @@ public:
    */
   inline CoordinateVector<> get_magnetic_field() const {
     return _magnetic_field;
+  }
+  /**
+   * @brief Get the magnetic field scalar.
+   *
+   * @return Magnetic field (in kg A^-1 s^-2).
+   */
+  inline double get_B_scalar() const {
+    return _B_scalar;
+  }
+
+  /**
+   * @brief Get the neutral gas scalar field 
+   *
+   * @param neutral_gas_field 
+   */
+  inline double get_cooled_neutral_scalar_field() const { // mgb edit 26.05.2026 - add in a field to track the initialised cold gas cells
+    return _neutral_gas_field;
+  }
+
+  /**
+   * @brief Get the neutral gas scalar field 
+   *
+   * @param neutral_gas_field 
+   */
+  inline double get_initial_neutral_scalar_field() const { // mgb edit 26.05.2026 - add in a field to track the initialised cold gas cells
+    return _initial_neutral_gas_field;
   }
 
   /**
