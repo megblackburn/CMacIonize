@@ -61,8 +61,14 @@ private:
    *  (in m s^-1). */
   const double _max_velocity;
 
+  /*! @brief Trace cold field */
+  const bool _trace_initial_neutral_flag;
+
   /*! @brief Enable explicit radiation heating? */
   const bool _do_explicit_heating;
+
+  /*! @brief Mach limit (default: 1.0) (mgb edit 18.05.2026) */
+  const double _mach_limit; // mgb edit 21.04.2026
 
   const Abundances &_abundances;
 
@@ -165,10 +171,12 @@ public:
    */
   inline Hydro(const double gamma, const double neutral_temperature,
                const double ionised_temperature, const double max_velocity,
-               const bool do_explicit_heating, const Abundances &abundances)
+               const bool trace_initial_neutral_flag,
+               const bool do_explicit_heating, const double mach_limit, const Abundances &abundances)
       : _gamma(gamma), _neutral_temperature(neutral_temperature),
         _ionised_temperature(ionised_temperature), _max_velocity(max_velocity),
-        _do_explicit_heating(do_explicit_heating), _abundances(abundances),
+        _trace_initial_neutral_flag(trace_initial_neutral_flag),
+        _do_explicit_heating(do_explicit_heating), _mach_limit(mach_limit), _abundances(abundances),
         _gamma_minus_one(_gamma - 1.),
         _one_over_gamma_minus_one(1. / _gamma_minus_one),
         _density_conversion_factor(PhysicalConstants::get_physical_constant(
@@ -214,7 +222,10 @@ public:
                   "Hydro:ionised temperature", "1.e4 K"),
               params.get_physical_value< QUANTITY_VELOCITY >(
                   "Hydro:maximum velocity", "1.e99 m s^-1"),
-              params.get_value< bool >("Hydro:do explicit heating", false), abundances) {}
+              params.get_value< bool >("DensityFunction:trace initial neutral flag", false),
+              params.get_value< bool >("Hydro:do explicit heating", false),
+              params.get_value< double >("Hydro:mach limit", 3.0),
+              abundances) {}
 
   /**
    * @brief Get the soundspeed for the given hydrodynamic variables.
@@ -278,11 +289,25 @@ public:
         density = hydro_state.get_conserved_mass() * inverse_volume;
         velocity = inverse_mass * hydro_state.get_conserved_momentum();
         if (_gamma > 1.) {
+           
           pressure =
               _gamma_minus_one * inverse_volume *
               (hydro_state.get_conserved_total_energy() -
                0.5 * CoordinateVector<>::dot_product(
                          velocity, hydro_state.get_conserved_momentum()));
+
+          double v_mag = velocity.norm();
+          double cs_squared = _gamma * pressure/density;
+          double cs = std::sqrt(cs_squared);
+          double mach = v_mag/cs;
+          double internal_energy = 0.0;
+
+          if (mach > _mach_limit){
+            internal_energy = hydro_state.get_conserved_internal_energy();
+            hydro_state.set_primitives_internal_energy(internal_energy);
+            pressure = _gamma_minus_one * inverse_volume * internal_energy;
+          }
+           
         } else {
           const double mean_molecular_mass =
               0.5 * (1. + ionization_state.get_ionic_fraction(ION_H_n));
@@ -328,6 +353,35 @@ public:
                          velocity, hydro_state.get_conserved_momentum()));
     hydro_state.set_primitives_pressure(pressure);
 
+    // mgb edit 12.06.2026
+    if (_trace_initial_neutral_flag == true){
+      const double inverse_mass = 1. / hydro_state.get_conserved_mass();
+
+      double X_og = hydro_state.get_conserved_initial_cold_field() * inverse_mass;
+      double X_cool = hydro_state.get_conserved_cooled_cold_field() * inverse_mass;
+      double Xr_og = hydro_state.get_conserved_remaining_initial_cold_field() * inverse_mass;
+      double Xr_cool = hydro_state.get_conserved_remaining_cooled_cold_field() * inverse_mass;
+      double Xc_cool = hydro_state.get_conserved_currently_cooled_cold_field() * inverse_mass;
+
+      X_og   = std::max(0.0, std::min(X_og, 1.0));
+      X_cool = std::max(0.0, std::min(X_cool, 1.0));
+      Xr_og   = std::max(0.0, std::min(X_og, 1.0));
+      Xr_cool = std::max(0.0, std::min(X_cool, 1.0));
+      Xc_cool = std::max(0.0, std::min(X_cool, 1.0));
+      
+      hydro_state.set_primitives_cooled_cold_field(X_cool);
+      hydro_state.set_primitives_initial_cold_field(X_og);
+      hydro_state.set_primitives_remaining_cooled_cold_field(Xr_cool);
+      hydro_state.set_primitives_remaining_initial_cold_field(Xr_og);
+      hydro_state.set_primitives_currently_cooled_cold_field(Xc_cool);
+    } else {
+      hydro_state.set_primitives_initial_cold_field(0.0);
+      hydro_state.set_primitives_cooled_cold_field(0.0);
+      hydro_state.set_primitives_remaining_cooled_cold_field(0.0);
+      hydro_state.set_primitives_remaining_initial_cold_field(0.0);
+      hydro_state.set_primitives_currently_cooled_cold_field(0.0);
+    }
+
     set_conserved_variables(hydro_state, 1./inverse_volume);
   }
 
@@ -343,9 +397,11 @@ public:
     double mass = state.get_primitives_density() * volume;
     const CoordinateVector<> momentum = mass * state.get_primitives_velocity();
     double total_energy = 0.;
+    double internal_energy = 0.;
     if (_gamma > 1.) {
+      internal_energy = _one_over_gamma_minus_one * state.get_primitives_pressure() * volume;
       total_energy =
-          _one_over_gamma_minus_one * state.get_primitives_pressure() * volume +
+          internal_energy +
           0.5 * CoordinateVector<>::dot_product(
                     momentum, state.get_primitives_velocity());
     }
@@ -359,6 +415,7 @@ public:
 #ifdef SAFE_HYDRO_VARIABLES
     mass = std::max(mass, 0.);
     total_energy = std::max(total_energy, 0.);
+    internal_energy = std::max(internal_energy, 0.);
 #else
     cmac_assert(mass >= 0.);
     cmac_assert(_gamma == 1. || total_energy >= 0.);
@@ -367,6 +424,31 @@ public:
     state.set_conserved_mass(mass);
     state.set_conserved_momentum(momentum);
     state.set_conserved_total_energy(total_energy);
+    state.set_conserved_internal_energy(internal_energy) ; // mgb edit 10.07.2026 - set conserved internal energy from calculated internal energy
+
+
+     // mgb edit 12.06.2026
+    if (_trace_initial_neutral_flag == true){
+      const double X_og_con = state.get_primitives_initial_cold_field() * state.get_primitives_density() * volume;
+      const double X_cool_con = state.get_primitives_cooled_cold_field() * state.get_primitives_density() * volume;
+      const double Xr_og_con = state.get_primitives_remaining_initial_cold_field() * state.get_primitives_density() * volume;
+      const double Xr_cool_con = state.get_primitives_remaining_cooled_cold_field() * state.get_primitives_density() * volume;
+      const double Xc_cool_con = state.get_primitives_currently_cooled_cold_field() * state.get_primitives_density() * volume;
+      
+      state.set_conserved_cooled_cold_field(X_cool_con);
+      state.set_conserved_initial_cold_field(X_og_con);
+      state.set_conserved_remaining_cooled_cold_field(Xr_cool_con);
+      state.set_conserved_remaining_initial_cold_field(Xr_og_con);
+      state.set_conserved_currently_cooled_cold_field(Xc_cool_con);
+
+    } else {
+      state.set_primitives_initial_cold_field(0.0);
+      state.set_primitives_cooled_cold_field(0.0);
+      state.set_conserved_remaining_cooled_cold_field(0.0);
+      state.set_conserved_remaining_initial_cold_field(0.0);
+      state.set_conserved_currently_cooled_cold_field(0.0);
+    }
+
   }
 
   /**
@@ -406,6 +488,19 @@ public:
     double PR = right_state.get_primitives_pressure() -
                 halfdx * right_state.primitive_gradients(4)[i];
 
+    // mgb edit 12.06.2026
+    double X_ogL = left_state.primitives(5) + halfdx * left_state.primitive_gradients(5)[i];
+    double X_coolL = left_state.primitives(6) + halfdx * left_state.primitive_gradients(6)[i];
+    double Xr_ogL = left_state.primitives(7) + halfdx * left_state.primitive_gradients(7)[i];
+    double Xr_coolL = left_state.primitives(8) + halfdx * left_state.primitive_gradients(8)[i];
+    double Xc_coolL = left_state.primitives(9) + halfdx * left_state.primitive_gradients(9)[i];
+
+    double X_ogR = right_state.primitives(5) + halfdx * right_state.primitive_gradients(5)[i];
+    double X_coolR = right_state.primitives(6) + halfdx * right_state.primitive_gradients(6)[i];
+    double Xr_ogR = right_state.primitives(7) + halfdx * right_state.primitive_gradients(7)[i];
+    double Xr_coolR = right_state.primitives(8) + halfdx * right_state.primitive_gradients(8)[i];
+    double Xc_coolR = right_state.primitives(9) + halfdx * right_state.primitive_gradients(9)[i];
+
     rhoL = limit(rhoL, left_state.get_primitives_density(),
                  right_state.get_primitives_density(), 0.5);
     vL[0] = limit(vL.x(), left_state.get_primitives_velocity().x(),
@@ -428,17 +523,41 @@ public:
     PR = limit(PR, right_state.get_primitives_pressure(),
                left_state.get_primitives_pressure(), 0.5);
 
+    // mgb edit 12.06.2026
+    X_ogL = limit(X_ogL, left_state.get_primitives_initial_cold_field(), right_state.get_primitives_initial_cold_field(), 0.5);
+    X_coolL = limit(X_coolL, left_state.get_primitives_cooled_cold_field(), right_state.get_primitives_cooled_cold_field(), 0.5);
+    Xr_ogL = limit(Xr_ogL, left_state.get_primitives_remaining_initial_cold_field(), right_state.get_primitives_remaining_initial_cold_field(), 0.5);
+    Xr_coolL = limit(Xr_coolL, left_state.get_primitives_remaining_cooled_cold_field(), right_state.get_primitives_remaining_cooled_cold_field(), 0.5);
+    Xc_coolL = limit(Xc_coolL, left_state.get_primitives_currently_cooled_cold_field(), right_state.get_primitives_currently_cooled_cold_field(), 0.5);
+
+    X_ogR = limit(X_ogR, right_state.get_primitives_initial_cold_field(), left_state.get_primitives_initial_cold_field(), 0.5);
+    X_coolR = limit(X_coolR, right_state.get_primitives_cooled_cold_field(), left_state.get_primitives_cooled_cold_field(), 0.5);
+    Xr_ogR = limit(Xr_ogR, right_state.get_primitives_remaining_initial_cold_field(), left_state.get_primitives_remaining_initial_cold_field(), 0.5);
+    Xr_coolR = limit(Xr_coolR, right_state.get_primitives_remaining_cooled_cold_field(), left_state.get_primitives_remaining_cooled_cold_field(), 0.5);
+    Xc_coolR = limit(Xc_coolR, right_state.get_primitives_currently_cooled_cold_field(), left_state.get_primitives_currently_cooled_cold_field(), 0.5);
+
+
     cmac_assert(rhoL == rhoL);
     cmac_assert(vL.x() == vL.x());
     cmac_assert(vL.y() == vL.y());
     cmac_assert(vL.z() == vL.z());
     cmac_assert(PL == PL);
+    cmac_assert(X_ogL == X_ogL);
+    cmac_assert(X_coolL == X_coolL);
+    cmac_assert(Xr_ogL == Xr_ogL);
+    cmac_assert(Xr_coolL == Xr_coolL);
+    cmac_assert(X_ccoolL == Xc_coolL);
 
     cmac_assert(rhoR == rhoR);
     cmac_assert(vR.x() == vR.x());
     cmac_assert(vR.y() == vR.y());
     cmac_assert(vR.z() == vR.z());
     cmac_assert(PR == PR);
+    cmac_assert(X_ogR == X_ogR);
+    cmac_assert(X_coolR == X_coolR);
+    cmac_assert(Xr_ogR == Xr_ogR);
+    cmac_assert(Xr_coolR == Xr_coolR);
+    cmac_assert(Xc_coolR == Xc_coolR);
 
     // make sure all densities and pressures are physical
 #ifdef SAFE_HYDRO_VARIABLES
@@ -446,6 +565,17 @@ public:
     PL = std::max(PL, 0.);
     rhoR = std::max(rhoR, 0.);
     PR = std::max(PR, 0.);
+    X_ogL = std::max(0.0, std::min(1.0, X_ogL));
+    X_coolL = std::max(0.0, std::min(1.0, X_coolL));
+    X_ogR = std::max(0.0, std::min(1.0, X_ogR));
+    X_coolR = std::max(0.0, std::min(1.0, X_coolR));
+    Xr_ogL = std::max(0.0, std::min(1.0, Xr_ogL));
+    Xr_coolL = std::max(0.0, std::min(1.0, Xr_coolL));
+    Xr_ogR = std::max(0.0, std::min(1.0, Xr_ogR));
+    Xr_coolR = std::max(0.0, std::min(1.0, Xr_coolR));
+    Xc_coolL = std::max(0.0, std::min(1.0, Xc_coolL));
+    Xc_coolR = std::max(0.0, std::min(1.0, Xc_coolR));
+
 #else
     cmac_assert(rhoL >= 0.);
     cmac_assert(PL >= 0.);
@@ -456,22 +586,43 @@ public:
     double mflux = 0.;
     CoordinateVector<> pflux;
     double Eflux = 0.;
+    double EintFlux = 0.;
     CoordinateVector<> normal;
     normal[i] = 1.;
     _riemann_solver.solve_for_flux(rhoL, vL, PL, rhoR, vR, PR, mflux, pflux,
-                                   Eflux, normal);
+                                   Eflux, EintFlux, normal);
+
+    double orig_flux = (mflux >= 0.0) ? (mflux * X_ogL) : (mflux * X_ogR);
+    double cool_flux = (mflux >= 0.0) ? (mflux * X_coolL) : (mflux * X_coolR);
+    double rorig_flux = (mflux >= 0.0) ? (mflux * Xr_ogL) : (mflux * Xr_ogR);
+    double rcool_flux = (mflux >= 0.0) ? (mflux * Xr_coolL) : (mflux * Xr_coolR);
+    double ccool_flux = (mflux >= 0.0) ? (mflux * Xc_coolL) : (mflux * Xc_coolR);
+
 
     cmac_assert(mflux == mflux);
     cmac_assert(pflux.x() == pflux.x());
     cmac_assert(pflux.y() == pflux.y());
     cmac_assert(pflux.z() == pflux.z());
     cmac_assert(Eflux == Eflux);
+    cmac_assert(orig_flux == orig_flux);
+    cmac_assert(cool_flux == cool_flux);
+    cmac_assert(rorig_flux == rorig_flux);
+    cmac_assert(rcool_flux == rcool_flux);
+    cmac_assert(ccool_flux == ccool_flux);
+    
 
     mflux *= A;
     pflux[0] *= A;
     pflux[1] *= A;
     pflux[2] *= A;
     Eflux *= A;
+    EintFlux *= A; // mgb edit 10.07.2026 - scale internal energy flux by area
+    orig_flux *= A;
+    cool_flux *= A;
+    rorig_flux *= A;
+    rcool_flux *= A;
+    ccool_flux *= A;
+
 
 #ifdef FLUX_LIMITER
     // limit the flux
@@ -501,7 +652,25 @@ public:
         cmac_assert_message(fluxfac >= 0. && fluxfac <= 1., "fluxfac1b: %g , absEflux = %g, eflux = %g, e_r = %g",
                                     fluxfac, absEflux, Eflux, right_state.get_conserved_total_energy());
       }
+      const double absEintFlux = EintFlux * dt;
+      if (absEintFlux > FLUX_LIMITER * left_state.get_conserved_internal_energy()) {
+        fluxfac = std::min(
+            fluxfac,
+            FLUX_LIMITER * left_state.get_conserved_internal_energy() / absEintFlux);
+            cmac_assert_message(fluxfac >= 0. && fluxfac <= 1., "fluxfac1a: %g , absEflux = %g, eflux = %g, e_r = %g",
+                                        fluxfac, absEintFlux, EintFlux, left_state.get_conserved_internal_energy());
+      }
+      
+      // Check if we are "over-stealing" from the right cell (negative flux)
+      if (-absEintFlux > FLUX_LIMITER * right_state.get_conserved_internal_energy()) {
+        fluxfac = std::min(
+            fluxfac, 
+            -FLUX_LIMITER * right_state.get_conserved_internal_energy() / absEintFlux);
+        cmac_assert_message(fluxfac >= 0. && fluxfac <= 1., "fluxfac1b: %g , absEflux = %g, eflux = %g, e_r = %g",
+                                    fluxfac, absEintFlux, EintFlux, right_state.get_conserved_internal_energy());
+      }
     }
+    
     cmac_assert_message(fluxfac >= 0. && fluxfac <= 1., "fluxfac2: %g", fluxfac);
     // momentum flux limiter
     // note that we only apply this for cells that have high momentum, i.e.
@@ -537,6 +706,13 @@ public:
     mflux *= fluxfac;
     pflux *= fluxfac;
     Eflux *= fluxfac;
+    EintFlux *= fluxfac; // mgb edit 10.07.2026 - apply flux limiter to internal energy flux
+    orig_flux *= fluxfac;
+    cool_flux *= fluxfac;
+    rorig_flux *= fluxfac;
+    rcool_flux *= fluxfac;
+    ccool_flux *= fluxfac;
+
 #endif
 
     left_state.delta_conserved(0) -= mflux;
@@ -544,12 +720,26 @@ public:
     left_state.delta_conserved(2) -= pflux.y();
     left_state.delta_conserved(3) -= pflux.z();
     left_state.delta_conserved(4) -= Eflux;
+    left_state.delta_conserved(5) -= orig_flux;
+    left_state.delta_conserved(6) -= cool_flux;
+    left_state.delta_conserved(7) -= rorig_flux;
+    left_state.delta_conserved(8) -= rcool_flux;
+    left_state.delta_conserved(9) -= ccool_flux;
+    left_state.delta_conserved(10) -= EintFlux; // mgb edit 10.07.2026 - update internal energy flux in left state
 
     right_state.delta_conserved(0) += mflux;
     right_state.delta_conserved(1) += pflux.x();
     right_state.delta_conserved(2) += pflux.y();
     right_state.delta_conserved(3) += pflux.z();
     right_state.delta_conserved(4) += Eflux;
+    right_state.delta_conserved(5) += orig_flux;
+    right_state.delta_conserved(6) += cool_flux;
+    right_state.delta_conserved(7) += rorig_flux;
+    right_state.delta_conserved(8) += rcool_flux;
+    right_state.delta_conserved(9) += ccool_flux;
+    right_state.delta_conserved(10) += EintFlux; // mgb edit 10.07.2026 - update internal energy flux in right state
+
+
   }
 
   /**
@@ -597,6 +787,18 @@ public:
     double PR = right_state.get_primitives_pressure() -
                 halfdx * right_state.primitive_gradients(4)[i];
 
+    double X_ogL = left_state.primitives(5) + halfdx * left_state.primitive_gradients(5)[i];
+    double X_coolL = left_state.primitives(6) + halfdx * left_state.primitive_gradients(6)[i];
+    double Xr_ogL = left_state.primitives(7) + halfdx * left_state.primitive_gradients(7)[i];
+    double Xr_coolL = left_state.primitives(8) + halfdx * left_state.primitive_gradients(8)[i];
+    double Xc_coolL = left_state.primitives(9) + halfdx * left_state.primitive_gradients(9)[i];
+
+    double X_ogR = right_state.primitives(5) + halfdx * right_state.primitive_gradients(5)[i];
+    double X_coolR = right_state.primitives(6) + halfdx * right_state.primitive_gradients(6)[i];
+    double Xr_ogR = right_state.primitives(7) + halfdx * right_state.primitive_gradients(7)[i];
+    double Xr_coolR = right_state.primitives(8) + halfdx * right_state.primitive_gradients(8)[i];
+    double Xc_coolR = right_state.primitives(9) + halfdx * right_state.primitive_gradients(9)[i];
+
     rhoL = limit(rhoL, left_state.get_primitives_density(),
                  right_state.get_primitives_density(), 0.5);
     vL[0] = limit(vL.x(), left_state.get_primitives_velocity().x(),
@@ -619,17 +821,39 @@ public:
     PR = limit(PR, right_state.get_primitives_pressure(),
                left_state.get_primitives_pressure(), 0.5);
 
+    X_ogL = limit(X_ogL, left_state.get_primitives_initial_cold_field(), right_state.get_primitives_initial_cold_field(), 0.5);
+    X_coolL = limit(X_coolL, left_state.get_primitives_cooled_cold_field(), right_state.get_primitives_cooled_cold_field(), 0.5);
+    Xr_ogL = limit(Xr_ogL, left_state.get_primitives_remaining_initial_cold_field(), right_state.get_primitives_remaining_initial_cold_field(), 0.5);
+    Xr_coolL = limit(Xr_coolL, left_state.get_primitives_remaining_cooled_cold_field(), right_state.get_primitives_remaining_cooled_cold_field(), 0.5);
+    Xc_coolL = limit(Xc_coolL, left_state.get_primitives_currently_cooled_cold_field(), right_state.get_primitives_currently_cooled_cold_field(), 0.5);
+
+    X_ogR = limit(X_ogR, right_state.get_primitives_initial_cold_field(), left_state.get_primitives_initial_cold_field(), 0.5);
+    X_coolR = limit(X_coolR, right_state.get_primitives_cooled_cold_field(), left_state.get_primitives_cooled_cold_field(), 0.5);
+    Xr_ogR = limit(Xr_ogR, right_state.get_primitives_remaining_initial_cold_field(), left_state.get_primitives_remaining_initial_cold_field(), 0.5);
+    Xr_coolR = limit(Xr_coolR, right_state.get_primitives_remaining_cooled_cold_field(), left_state.get_primitives_remaining_cooled_cold_field(), 0.5);
+    Xc_coolR = limit(Xc_coolR, right_state.get_primitives_currently_cooled_cold_field(), left_state.get_primitives_currently_cooled_cold_field(), 0.5);
+
     cmac_assert(rhoL == rhoL);
     cmac_assert(vL.x() == vL.x());
     cmac_assert(vL.y() == vL.y());
     cmac_assert(vL.z() == vL.z());
     cmac_assert(PL == PL);
+    cmac_assert(X_ogL == X_ogL);
+    cmac_assert(X_coolL == X_coolL);
+    cmac_assert(Xr_ogL == Xr_ogL);
+    cmac_assert(Xr_coolL == Xr_coolL);
+    cmac_assert(X_ccoolL == Xc_coolL);
 
     cmac_assert(rhoR == rhoR);
     cmac_assert(vR.x() == vR.x());
     cmac_assert(vR.y() == vR.y());
     cmac_assert(vR.z() == vR.z());
     cmac_assert(PR == PR);
+    cmac_assert(X_ogR == X_ogR);
+    cmac_assert(X_coolR == X_coolR);
+    cmac_assert(Xr_ogR == Xr_ogR);
+    cmac_assert(Xr_coolR == Xr_coolR);
+    cmac_assert(Xc_coolR == Xc_coolR);
 
     // make sure all densities and pressures are physical
 #ifdef SAFE_HYDRO_VARIABLES
@@ -637,6 +861,16 @@ public:
     PL = std::max(PL, 0.);
     rhoR = std::max(rhoR, 0.);
     PR = std::max(PR, 0.);
+    X_ogL = std::max(0.0, std::min(1.0, X_ogL));
+    X_coolL = std::max(0.0, std::min(1.0, X_coolL));
+    X_ogR = std::max(0.0, std::min(1.0, X_ogR));
+    X_coolR = std::max(0.0, std::min(1.0, X_coolR));
+    Xr_ogL = std::max(0.0, std::min(1.0, Xr_ogL));
+    Xr_coolL = std::max(0.0, std::min(1.0, Xr_coolL));
+    Xr_ogR = std::max(0.0, std::min(1.0, Xr_ogR));
+    Xr_coolR = std::max(0.0, std::min(1.0, Xr_coolR));
+    Xc_coolL = std::max(0.0, std::min(1.0, Xc_coolL));
+    Xc_coolR = std::max(0.0, std::min(1.0, Xc_coolR));
 #else
     cmac_assert(rhoL >= 0.);
     cmac_assert(PL >= 0.);
@@ -647,22 +881,43 @@ public:
     double mflux = 0.;
     CoordinateVector<> pflux;
     double Eflux = 0.;
+    double EintFlux = 0.;
     CoordinateVector<> normal;
     normal[i] = orientation;
     _riemann_solver.solve_for_flux(rhoL, vL, PL, rhoR, vR, PR, mflux, pflux,
-                                   Eflux, normal);
+                                   Eflux, EintFlux, normal);
+
+    double orig_flux = (mflux >= 0.0) ? (mflux * X_ogL) : (mflux * X_ogR);
+    double cool_flux = (mflux >= 0.0) ? (mflux * X_coolL) : (mflux * X_coolR);
+    double rorig_flux = (mflux >= 0.0) ? (mflux * Xr_ogL) : (mflux * Xr_ogR);
+    double rcool_flux = (mflux >= 0.0) ? (mflux * Xr_coolL) : (mflux * Xr_coolR);
+    double ccool_flux = (mflux >= 0.0) ? (mflux * Xc_coolL) : (mflux * Xc_coolR);
+
 
     cmac_assert(mflux == mflux);
     cmac_assert(pflux.x() == pflux.x());
     cmac_assert(pflux.y() == pflux.y());
     cmac_assert(pflux.z() == pflux.z());
     cmac_assert(Eflux == Eflux);
+    cmac_assert(orig_flux == orig_flux);
+    cmac_assert(cool_flux == cool_flux);
+    cmac_assert(rorig_flux == rorig_flux);
+    cmac_assert(rcool_flux == rcool_flux);
+    cmac_assert(ccool_flux == ccool_flux);
+    
 
     mflux *= A;
     pflux[0] *= A;
     pflux[1] *= A;
     pflux[2] *= A;
     Eflux *= A;
+    EintFlux *= A; // mgb edit 10.07.2026 - scale internal energy flux by area
+    orig_flux *= A;
+    cool_flux *= A;
+    rorig_flux *= A;
+    rcool_flux *= A;
+    ccool_flux *= A;
+
 
 #ifdef FLUX_LIMITER
     // limit the flux
@@ -677,6 +932,14 @@ public:
         fluxfac = std::min(
             fluxfac,
             FLUX_LIMITER * left_state.get_conserved_total_energy() / absEflux);
+      }
+      const double absEintFlux = EintFlux * dt;
+      if (absEintFlux > FLUX_LIMITER * left_state.get_conserved_internal_energy()) {
+        fluxfac = std::min(
+            fluxfac,
+            FLUX_LIMITER * left_state.get_conserved_internal_energy() / absEintFlux);
+            cmac_assert_message(fluxfac >= 0. && fluxfac <= 1., "fluxfac1a: %g , absEflux = %g, eflux = %g, e_r = %g",
+                                        fluxfac, absEintFlux, EintFlux, left_state.get_conserved_internal_energy());
       }
     }
     // momentum flux limiter
@@ -699,6 +962,13 @@ public:
     mflux *= fluxfac;
     pflux *= fluxfac;
     Eflux *= fluxfac;
+    EintFlux *= fluxfac; // mgb edit 10.07.2026 - apply flux limiter to internal energy flux
+    orig_flux *= fluxfac;
+    cool_flux *= fluxfac;
+    rorig_flux *= fluxfac;
+    rcool_flux *= fluxfac;
+    ccool_flux *= fluxfac;
+
 #endif
 
     left_state.delta_conserved(0) -= mflux;
@@ -706,6 +976,14 @@ public:
     left_state.delta_conserved(2) -= pflux.y();
     left_state.delta_conserved(3) -= pflux.z();
     left_state.delta_conserved(4) -= Eflux;
+    left_state.delta_conserved(5) -= orig_flux;
+    left_state.delta_conserved(6) -= cool_flux;
+    left_state.delta_conserved(7) -= rorig_flux;
+    left_state.delta_conserved(8) -= rcool_flux;
+    left_state.delta_conserved(9) -= ccool_flux;
+    left_state.delta_conserved(10) -= EintFlux; // mgb edit 10.07.2026 - update internal energy flux in left state
+
+
   }
 
   /**
@@ -722,10 +1000,10 @@ public:
    */
   inline void do_gradient_calculation(const int i, HydroVariables &left_state,
                                       HydroVariables &right_state,
-                                      const double dxinv, double WLlim[10],
-                                      double WRlim[10]) const {
+                                      const double dxinv, double WLlim[22],
+                                      double WRlim[22]) const {
 
-    for (int_fast32_t j = 0; j < 5; ++j) {
+    for (int_fast32_t j = 0; j < 11; ++j) {
       cmac_assert_message(left_state.primitives(j) == left_state.primitives(j),
                           "j: %" PRIiFAST32, j);
       cmac_assert_message(right_state.primitives(j) ==
@@ -765,13 +1043,13 @@ public:
                                             HydroVariables &left_state,
                                             const HydroBoundary &boundary,
                                             const double dxinv,
-                                            double WLlim[10]) const {
+                                            double WLlim[22]) const {
 
     // the sign bit is set (1) for negative values
     int_fast8_t orientation = 1 - 2 * std::signbit(dxinv);
     HydroVariables right_state = boundary.get_right_state_gradient_variables(
         i, orientation, posR, left_state);
-    for (int_fast32_t j = 0; j < 5; ++j) {
+    for (int_fast32_t j = 0; j < 11; ++j) {
       cmac_assert_message(left_state.primitives(j) == left_state.primitives(j),
                           "j: %" PRIiFAST32, j);
       cmac_assert_message(right_state.primitives(j) ==
@@ -800,10 +1078,10 @@ public:
    * @param dx Distance between the cell and the neighbouring cells in all
    * directions (in m).
    */
-  inline void apply_slope_limiter(HydroVariables &state, const double Wlim[10],
+  inline void apply_slope_limiter(HydroVariables &state, const double Wlim[22],
                                   const CoordinateVector<> dx) const {
 
-    for (int_fast8_t i = 0; i < 5; ++i) {
+    for (int_fast8_t i = 0; i < 11; ++i) {
       cmac_assert_message(
           state.primitive_gradients(i)[0] == state.primitive_gradients(i)[0],
           "%" PRIiFAST8 ", (%g %g %g)", i, state.primitive_gradients(i)[0],
@@ -891,28 +1169,81 @@ public:
     const double ay = state.get_gravitational_acceleration().y();
     const double az = state.get_gravitational_acceleration().z();
 
+  
+    const double X_og = state.get_primitives_initial_cold_field();
+    const double X_cool = state.get_primitives_cooled_cold_field();
+    const double Xr_og = state.get_primitives_remaining_initial_cold_field();
+    const double Xr_cool = state.get_primitives_remaining_cooled_cold_field();
+    const double Xc_cool = state.get_primitives_currently_cooled_cold_field();
+  
+
     const double drhodx = state.primitive_gradients(0).x();
     const double drhody = state.primitive_gradients(0).y();
     const double drhodz = state.primitive_gradients(0).z();
 
     const double dvxdx = state.primitive_gradients(1).x();
+    const double dvxdy = state.primitive_gradients(1).y();
+    const double dvxdz = state.primitive_gradients(1).z();
+    const double dvydx = state.primitive_gradients(2).x();
     const double dvydy = state.primitive_gradients(2).y();
+    const double dvydz = state.primitive_gradients(2).z();
+    const double dvzdx = state.primitive_gradients(3).x();
+    const double dvzdy = state.primitive_gradients(3).y();
     const double dvzdz = state.primitive_gradients(3).z();
 
     const double dPdx = state.primitive_gradients(4).x();
     const double dPdy = state.primitive_gradients(4).y();
     const double dPdz = state.primitive_gradients(4).z();
 
+
+    const double dXcdx = state.primitive_gradients(6).x();
+    const double dXcdy = state.primitive_gradients(6).y();
+    const double dXcdz = state.primitive_gradients(6).z();
+
+    const double dXodx = state.primitive_gradients(5).x();
+    const double dXody = state.primitive_gradients(5).y();
+    const double dXodz = state.primitive_gradients(5).z();
+
     const double divv = dvxdx + dvydy + dvzdz;
 
     double rho_new =
         rho - dt * (rho * divv + vx * drhodx + vy * drhody + vz * drhodz);
-    const CoordinateVector<> v_new(vx - dt * (vx * divv + rhoinv * dPdx - ax),
-                                   vy - dt * (vy * divv + rhoinv * dPdy - ay),
-                                   vz - dt * (vz * divv + rhoinv * dPdz - az));
+    const CoordinateVector<> v_new(vx - dt * (vx * dvxdx + vy * dvxdy + vz * dvxdz 
+                                            + rhoinv * dPdx - ax),
+                                   vy - dt * (vx * dvydx + vy * dvydy + vz * dvydz
+                                            + rhoinv * dPdy - ay),
+                                   vz - dt * (vx * dvzdx + vy * dvzdy + vz * dvzdz
+                                            + rhoinv * dPdz - az));
     double P_new =
         P - dt * (_gamma * P * divv + vx * dPdx + vy * dPdy + vz * dPdz);
 
+
+        // mgb edit 12.06.2026
+
+    double X_og_new = X_og - dt * (vx * dXodx + vy * dXody + vz * dXodz);
+    double X_cool_new = X_cool - dt * (vx * dXcdx + vy * dXcdy + vz * dXcdz);
+    double Xr_og_new = Xr_og - dt * (vx * dXodx + vy * dXody + vz * dXodz);
+    double Xr_cool_new = Xr_cool - dt * (vx * dXcdx + vy * dXcdy + vz * dXcdz);
+    double Xc_cool_new = Xc_cool - dt * (vx * dXcdx + vy * dXcdy + vz * dXcdz);
+
+    X_og_new = std::max(0., std::min(1.0, X_og_new));
+    X_cool_new = std::max(0., std::min(1.0, X_cool_new));
+    Xr_og_new = std::max(0., std::min(1.0, Xr_og_new));
+    Xr_cool_new = std::max(0., std::min(1.0, Xr_cool_new));
+    Xc_cool_new = std::max(0., std::min(1.0, Xc_cool_new));
+
+    double lnP = std::log(P);
+    
+    double dlnPdx = dPdx / P;
+    double dlnPdy = dPdy / P;
+    double dlnPdz = dPdz / P;
+
+    double lnP_new = lnP - dt * (_gamma * divv + vx * dlnPdx + vy * dlnPdy + vz * dlnPdz);
+
+     P_new = std::exp(lnP_new);
+
+    double Eint_new = P_new / (_gamma_minus_one * rho_new);
+  
     cmac_assert_message(rho_new == rho_new,
                         "rho: %g, divv: %g, v: %g %g %g, drho: %g %g %g", rho,
                         divv, vx, vy, vz, drhodx, drhody, drhodz);
@@ -935,6 +1266,7 @@ public:
 #ifdef SAFE_HYDRO_VARIABLES
     rho_new = std::max(rho_new, 0.);
     P_new = std::max(P_new, 0.);
+    Eint_new = std::max(Eint_new, 0.);
 #else
     cmac_assert(rho_new >= 0.);
     cmac_assert(P_new >= 0.);
@@ -944,6 +1276,16 @@ public:
     state.set_primitives_density(rho_new);
     state.set_primitives_velocity(v_new);
     state.set_primitives_pressure(P_new);
+
+    // mgb edit 12.06.2026
+    state.set_primitives_cooled_cold_field(X_cool_new);
+    state.set_primitives_initial_cold_field(X_og_new);
+    state.set_primitives_remaining_cooled_cold_field(Xr_cool_new);
+    state.set_primitives_remaining_initial_cold_field(Xr_og_new);
+    state.set_primitives_currently_cooled_cold_field(Xc_cool_new);
+    state.set_primitives_internal_energy(Eint_new);
+
+
   }
 
   /**
@@ -1116,6 +1458,7 @@ public:
     }
 
     const double old_energy = hydro_variables.get_conserved_total_energy();
+    const double old_eint = hydro_variables.get_conserved_internal_energy();
     const double kinetic_energy =
         0.5 * CoordinateVector<>::dot_product(
                   hydro_variables.get_primitives_velocity(),
@@ -1140,11 +1483,31 @@ public:
     
 
     double new_energy = old_energy + delta_energy;
+    double new_eint = old_eint + delta_energy;
 
     double new_pressure =
-        _gamma_minus_one * inverse_volume * (new_energy - kinetic_energy);
+        _gamma_minus_one * inverse_volume * new_eint;
     double new_temperature = _T_conversion_factor * mean_molecular_mass *
                              new_pressure * inverse_density;
+
+    double v_mag = hydro_variables.get_primitives_velocity().norm();
+    double cs_squared = _gamma * new_pressure/density;
+    double cs = std::sqrt(cs_squared);
+    double mach = v_mag/cs;
+    double internal_energy = 0.0;
+
+    if (mach > _mach_limit){
+      internal_energy = new_eint;
+      new_energy = internal_energy + kinetic_energy;
+    } else {
+      internal_energy = new_energy - kinetic_energy;
+    }
+
+    new_pressure =
+        _gamma_minus_one * inverse_volume * internal_energy;
+    new_temperature = _T_conversion_factor * mean_molecular_mass *
+                             new_pressure * inverse_density;
+    
 
     cmac_assert_message(new_pressure == new_pressure,
                         "old_energy: %g, delta_energy: %g, new_energy: %g",
@@ -1171,6 +1534,8 @@ public:
 #endif
 
     hydro_variables.set_conserved_total_energy(new_energy);
+    hydro_variables.set_conserved_internal_energy(internal_energy);
+    hydro_variables.set_primitives_internal_energy(internal_energy * inverse_volume);
     hydro_variables.set_primitives_pressure(new_pressure);
     ionization_variables.set_temperature(new_temperature);
   }
@@ -1209,7 +1574,8 @@ public:
     const double T4 = 1.e-4*ionization_variables.get_temperature();
     const double sqrtT = std::sqrt(ionization_variables.get_temperature());
     const double alpha_e_2sP = 4.17e-20 * std::pow(T4, -0.861);
-    const double pHots = 1. / (1. + 77. * he0 / (sqrtT * h0));
+    const double pHots = h0 > 0. ?
+        1. / (1. + 77. * he0 / (sqrtT * h0)) : 0.;
     const double ne = n * (1. - h0 + AHe * hep + 2*AHe*(1. - hep - he0));
     const double nenhep = ne * hep * n * AHe;
     dE += pHots * 1.21765423e-18 * alpha_e_2sP * nenhep/inverse_volume*timestep;

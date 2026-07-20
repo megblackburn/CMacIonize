@@ -792,7 +792,7 @@ public:
     }
 
 
-    if (_total_time - _last_sf > _update_interval) {
+    if (_total_time - _last_sf >= _update_interval) { // mgb edit 20.07.2026 - edit from L McCallum
 
 
 
@@ -861,13 +861,15 @@ public:
 
 
 
-
+      // Use the actual elapsed time so that a late hydro step does not discard
+      // star formation between the scheduled update and the current time.
+      const double star_formation_interval = _total_time - _last_sf;
 
       // 0.207 factor is to take into account we only form stars over 8Msol - mgb
       // mass_to_generate in units of Msol to match IMF
       // Where we want to update the star_formation_rate to time dependent mgb
       // if (_total_time >= start_time_of_burst) && (_total_time < end_time_of_burst) {star_formation_rate = _star_formation_rate * burst_factor;} else {star_formation_rate = _star_formation_rate;} mgb
-      double mass_to_generate = _update_interval*_star_formation_rate/1.988e30*0.207*(std::pow(running_mass/init_running_mass,1.4));
+      double mass_to_generate = star_formation_interval*_star_formation_rate/1.988e30*0.207*(std::pow(running_mass/init_running_mass,1.4));
 
 
        std::cout << "SHOULD BE GENERATING " << mass_to_generate - _excess_mass<< std::endl;
@@ -952,7 +954,7 @@ public:
         std::cout << "lifetime defined " << lifetime << std::endl; // mgb 06.10
 
         double offset =
-              _random_generator.get_uniform_random_double() * _update_interval;
+              _random_generator.get_uniform_random_double() * star_formation_interval;
         std::cout << "offset =  " << offset<< std::endl; // mgb 06.10
         double lifetime_minus_offset = lifetime - offset;  
         std::cout << "source lifetime-offset defined =  " << lifetime_minus_offset << std::endl; // mgb 06.10

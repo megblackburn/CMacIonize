@@ -799,7 +799,8 @@ const double h0 = ionization_variables.get_ionic_fraction(ION_H_n);
 // calculate heating due to hydrogen OTS absorption of HeLyAlpha photon
     
     const double alpha_e_2sP = 4.17e-20 * std::pow(T4, -0.861);
-    const double pHots = 1. / (1. + 77. * he0 / (sqrtT * h0));
+    const double pHots = h0 > 0. ?
+        1. / (1. + 77. * he0 / (sqrtT * h0)) : 0.;
     const double ne = n * (1. - h0 + AHe * hep + 2*AHe*(1. - hep - he0));
     const double nenhep = ne * hep * n * AHe;
     gain += pHots * 1.21765423e-18 * alpha_e_2sP * nenhep/inverse_volume;
@@ -881,7 +882,7 @@ inline static void do_explicit_heat_cool(IonizationVariables &ionization_variabl
 
 
   double rho = hydro_variables.get_primitives_density();
-  if (rho == 0.0) {
+  if (rho <= 0.0 || !std::isfinite(rho) || total_dt <= 0.) {
     //dont heat or cool vacuum cells, or weird zero temp cells
     return;
   }
@@ -961,6 +962,8 @@ double abund[LINECOOLINGDATA_NUMELEMENTS];
 
 double clock = 0.0;
 double max_frac = 0.001;
+const size_t maximum_substeps = 100000;
+size_t number_of_substeps = 0;
 double tot_dif;
 double time_left;
 double tstep;
@@ -982,6 +985,12 @@ if (ionization_variables.get_ionic_fraction(ION_H_n) == 0){
 
 
 while (clock < total_dt) {
+  if (++number_of_substeps > maximum_substeps) {
+    cmac_warning("Heating/cooling exceeded %zu substeps at T=%g K.",
+                 maximum_substeps,
+                 ionization_variables.get_temperature());
+    break;
+  }
 
 
   if (ionization_variables.get_temperature() == 0) {
@@ -996,7 +1005,7 @@ while (clock < total_dt) {
                               line_cooling_data, abund, AHe, radiative_cooling, use_cooling_tables);
 
   
-  if (gain != gain || loss != loss){
+  if (!std::isfinite(gain) || !std::isfinite(loss)){
 #ifdef HAS_HELIUM
     cmac_warning("Nans in the gain/loss - T=%g,xh=%g,xhe=%g,rho=%g,gain=%g,loss=%g",ionization_variables.get_temperature(),
           ionization_variables.get_ionic_fraction(ION_H_n),ionization_variables.get_ionic_fraction(ION_He_n),
@@ -1006,10 +1015,64 @@ while (clock < total_dt) {
   }
 
   temp = ionization_variables.get_temperature();
+
+  const double inverse_mass = 1. / hydro_variables.get_conserved_mass();
+  CoordinateVector<> velocity = inverse_mass * hydro_variables.get_conserved_momentum(); 
+  double ekin = 0.5 * CoordinateVector<>::dot_product(
+                         velocity, hydro_variables.get_conserved_momentum());
+ 
+
+  double eint_from_tot = hydro_variables.get_conserved_total_energy()-ekin;
+  
+
+ // double temp_from_etot = eint_from_tot/e_factor;
   current_energy = e_factor*temp;
 
+  if (!(current_energy > 0.) || !std::isfinite(current_energy)) {
+    cmac_warning("Invalid thermal energy in heating/cooling: E=%g, T=%g.",
+                 current_energy, temp);
+    break;
+  }
+
+  const bool new_limit_flag = false;
+  if (new_limit_flag == true){
+     double energy_diff = 0.;
+
+    if (current_energy > 100 * eint_from_tot || eint_from_tot > 100 * current_energy){
+      energy_diff = current_energy - eint_from_tot;
+      
+    // std::cout << "FATAL error! Eint: " << hydro_variables.get_conserved_internal_energy() << ", ionised Eint: " << current_energy << std::endl;
+    // std::cout << "Ionised Temp: " << temp << ", Eint Temp: " << temp_from_eint << ", Etot Temp: " << temp_from_etot << std::endl;
+      
+    }
+    hydro.update_energy_variables(ionization_variables, hydro_variables, inverse_volume, energy_diff);  
+  }
+  //if (current_energy < 100 * eint_from_tot) {
+   // std::cout << "FATAL error incoming! Eint: " << hydro_variables.get_conserved_internal_energy() << ", ionised Eint: " << current_energy  << ", dE: " << dE << std::endl;
+    //std::cout << "Ionised Temp: " << temp << ", Eint Temp: " << temp_from_eint << ", Etot Temp: " << temp_from_etot << std::endl;
+    
+    //ionization_variables.set_temperature(temp_from_eint);
+  //}
+  get_thermal_gain_loss(gain, loss, ionization_variables, inverse_volume,
+                              line_cooling_data, abund, AHe, radiative_cooling, use_cooling_tables); // mgb comment 21.05.2026 - no temperature set
+
+  
+ // if (hydro_variables.get_conserved_internal_energy() != eint0){
+   // std::cout << "Internal energy has been updated within get_thermal_gain_loss, Eint0: " << eint0 << ", Eint: " << hydro_variables.get_conserved_internal_energy() << std::endl;
+  //}
+
+  
+  if (gain != gain || loss != loss){
+#ifdef HAS_HELIUM
+    cmac_warning("Nans in the gain/loss - T=%g,xh=%g,xhe=%g,rho=%g,gain=%g,loss=%g",ionization_variables.get_temperature(),
+          ionization_variables.get_ionic_fraction(ION_H_n),ionization_variables.get_ionic_fraction(ION_He_n),
+          hydro_variables.get_primitives_density(),gain,loss);
+#endif
+    break;
+  }
 
   tot_dif = gain - loss;
+  temp = ionization_variables.get_temperature();
 
   if ((temp < _cooling_temp_floor) && (tot_dif <= 0.0)) {
     break;
@@ -1023,12 +1086,36 @@ while (clock < total_dt) {
    // if (tstep < 1e-5*total_dt) {
     //  tstep = 1.e-5*total_dt;
    // }
+   if (!(tstep > 0.) || !std::isfinite(tstep) || clock + tstep == clock) {
+      cmac_warning("Heating/cooling timestep made no progress: dt=%g, T=%g.",
+                   tstep, temp);
+      break;
+    }
     dE = tot_dif*tstep;
     clock += tstep;
   } else {
     dE = tot_dif*time_left;
     clock = total_dt;
   }
+
+  const double floor_energy = e_factor * _cooling_temp_floor;
+  if (current_energy + dE < floor_energy) {
+    dE = floor_energy - current_energy;
+    clock = total_dt;
+  }
+
+
+  /*if (eint_from_tot+dE < 0){ // mgb comment 22.05.2026: this should still allow greater gains in internal energy but will limit the losses
+    std::cout << "Temperature 100*Eint<Eint_new! Eint: " << eint_from_tot << ", ionised Eint: " << current_energy << ", dE: " << dE << std::endl;
+    std::cout << "Ionised Temp: " << temp << ", Etot Temp: " << temp_from_etot << std::endl;
+    
+  }
+
+  if (eint_from_tot > current_energy * 100){ // mgb comment 22.05.2026 this should boost gains and losses if Eint > Eint from radiation
+    std::cout << "FATAL Eint > 100*Eint_new! Eint: " << eint_from_tot << ", ionised Eint: " << current_energy  << ", dE: " << dE << std::endl;
+    std::cout << "Ionised Temp: " << temp << ", Etot Temp: " << temp_from_etot << std::endl;
+    
+  } */
 
   cmac_assert_message(dE == dE, "dE=%g, T=%g, gain=%g,loss=%g",dE,temp,gain,loss);
   hydro.update_energy_variables(ionization_variables, hydro_variables, inverse_volume, dE);
@@ -1357,6 +1444,8 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
   Timer parallel_timer;
   Timer worktimer;
 
+  std::cout<<"Beginning Simulation!" << std::endl;
+
   OperatingSystem::install_signal_handlers(false);
 
   RestartReader *restart_reader = nullptr;
@@ -1517,6 +1606,11 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     "TaskBasedRadiationHydrodynamicsSimulation:restart iteration", 0.0
   );
 
+  const bool _trace_initial_neutral_flag = params->get_value< bool >("DensityFunction:trace initial neutral flag", "false");
+
+  const double _temperature_to_trace = params->get_physical_value< QUANTITY_TEMPERATURE >("DensityFunction:temperature to trace", "500. K");
+
+
   const bool _time_dependent_ionization = params->get_value<bool> ( 
     "TaskBasedRadiationHydrodynamicsSimulation:time dependent ionization", false);
 #ifndef HAVE_GSL
@@ -1597,7 +1691,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
             "TaskBasedRadiationHydrodynamicsSimulation:cooling temperature floor",
             "10 K");
     radiative_cooling = new DeRijckeRadiativeCooling();
-    _cooling_file = new std::ofstream("CoolingProgression.txt");
+    _cooling_file = new std::ofstream("CoolingProgression.txt", std::ios_base::out | std::ios_base::app); // mgb edit 20.07.2026 - if file exists, it is appended to
     *_cooling_file << "#time (s)\tTotal lost Energy\n";
     _cooling_file->flush();
   }
@@ -2215,13 +2309,13 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                     
                 }
               subgrid.update_ionization_variables(hydro,
-                                                  maximum_neutral_fraction);
+                                                  maximum_neutral_fraction); // mgb comment 26.05.2026: updates number density
             }
           }
           stop_parallel_timing_block();
         }
 
-        DistributedPhotonSource< HydroDensitySubGrid > photon_source(
+        DistributedPhotonSource<HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> > photon_source( // mgb edit 24.04.2026 DistributedPhotonSource<HydroDensitySubGrid> photon_source()
             numphoton, *sourcedistribution, *grid_creator);
         {
           AtomicValue< size_t > igrid(0);
@@ -2320,7 +2414,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           // create task contexts
          TaskContext *task_contexts[TASKTYPE_NUMBER] = {nullptr};
           task_contexts[TASKTYPE_SOURCE_DISCRETE_PHOTON] =
-              new SourceDiscretePhotonTaskContext< HydroDensitySubGrid >(
+              new SourceDiscretePhotonTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> >(
                   photon_source, *buffers, random_generators, 1., *spectrum,
                   abundances, *cross_sections, *grid_creator, *tasks,
                    *sourcedistribution,nullptr);
@@ -2328,18 +2422,18 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
           if (reemission_handler) {
             task_contexts[TASKTYPE_PHOTON_REEMIT] =
-                new PhotonReemitTaskContext< HydroDensitySubGrid >(
+                new PhotonReemitTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> >(
                     *buffers, random_generators, *reemission_handler,
                     abundances, *cross_sections, *grid_creator, *tasks,
                     num_photon_done,nullptr);
           }
 
           task_contexts[TASKTYPE_PHOTON_TRAVERSAL] =
-              new PhotonTraversalTaskContext< HydroDensitySubGrid >(
+              new PhotonTraversalTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> >(
                   *buffers, *grid_creator, *tasks, num_photon_done, nullptr,
                   reemission_handler != nullptr, _max_photon_distance);
 
-          PrematureLaunchTaskContext< HydroDensitySubGrid > premature_launch(
+          PrematureLaunchTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> > premature_launch(
               *buffers, *grid_creator, *tasks, queues, *shared_queue);
 
           Scheduler scheduler(*tasks, queues, *shared_queue);
@@ -2475,7 +2569,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                                    abundances.get_abundance(ELEMENT_He));
 #endif
             }
-                if (_time_dependent_ionization) {
+                if (_time_dependent_ionization) { // mgb comment 26.05.2026: This updates the temperature and heating term but not energy
                   if (iloop == nloop -1) {
                     temperature_calculator->calculate_temperature(
                       iloop, numphoton, *gridit, current_time - lastrad_time, true, true);
@@ -2505,7 +2599,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           worktimer.stop();
         }
 
-        time_logger.end("radiation transfer");
+        time_logger.end("radiation transfer"); // mgb comment 26.05.2026: radiation finished - no energy updates 
 
       } else {
 
@@ -2540,7 +2634,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
               }
               if (_time_dependent_ionization) {
                   
-               temperature_calculator->calculate_temperature(
+               temperature_calculator->calculate_temperature( // mgb comment 26.05.2026: updates temperature with collosional rates as no photoionising sources present but no energy update
                       0, 0, *gridit, current_time - lastrad_time, true, true);
 
               } else {
@@ -2554,7 +2648,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         }
 
       }
-    } else {
+    } else { // mgb comment 26.05.2026: no source distribution
 
       //  if (log) {
         //  log->write_status("No source distribution!");
@@ -2586,7 +2680,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
               } 
               if (_time_dependent_ionization) {
               
-                  temperature_calculator->calculate_temperature(
+                  temperature_calculator->calculate_temperature( // mgb comment 26.05.2026: another temperature update but no energy
                     0, 0, *gridit, current_time - lastrad_time, true, true);
     
               } else{
@@ -2622,7 +2716,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
       if (log) {
         log->write_status("Done with radiation step.");
-      }
+      } 
 
       std::cout << "setting last radtime to " << current_time << std::endl;
       std::cout << "last one was " << lastrad_time << " for a difference of " << current_time - lastrad_time <<  std::endl; 
@@ -2630,10 +2724,10 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
       lastrad_time = current_time;
 
       time_logger.end("radiation");
-    }
+    } // mgb comment 26.05.2026: final end of radiation steps
 
       {
-  if (!do_explicit_temp_calc) {
+  if (!do_explicit_temp_calc) { // mgb comment 26.05.2026: this will only happen if NOT doing explicit temp calc/heating & cooling
         time_logger.start("ionizing energy update");
         AtomicValue< size_t > igrid(0);
         start_parallel_timing_block();
@@ -2644,7 +2738,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           const size_t this_igrid = igrid.post_increment();
           if (this_igrid < grid_creator->number_of_original_subgrids()) {
             auto gridit = grid_creator->get_subgrid(this_igrid);
-            (*gridit).add_ionization_energy(hydro, actual_timestep);
+            (*gridit).add_ionization_energy(hydro, actual_timestep); // mgb comment 26.05.2026: this will update the energies but is not called when explicit temp calc is true
           }
         }
         stop_parallel_timing_block();
@@ -2655,7 +2749,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
 
 
-    time_logger.start("hydro");
+    time_logger.start("hydro"); // mgb comment 26.05.2026: beginning of hydro step - no energy updates following radiation this far
 
     if (log) {
       log->write_status("Starting hydro step...");
@@ -2822,7 +2916,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           cpucycle_tick(task_start);
 
           execute_task(current_task, *grid_creator, *tasks, actual_timestep,
-                       hydro, hydro_boundary_manager);
+                       hydro, hydro_boundary_manager); // mgb comment 26.05.2026: this will calculate all gradients etc. ionization temperature should not be used here so energies are only updated based on solver fluxes and gravitaional energy
           (*tasks)[current_task].stop();
 
           cpucycle_tick(task_stop);
@@ -2845,6 +2939,64 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           number_of_tasks.pre_decrement();
         }
       }
+    }
+
+    { // mgb edit 26.05.2026: for debug
+      AtomicValue< size_t > igrid(0);
+       while (igrid.value() < grid_creator->number_of_original_subgrids()) {
+        const size_t this_igrid = igrid.post_increment();
+        if (this_igrid < grid_creator->number_of_original_subgrids()) {
+          auto gridit = grid_creator->get_subgrid(this_igrid);
+          for (auto cellit = (*gridit).hydro_begin();
+               cellit != (*gridit).hydro_end(); ++cellit) {
+              
+            IonizationVariables ionization_variables = cellit.get_ionization_variables(); // mgb edit 26.05.2026: for debug 
+            HydroVariables hydro_variables = cellit.get_hydro_variables();
+
+            const bool debug_flag = false;
+            if (debug_flag == true){
+                double rho = hydro_variables.get_primitives_density();
+                double temp = ionization_variables.get_temperature();
+                double k= PhysicalConstants::get_physical_constant(PHYSICALCONSTANT_BOLTZMANN);
+                double mh = PhysicalConstants::get_physical_constant(PHYSICALCONSTANT_PROTON_MASS);
+                const double h0 = ionization_variables.get_ionic_fraction(ION_H_n);
+                double inverse_volume = 1/cellit.get_volume();
+                double gamma_minus_one = params->get_value< double >("MagnetoHydro:polytropic index", 5. / 3.)-1.;
+
+
+
+              #ifdef HAS_HELIUM
+                double AHe = abundances.get_abundance(ELEMENT_He);
+                const double hep = ionization_variables.get_ionic_fraction(ION_He_p1);
+                const double hepp = 1 - hep - ionization_variables.get_ionic_fraction(ION_He_n);
+                const double mean_molecular_mass = (1.0 + 4.0*AHe)/(2 + AHe - h0 + AHe*hep + 2.0*AHe*hepp);
+              #else
+              //  double AHe = 0.0;
+                const double mean_molecular_mass = (1.0)/(2.0 - h0);
+              #endif
+
+                double e_factor = k*rho/(mh*gamma_minus_one*mean_molecular_mass)/inverse_volume;
+                double radiation_internal_energy = e_factor*temp;
+
+                const double inverse_mass = 1. / hydro_variables.get_conserved_mass();
+                CoordinateVector<> velocity = inverse_mass * hydro_variables.get_conserved_momentum(); 
+                double ekin = 0.5 * CoordinateVector<>::dot_product(
+                                      velocity, hydro_variables.get_conserved_momentum());
+                double hydro_internal_energy = hydro_variables.get_conserved_total_energy()-ekin;
+              //  double hydro_internal_energy = hydro_variables.get_conserved_internal_energy();
+                if (radiation_internal_energy > 100*hydro_internal_energy){
+                  std::cout<< "Warning: radiation_internal_energy > 100*hydro_internal_energy after hydro! rad_Eint: " << radiation_internal_energy << ", hydro_Eint: " << hydro_internal_energy << std::endl;
+                }
+                if (hydro_internal_energy > 100*radiation_internal_energy){
+                  std::cout<< "Warning: hydro_internal_energy > 100*radiation_internal_energy after hydro! rad_Eint: " << radiation_internal_energy << ", hydro_Eint: " << hydro_internal_energy << std::endl;
+                }
+
+            }
+          }
+        }
+      }
+        
+      
     }
     stop_parallel_timing_block();
 
@@ -2886,7 +3038,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
       log->write_status("Done with hydro step.");
     }
 
-    time_logger.end("hydro");
+    time_logger.end("hydro"); // mgb comment 26.05.2026: end of hydro: no energy update w.r.t new radiation temperature
 
     if (log && false) {
       const uint_fast64_t total_interval = iteration_end - iteration_start;
@@ -2898,7 +3050,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
       }
     }
 
-    if (do_rad_cool || do_explicit_temp_calc) {
+    if (do_rad_cool || do_explicit_temp_calc) { // mgb comment 26.05.2026: beginning of temperature calculations
       time_logger.start("cooling");
 
       if (log) {
@@ -2917,15 +3069,66 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           for (auto cellit = (*gridit).hydro_begin();
                cellit != (*gridit).hydro_end(); ++cellit) {
            // hydro.set_primitive_variables(cellit.get_hydro_variables(), cellit.get_ionization_variables(), cellit.get_volume())
-            hydro.hydro_to_ionization(cellit.get_hydro_variables(), cellit.get_ionization_variables());
-           // hydro.align_temp_to_p(cellit.get_hydro_variables(), cellit.get_ionization_variables());
+            hydro.hydro_to_ionization(cellit.get_hydro_variables(), cellit.get_ionization_variables()); // mgb comment 26.05.2026:  this only updates the ionization cell density from the hydro updated density
+            //hydro.align_temp_to_p(cellit.get_hydro_variables(), cellit.get_ionization_variables()); // mgb edit 27.05.2026: uncommented
 
+          //  hydro.align_temp_to_p(cellit.get_hydro_variables(), cellit.get_ionization_variables());
             IonizationVariables ionization_variables =
                 cellit.get_ionization_variables();
             HydroVariables hydro_variables = cellit.get_hydro_variables();
+
+            if (hydro_variables.get_primitives_density() > 0. && hydro_variables.get_primitives_pressure() > 0.){
+              hydro.align_temp_to_p(hydro_variables, ionization_variables);
+            } else if (hydro_variables.get_primitives_density() > 0.) {
+              hydro.set_temperature(ionization_variables, hydro_variables, cellit.get_volume(), _cooling_temp_floor);
+            }
+
+            const bool debug_flag = false;
+            if (debug_flag == true){
+                double rho = hydro_variables.get_primitives_density();
+                double temp = ionization_variables.get_temperature();
+                double k= PhysicalConstants::get_physical_constant(PHYSICALCONSTANT_BOLTZMANN);
+                double mh = PhysicalConstants::get_physical_constant(PHYSICALCONSTANT_PROTON_MASS);
+                const double h0 = ionization_variables.get_ionic_fraction(ION_H_n);
+                double inverse_volume = 1/cellit.get_volume();
+                double gamma_minus_one = params->get_value< double >("MagnetoHydro:polytropic index", 5. / 3.)-1.;
+
+
+
+              #ifdef HAS_HELIUM
+                double AHe = abundances.get_abundance(ELEMENT_He);
+                const double hep = ionization_variables.get_ionic_fraction(ION_He_p1);
+                const double hepp = 1 - hep - ionization_variables.get_ionic_fraction(ION_He_n);
+                const double mean_molecular_mass = (1.0 + 4.0*AHe)/(2 + AHe - h0 + AHe*hep + 2.0*AHe*hepp);
+              #else
+              //  double AHe = 0.0;
+                const double mean_molecular_mass = (1.0)/(2.0 - h0);
+              #endif
+
+                double e_factor = k*rho/(mh*gamma_minus_one*mean_molecular_mass)/inverse_volume;
+                double radiation_internal_energy = e_factor*temp;
+
+                const double inverse_mass = 1. / hydro_variables.get_conserved_mass();
+                CoordinateVector<> velocity = inverse_mass * hydro_variables.get_conserved_momentum(); 
+                double ekin = 0.5 * CoordinateVector<>::dot_product(
+                                      velocity, hydro_variables.get_conserved_momentum());
+                double hydro_internal_energy = hydro_variables.get_conserved_total_energy()-ekin;
+              //  double hydro_internal_energy = hydro_variables.get_conserved_internal_energy();
+                if (radiation_internal_energy > 100*hydro_internal_energy){
+                  std::cout<< "Warning: radiation_internal_energy > 100*hydro_internal_energy before temp calc! rad_Eint: " << radiation_internal_energy << ", hydro_Eint: " << hydro_internal_energy << std::endl;
+                }
+                if (hydro_internal_energy > 100*radiation_internal_energy){
+                  std::cout<< "Warning: hydro_internal_energy > 100*radiation_internal_energy before temp calc! rad_Eint: " << radiation_internal_energy << ", hydro_Eint: " << hydro_internal_energy << std::endl;
+                }
+
+            }
+            
             const double nH = ionization_variables.get_number_density();
             const double nH2 = nH * nH;
-            if (do_rad_cool) {
+            const double temperature_before_calculation = cellit.get_ionization_variables().get_temperature();
+            
+
+            if (do_rad_cool && !do_explicit_temp_calc) {
               do_cooling(ionization_variables, hydro_variables,
                         1. / cellit.get_volume(), nH2 * cellit.get_volume(),
                         actual_timestep, radiative_cooling, hydro,
@@ -2939,7 +3142,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
             //       cellit.get_hydro_variables(), cellit.get_volume(),
             //       _cooling_temp_floor);
             // }
-              do_explicit_heat_cool(ionization_variables, hydro_variables,
+              do_explicit_heat_cool(ionization_variables, hydro_variables,  // mgb comment 26.05.2026: this is then where the new temperature is used within the temp calculations but internal energies can be significantly out of sync with supernova present
                         1. / cellit.get_volume(), nH2 * cellit.get_volume(),
                         actual_timestep, radiative_cooling, hydro,
                           _cooling_temp_floor,_gamma-1.,line_cooling_data, abundances,
@@ -2951,15 +3154,78 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                 hydro_variables.get_primitives_pressure());
             cellit.get_hydro_variables().set_conserved_total_energy(
                 hydro_variables.get_conserved_total_energy());
-            if (ionization_variables.get_temperature() <
+
+            if (ionization_variables.get_temperature() <  // mgb comment 26.05.2026: This will then set the temperature to cooling floor if it goes to zero in the energy updates from do_explicit_heat_cool
                 _cooling_temp_floor) {
               hydro.set_temperature(
                   cellit.get_ionization_variables(),
                   cellit.get_hydro_variables(), cellit.get_volume(),
                   _cooling_temp_floor);
             }
-            hydro.set_conserved_variables(cellit.get_hydro_variables(), cellit.get_volume());
 
+            hydro.set_conserved_variables(cellit.get_hydro_variables(), cellit.get_volume());  // mgb comment 26.05.2026: cell variables then all updated but by this point T can be 100 due to limit, when pressure and internal energy are now both 0 - this could cause issue but temperature isnt explicitly solved for?
+
+            // mgb edit 12.06.2026: implementation of tracer fields for cold gas
+            
+            const double temperature_after_calculation = cellit.get_ionization_variables().get_temperature();
+            const double density = cellit.get_hydro_variables().get_primitives_density();
+            double X_og = 0.0;
+            double X_cool = 0.0;
+            double X_cool_prev = 0.0;
+            double Xr_og = 0.0;
+            double Xr_cool = 0.0;
+            double Xc_cool = 0.0;
+            double Xr_cool_prev = 0.0;
+
+            double mass = cellit.get_hydro_variables().get_conserved_mass();
+
+            if (density>0.0){
+              
+/// !!!!!!!!!!!!!!!!! ADD NEW ONES IN !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+              X_og = cellit.get_hydro_variables().get_conserved_initial_cold_field()/mass;
+              X_cool_prev = cellit.get_hydro_variables().get_conserved_cooled_cold_field()/mass;
+              Xr_og = cellit.get_hydro_variables().get_conserved_remaining_initial_cold_field()/mass;
+              Xr_cool_prev = cellit.get_hydro_variables().get_conserved_remaining_cooled_cold_field()/mass;
+            }
+            if (_trace_initial_neutral_flag == true){
+
+              if ((temperature_before_calculation > _temperature_to_trace) &&(temperature_after_calculation <= _temperature_to_trace)){ // gas has been cooled into range
+                Xc_cool = 1.0; // has cooled this time step
+                Xr_cool = 1.0;
+                X_cool = 1.0; 
+                
+              } else if ((temperature_before_calculation <= _temperature_to_trace) && (temperature_after_calculation > _temperature_to_trace)) { // gas was cool then heated out of range
+                Xr_og = 0.0;
+                Xr_cool = 0.0;
+                X_cool = X_cool_prev;
+                Xc_cool = 0.0;
+
+              } else if (temperature_after_calculation > _temperature_to_trace) { // gas was hot and is still hot
+                Xc_cool = 0.0; // has not cooled so current tracker 0
+                Xr_cool = 0.0; // has not cooled
+                X_cool = X_cool_prev; // could have been cooled previously so keep
+                Xr_og = 0.0;
+              } else if ((Xr_og <= 0.) && (temperature_before_calculation <= _temperature_to_trace) && (temperature_after_calculation <= _temperature_to_trace)){ // not cold from initial cold field but still cold after being cooled
+                Xr_cool = Xr_cool_prev;
+                X_cool = X_cool_prev;
+                Xc_cool = 0.0;
+              }
+
+              cellit.get_hydro_variables().set_conserved_cooled_cold_field(X_cool * mass);
+              cellit.get_hydro_variables().set_primitives_cooled_cold_field(X_cool);
+
+              cellit.get_hydro_variables().set_primitives_remaining_cooled_cold_field(Xr_cool);
+              cellit.get_hydro_variables().set_primitives_remaining_initial_cold_field(Xr_og);
+              cellit.get_hydro_variables().set_primitives_currently_cooled_cold_field(Xc_cool);
+
+              cellit.get_hydro_variables().set_conserved_remaining_cooled_cold_field(Xr_cool * mass);
+              cellit.get_hydro_variables().set_conserved_remaining_initial_cold_field(Xr_og * mass);
+              cellit.get_hydro_variables().set_conserved_currently_cooled_cold_field(Xc_cool * mass);
+
+             // cellit.get_hydro_variables().set_conserved_initial_cold_field(X_og * density);
+
+            } // end of mgb edit 12.06.2026
+            
           }
         }
       }

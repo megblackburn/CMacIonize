@@ -54,12 +54,13 @@ public:
 
   }
 
-  inline std::tuple<double,double,double,double> get_r_inj(DensitySubGridCreator< HydroDensitySubGrid > *grid_creator,
+  template <typename _creator_type>
+  inline std::tuple<double,double,double,double> get_r_inj(_creator_type *grid_creator,
                                          CoordinateVector<> sne_loc) {
 
 
 
-      HydroDensitySubGrid &subgrid = *grid_creator->get_subgrid(sne_loc);
+      auto &subgrid = *grid_creator->get_subgrid(sne_loc);
 
       double cell_vol =  subgrid.get_cell(sne_loc).get_volume();
 
@@ -76,7 +77,7 @@ public:
 
       double mtot = 0.0;
       for (auto & pair : vec) {
-        HydroDensitySubGrid &subgrid = *grid_creator->get_subgrid(std::get<0>(pair));
+        auto &subgrid = *grid_creator->get_subgrid(std::get<0>(pair));
         mtot = mtot + (subgrid.hydro_begin() + std::get<1>(pair)).get_hydro_variables().get_conserved_mass();
 
       }
@@ -85,7 +86,7 @@ public:
         double rho = mtot/inj_vol;
         double nbar = 1.e-6*rho/1.67262192e-27;
         double r_st = 3.086e+16 * 19.1 * std::pow(_sne_energy*1.e-44,5./17.) * std::pow(nbar,-7./17);
-        return std::make_tuple(r_run,r_st,nbar,268.);
+        return std::make_tuple(r_run,r_st,nbar,vec.size());
       }
 
       while (mtot < 1.988e+33) {
@@ -93,7 +94,7 @@ public:
         vec = grid_creator->cells_within_radius(sne_loc,r_run);
         mtot = 0.0;
         for (auto & pair : vec) {
-          HydroDensitySubGrid &subgrid = *grid_creator->get_subgrid(std::get<0>(pair));
+          auto &subgrid = *grid_creator->get_subgrid(std::get<0>(pair));
           double cell_mass = (subgrid.hydro_begin() + std::get<1>(pair)).get_hydro_variables().get_conserved_mass();
           mtot = mtot + cell_mass;
         }
@@ -109,8 +110,8 @@ public:
    }
 
 
-
-   inline void inject_sne(HydroDensitySubGrid &subgrid, Hydro &hydro, CoordinateVector<double> position,
+   template <typename _subgrid_type, typename _run_type>
+   inline void inject_sne(_subgrid_type &subgrid, _run_type &hydro, CoordinateVector<double> position,
          double r_inj, double r_st, double nbar, int numcells) {
 
       for (auto cellit = subgrid.hydro_begin();
@@ -118,14 +119,20 @@ public:
 
            CoordinateVector<> cellpos = cellit.get_cell_midpoint();
 
+        
+
           // is cell within injeciton radius of SNe?
-           if ((cellpos - position).norm() < r_inj) {
+          const double distance = (cellpos - position).norm();
+           if (distance <= r_inj) {
                 if (cellit.get_hydro_variables().get_primitives_density() == 0) {
                     //dont add energy to cell without mass...
-                    return;
+                    continue;
                 }
              double dx = std::pow(cellit.get_volume(),1./3.);
-             if (r_st < 4.*dx) {
+             
+            // if (r_st < 4.*dx) {
+            const bool st_resolved = dx < r_st / 3. && r_inj < r_st / 3.;
+            if (!st_resolved){
 
 //Not resolving ST radius, do momentum injection
               CoordinateVector<> vel_prior =
@@ -140,7 +147,11 @@ public:
 
                double vel_to_inj = mom_to_inj/m_tot;
 
-               CoordinateVector<> direction = (cellpos-position)/((cellpos-position).norm());
+               if (distance == 0.) {
+                continue;
+               }
+
+               CoordinateVector<> direction = (cellpos-position)/distance;
 
                CoordinateVector<> vel_new = vel_prior + vel_to_inj*direction;
 
@@ -159,12 +170,18 @@ public:
              // cellit.get_hydro_variables().set_primitives_pressure(pressure);
 
               hydro.set_conserved_variables(cellit.get_hydro_variables(), cellit.get_volume());
+            //  double total_energy = cellit.get_hydro_variables().get_conserved_total_energy()
+              
 
              }
              else {
-               cellit.get_hydro_variables().set_energy_term(_sne_energy/numcells);
+              const double energy = cellit.get_hydro_variables().get_energy_term() + _sne_energy / numcells;
+               cellit.get_hydro_variables().set_energy_term(energy);
+                
              }
+
            }
+           
 
         }
 
