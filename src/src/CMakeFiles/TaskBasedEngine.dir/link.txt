@@ -1,0 +1,2 @@
+/usr/bin/ar qc ../lib/libTaskBasedEngine.a CMakeFiles/TaskBasedEngine.dir/TaskBasedIonizationSimulation.cpp.o CMakeFiles/TaskBasedEngine.dir/TaskBasedRadiationHydrodynamicsSimulation.cpp.o
+/usr/bin/ranlib ../lib/libTaskBasedEngine.a

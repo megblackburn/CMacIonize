@@ -590,7 +590,7 @@ void TaskBasedIonizationSimulation::run(
     _memory_log.print(mfile, false);
   }
 
-  DistributedPhotonSource< DensitySubGrid > *photon_source = nullptr;
+  DistributedPhotonSource< DensitySubGrid, DensitySubGridCreator<DensitySubGrid> > *photon_source = nullptr;
   uint_fast32_t number_of_discrete_photons = 0;
   if (_photon_source_distribution != nullptr) {
     number_of_discrete_photons = _number_of_photons;
@@ -630,7 +630,7 @@ void TaskBasedIonizationSimulation::run(
       number_of_continuous_photons;
 
   if (_photon_source_distribution != nullptr) {
-    photon_source = new DistributedPhotonSource< DensitySubGrid >(
+    photon_source = new DistributedPhotonSource< DensitySubGrid, DensitySubGridCreator<DensitySubGrid> >(
         number_of_discrete_photons, *_photon_source_distribution,
         *_grid_creator);
   }
@@ -806,7 +806,7 @@ void TaskBasedIonizationSimulation::run(
     }
     cmac_assert_message(number_of_photons_done == _number_of_photons,
                         "%zu =/= %zu", number_of_photons_done,
-                        _number_of_photons);
+                        static_cast< size_t >(_number_of_photons)); // mgb edit 20.07.2026 - debug from L McCallum
     _time_log.end("photon source tasks");
 
     _time_log.start("photon propagation");
@@ -820,7 +820,7 @@ void TaskBasedIonizationSimulation::run(
 
     if (photon_source) {
       task_contexts[TASKTYPE_SOURCE_DISCRETE_PHOTON] =
-          new SourceDiscretePhotonTaskContext< DensitySubGrid >(
+          new SourceDiscretePhotonTaskContext< DensitySubGrid, DensitySubGridCreator<DensitySubGrid >>(
               *photon_source, *_buffers, _random_generators,
               discrete_photon_weight, *_photon_source_spectrum, _abundances,
               *_cross_sections, *_grid_creator, *_tasks,*_photon_source_distribution,
@@ -844,7 +844,7 @@ void TaskBasedIonizationSimulation::run(
 
     if (_reemission_handler) {
       task_contexts[TASKTYPE_PHOTON_REEMIT] =
-          new PhotonReemitTaskContext< DensitySubGrid >(
+          new PhotonReemitTaskContext< DensitySubGrid, DensitySubGridCreator<DensitySubGrid> >(
               *_buffers, _random_generators, *_reemission_handler, _abundances,
               *_cross_sections, *_grid_creator, *_tasks, num_photon_done,
               &statistics);
@@ -853,11 +853,11 @@ void TaskBasedIonizationSimulation::run(
 
 
     task_contexts[TASKTYPE_PHOTON_TRAVERSAL] =
-        new PhotonTraversalTaskContext< DensitySubGrid >(
+        new PhotonTraversalTaskContext< DensitySubGrid, DensitySubGridCreator<DensitySubGrid> >(
             *_buffers, *_grid_creator, *_tasks, num_photon_done, &statistics,
             _reemission_handler != nullptr,-1.);
 
-    PrematureLaunchTaskContext< DensitySubGrid > premature_launch(
+    PrematureLaunchTaskContext< DensitySubGrid, DensitySubGridCreator<DensitySubGrid> > premature_launch(
         *_buffers, *_grid_creator, *_tasks, _queues, *_shared_queue);
 
     Scheduler scheduler(*_tasks, _queues, *_shared_queue);

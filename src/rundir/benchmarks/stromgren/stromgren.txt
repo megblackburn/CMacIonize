@@ -1,0 +1,12 @@
+Stromgren benchmark
+
+This benchmark consists of a homogeneous density field with a single stellar
+source at the centre. The radiation from the star will ionize a spherical
+region surrounding the star, the size of which can be analytically found.
+
+The test can be run using the provided parameter file (stromgren.param). To
+analyze the results, use the Python script (stromgren.py).
+
+List of files necessary for this benchmark test:
+input:stromgren.param
+input:stromgren.py

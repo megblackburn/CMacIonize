@@ -1,0 +1,1 @@
+-L/Users/meg/Desktop/PhD/newcmac/CMacIonize/src/lib -lCMILibrary -lLegacyEngine -lSharedEngine hdf5-shared  -lstdc++ -lc

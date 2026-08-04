@@ -1,0 +1,254 @@
+/*******************************************************************************
+ * This file is part of CMacIonize
+ * Copyright (C) 2016 Bert Vandenbroucke (bert.vandenbroucke@gmail.com)
+ *
+ * CMacIonize is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * CMacIonize is distributed in the hope that it will be useful,
+ * but WITOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with CMacIonize. If not, see <http://www.gnu.org/licenses/>.
+ ******************************************************************************/
+
+/**
+ * @file BlockSyntaxDensityFunction.hpp
+ *
+ * @brief DensityFunction implementation that constructs a density field based
+ * on geometrical building blocks specified in a YAML file.
+ *
+ * @author Bert Vandenbroucke (bv7@st-andrews.ac.uk)
+ */
+#ifndef BLOCKSYNTAXDENSITYFUNCTIONMHD_HPP
+#define BLOCKSYNTAXDENSITYFUNCTIONMHD_HPP
+
+#include "BlockSyntaxBlock.hpp"
+#include "DensityFunctionMHD.hpp"
+#include "Log.hpp"
+#include "ParameterFile.hpp"
+#include "YAMLDictionary.hpp"
+
+#include <cinttypes>
+#include <fstream>
+#include <sstream>
+
+/**
+ * @brief DensityFunction implementation that constructs a density field based
+ * on geometrical building blocks specified in a YAML file.
+ */
+class BlockSyntaxDensityFunctionMHD : public DensityFunctionMHD {
+private:
+  /*! @brief Geometrical building blocks. */
+  std::vector< BlockSyntaxBlock > _blocks;
+
+  /**
+   * @brief Get the exponent corresponding to a given block type.
+   *
+   * @param type Type of block.
+   * @return Exponent corresponding to that type.
+   */
+  inline static double get_exponent(std::string type) {
+    if (type == "rhombus") {
+      return 1.;
+    } else if (type == "sphere") {
+      return 2.;
+    } else if (type == "cube") {
+      return 10.;
+    } else {
+      cmac_error("Unknown block type: \"%s\"!", type.c_str());
+      return 0.;
+    }
+  }
+
+public:
+  /**
+   * @brief Constructor.
+   *
+   * @param filename Name of the YAML file containing the block information.
+   * @param log Log to write logging info to.
+   */
+  BlockSyntaxDensityFunctionMHD(std::string filename, Log *log = nullptr) {
+    std::ifstream file(filename);
+
+    if (!file) {
+      cmac_error("Error while opening file \"%s\"!", filename.c_str());
+    }
+
+    YAMLDictionary blockfile(file);
+
+    const uint_fast32_t numblock =
+        blockfile.get_value< uint_fast32_t >("number of blocks");
+    for (uint_fast32_t i = 0; i < numblock; ++i) {
+      std::stringstream blockname;
+      blockname << "block[" << i << "]:";
+      CoordinateVector<> origin =
+          blockfile.get_physical_vector< QUANTITY_LENGTH >(blockname.str() +
+                                                           "origin");
+      CoordinateVector<> sides =
+          blockfile.get_physical_vector< QUANTITY_LENGTH >(blockname.str() +
+                                                           "sides");
+      std::string type =
+          blockfile.get_value< std::string >(blockname.str() + "type");
+      double exponent = get_exponent(type);
+      double density;
+      if (blockfile.has_value(blockname.str() + "number density")) {
+        density = blockfile.get_physical_value< QUANTITY_NUMBER_DENSITY >(
+            blockname.str() + "number density");
+      } else {
+        density = blockfile.get_physical_value< QUANTITY_DENSITY >(
+            blockname.str() + "density");
+        density /= PhysicalConstants::get_physical_constant(
+            PHYSICALCONSTANT_PROTON_MASS);
+      }
+      double temperature = blockfile.get_physical_value< QUANTITY_TEMPERATURE >(
+          blockname.str() + "initial temperature");
+      double neutral_fraction_H = blockfile.get_value< double >(
+          blockname.str() + "neutral fraction H", 1.e-6);
+      double neutral_fraction_He = blockfile.get_value< double >(
+          blockname.str() + "neutral fraction He", 1.e-6);
+      CoordinateVector<> velocity =
+          blockfile.get_physical_vector< QUANTITY_VELOCITY >(
+              blockname.str() + "initial velocity",
+              "[0. m s^-1, 0. m s^-1, 0. m s^-1]");
+      if (density < 0.) {
+        cmac_error("Negative density (%g) given for block %" PRIuFAST32 "!",
+                   density, i);
+      }
+      if (temperature < 0.) {
+        cmac_error("Negative temperature (%g) given for block %" PRIuFAST32 "!",
+                   temperature, i);
+      }
+      _blocks.push_back(BlockSyntaxBlock(origin, sides, exponent, density,
+                                         temperature, neutral_fraction_H,
+                                         neutral_fraction_He, velocity));
+    }
+
+    std::ofstream ofile(filename + ".used-values");
+    blockfile.print_contents(ofile, true);
+    ofile.close();
+
+    if (log) {
+      log->write_status("Created BlockSyntaxDensityFunction with ", numblock,
+                        " blocks.");
+    }
+  }
+
+  /**
+   * @brief ParameterFile constructor.
+   *
+   * Parameters are:
+   *  - filename: Name of the file that contains the blocks (required)
+   *
+   * @param params ParameterFile to read.
+   * @param log Log to write logging info to.
+   */
+  BlockSyntaxDensityFunctionMHD(ParameterFile &params, Log *log = nullptr)
+      : BlockSyntaxDensityFunctionMHD(
+            params.get_filename("DensityFunction:filename"), log) {}
+
+  /**
+   * @brief Function that gives the density for a given cell.
+   *
+   * Due to the way this function is written, the values for the last block
+   * containing the given position are used. This means the order in which
+   * nested blocks are given is important!
+   *
+   * @param cell Geometrical information about the cell.
+   * @return Initial physical field values for that cell.
+   */
+  virtual DensityValues operator()(const Cell &cell) {
+    DensityValues values;
+
+    const CoordinateVector<> position = cell.get_cell_midpoint();
+
+    double density = -1.;
+    double temperature = -1.;
+    double neutral_fraction_H = -1.;
+#ifdef HAS_HELIUM
+    double neutral_fraction_He = -1.;
+#endif
+    CoordinateVector<> velocity;
+    for (size_t i = 0; i < _blocks.size(); ++i) {
+      if (_blocks[i].is_inside(position)) {
+        density = _blocks[i].get_number_density();
+        temperature = _blocks[i].get_temperature();
+        neutral_fraction_H = _blocks[i].get_neutral_fraction_H();
+#ifdef HAS_HELIUM
+        neutral_fraction_He = _blocks[i].get_neutral_fraction_He();
+#endif
+        velocity = _blocks[i].get_velocity();
+      }
+    }
+    if (density < 0.) {
+      cmac_error("No block found containing position [%g m, %g m, %g m]!",
+                 position.x(), position.y(), position.z());
+    }
+    if (temperature < 0.) {
+      cmac_error("No block found containing position [%g m, %g m, %g m]!",
+                 position.x(), position.y(), position.z());
+    }
+    if (neutral_fraction_H < 0.) {
+      cmac_error("No block found containing position [%g m, %g m, %g m]!",
+                 position.x(), position.y(), position.z());
+    }
+
+    values.set_number_density(density);
+    values.set_temperature(temperature);
+    values.set_ionic_fraction(ION_H_n, neutral_fraction_H);
+#ifdef HAS_HELIUM
+    values.set_ionic_fraction(ION_He_n, neutral_fraction_He);
+    values.set_ionic_fraction(ION_He_p1, 1.0 - neutral_fraction_He);
+
+#endif
+#ifdef HAS_CARBON
+    values.set_ionic_fraction(ION_C_p1, 0.999);
+    values.set_ionic_fraction(ION_C_p2, 0.001);
+#endif
+#ifdef HAS_NITROGEN
+    values.set_ionic_fraction(ION_N_n, 0.999);
+    values.set_ionic_fraction(ION_N_p1, 0.001);
+    values.set_ionic_fraction(ION_N_p2,0.000);
+#endif
+#ifdef HAS_OXYGEN
+    values.set_ionic_fraction(ION_O_n, 0.999);
+    values.set_ionic_fraction(ION_O_p1, 0.001);
+    values.set_ionic_fraction(ION_O_p2, 0.000);
+    values.set_ionic_fraction(ION_O_p3, 0.000);
+#endif
+#ifdef HAS_NEON
+    values.set_ionic_fraction(ION_Ne_n, 0.999);
+    values.set_ionic_fraction(ION_Ne_p1, 0.001);
+    values.set_ionic_fraction(ION_Ne_p2, 0.000);
+    values.set_ionic_fraction(ION_Ne_p3, 0.000);
+#endif
+#ifdef HAS_SULPHUR
+    values.set_ionic_fraction(ION_S_p1, 0.999);
+    values.set_ionic_fraction(ION_S_p2, 0.001);
+    values.set_ionic_fraction(ION_S_p3, 0.000);
+#endif
+    values.set_velocity(velocity);
+    return values;
+  }
+
+  /**
+   * @brief Check if the given position is inside the range of the blocks.
+   *
+   * @param position Position (in m).
+   * @return True if the position is inside the range of the blocks (and a call
+   * to operator() will be successful).
+   */
+  inline bool inside(const CoordinateVector<> position) const {
+    size_t i = 0;
+    while (i < _blocks.size() && !_blocks[i].is_inside(position)) {
+      ++i;
+    }
+    return i < _blocks.size();
+  }
+};
+
+#endif // BLOCKSYNTAXDENSITYFUNCTIONMHD_HPP

@@ -142,12 +142,14 @@ public:
         const CoordinateVector<> momentum = mass * velocity;
         const double ekin = CoordinateVector<>::dot_product(velocity, momentum);
         // E = V*(rho*u + 0.5*rho*v^2) = V*(P/(gamma-1) + 0.5*rho*v^2)
+        const double internal_energy = volume * pressure * _gm1inv;
         const double total_energy = volume * pressure * _gm1inv + 0.5 * ekin;
 
         // set conserved variables
         it.get_hydro_variables().set_conserved_mass(mass);
         it.get_hydro_variables().set_conserved_momentum(momentum);
         it.get_hydro_variables().set_conserved_total_energy(total_energy);
+        it.get_hydro_variables().set_conserved_internal_energy(internal_energy);
 
         // set neutral fractions to 0
         it.get_ionization_variables().set_ionic_fraction(ION_H_n, 0.);
@@ -219,11 +221,13 @@ public:
         const double ekin = CoordinateVector<>::dot_product(velocity, momentum);
         // E = V*(rho*u + 0.5*rho*v^2) = V*(P/(gamma-1) + 0.5*rho*v^2)
         const double total_energy = volume * pressure * _gm1inv + 0.5 * ekin;
+        const double internal_energy = volume * pressure * _gm1inv;
 
         // set conserved variables
         it.get_hydro_variables().set_conserved_mass(mass);
         it.get_hydro_variables().set_conserved_momentum(momentum);
         it.get_hydro_variables().set_conserved_total_energy(total_energy);
+        it.get_hydro_variables().set_conserved_internal_energy(internal_energy);
 
         // set neutral fractions to 0
         it.get_ionization_variables().set_ionic_fraction(ION_H_n, 0.);

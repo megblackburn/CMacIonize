@@ -260,7 +260,7 @@ private:
       const bool vacuumL, const double rhoR, const CoordinateVector<> uR,
       const double PR, const CoordinateVector<> uRface, const double vR,
       const double aR, const bool vacuumR, double &mflux,
-      CoordinateVector<> &pflux, double &Eflux, const CoordinateVector<> normal,
+      CoordinateVector<> &pflux, double &Eflux, double &EintFlux, const CoordinateVector<> normal,
       const CoordinateVector<> vface = 0.) const {
 
     // solve the Riemann problem
@@ -292,10 +292,13 @@ private:
 
       // rho*e = rho*u + 0.5*rho*v^2 = P/(gamma-1.) + 0.5*rho*v^2
       double rhoesol;
+      double rhoeintsol = 0.0;
       if (_gamma > 1.) {
         rhoesol = 0.5 * rhosol * usol.norm2() + Psol * _odgm1;
+        rhoeintsol = Psol * _odgm1;
       } else {
         // this flux will be ignored, but we make sure it has a sensible value
+        rhoeintsol = 0.0;
         rhoesol = 0.5 * rhosol * usol.norm2();
       }
       vsol = CoordinateVector<>::dot_product(usol, normal);
@@ -304,6 +307,7 @@ private:
       mflux = rhosol * vsol;
       pflux = rhosol * vsol * usol + Psol * normal;
       Eflux = (rhoesol + Psol) * vsol;
+      EintFlux = rhoeintsol * vsol;
 
       // de-boost fluxes to fixed reference frame
       const double vface2 = vface.norm2();
@@ -316,6 +320,7 @@ private:
       pflux[1] = 0.;
       pflux[2] = 0.;
       Eflux = 0.;
+      EintFlux = 0.;
     }
   }
 
@@ -336,6 +341,20 @@ public:
    */
   virtual ~HLLCRiemannSolver() {}
 
+  virtual void solve_for_flux_MHD(const double rhoL, const CoordinateVector<> uL,
+                                const double PL, const CoordinateVector<> BL, 
+                                const double BL_scalar, 
+                                const double rhoR, const CoordinateVector<> uR, 
+                                const double PR, const CoordinateVector<> BR, 
+                                const double BR_scalar,
+                                double &mflux, CoordinateVector<> &pflux,
+                                double &Eflux, double &EintFlux, CoordinateVector<> &Bflux, 
+                                double &B_scalarflux, const CoordinateVector<> normal, double current_etot, double _mach_limit, double current_eint,
+                                const CoordinateVector<> vface) const override {
+    // This is a Hydro-only solver. 
+    // If the code accidentally calls this for MHD, we should stop immediately.
+    cmac_error("HLLCRiemannSolver does not support MHD flux calculations!");
+  }
   /**
    * @brief Solve the Riemann problem with the given left and right state and
    * get the resulting flux accross an interface.
@@ -356,7 +375,7 @@ public:
                               const double PL, const double rhoR,
                               const CoordinateVector<> uR, const double PR,
                               double &mflux, CoordinateVector<> &pflux,
-                              double &Eflux, const CoordinateVector<> normal,
+                              double &Eflux, double &EintFlux, const CoordinateVector<> normal,
                               const CoordinateVector<> vface = 0.) const {
 
     // check input values
@@ -386,6 +405,7 @@ public:
       pflux[1] = 0.;
       pflux[2] = 0.;
       Eflux = 0.;
+      EintFlux = 0.;
       return;
     }
 
@@ -406,7 +426,7 @@ public:
     // Handle vacuum: vacuum does not require iteration and is always exact
     if (vacuumL || vacuumR || _tdgm1 * abar <= vdiff) {
       solve_vacuum_flux(rhoL, uL, PL, uLface, vL, aL, vacuumL, rhoR, uR, PR,
-                        uRface, vR, aR, vacuumR, mflux, pflux, Eflux, normal,
+                        uRface, vR, aR, vacuumR, mflux, pflux, Eflux, EintFlux, normal,
                         vface);
     } else {
 
@@ -437,6 +457,7 @@ public:
       // this could cause problems with conservation of mass, momentum and
       // energy, since fluxes are computed from both points of view for the
       // flux exchange
+  
       const double Pdiff = PR - PL;
       const double rhovSdiff = rhoL * vL * SLmvL - rhoR * vR * SRmvR;
       const double rhoSdiff = rhoL * SLmvL - rhoR * SRmvR;
@@ -445,12 +466,14 @@ public:
       if (Sstar >= 0.) {
         const double rhoLvL = rhoL * vL;
         const double vL2 = uLface.norm2();
+        const double eintL = PL * _odgm1 * rhoLinv;
         const double eL = PL * _odgm1 * rhoLinv + 0.5 * vL2;
         const double SL = SLmvL + vL;
 
         mflux = rhoLvL;
         pflux = rhoLvL * uLface + PL * normal;
         Eflux = rhoLvL * eL + PL * vL;
+        EintFlux = rhoLvL * eintL;
 
         if (SL < 0.) {
           const double starfac = SLmvL / (SL - Sstar);
@@ -464,16 +487,19 @@ public:
           pflux += SLrhoLstarfac * uLface + SLrhoLSstarmvL * normal;
           Eflux += SLrhoLstarfac * eL +
                    SLrhoLSstarmvL * (Sstar + PL * rhoLinv * SLmvLinv);
+          EintFlux += SLrhoLstarfac * eintL; // mgb edit 10.07.2026
         }
       } else {
         const double rhoRvR = rhoR * vR;
         const double vR2 = uRface.norm2();
+        const double eintR = PR * _odgm1 * rhoRinv;
         const double eR = PR * _odgm1 * rhoRinv + 0.5 * vR2;
         const double SR = SRmvR + vR;
 
         mflux = rhoRvR;
         pflux = rhoRvR * uRface + PR * normal;
         Eflux = rhoRvR * eR + PR * vR;
+        EintFlux = rhoRvR * eintR;
 
         if (SR > 0.) {
           const double starfac = SRmvR / (SR - Sstar);
@@ -487,12 +513,14 @@ public:
           pflux += SRrhoRstarfac * uRface + SRrhoRSstarmvR * normal;
           Eflux += SRrhoRstarfac * eR +
                    SRrhoRSstarmvR * (Sstar + PR * rhoRinv * SRmvRinv);
+          EintFlux += SRrhoRstarfac * eintR;
         }
       }
 
       const double vface2 = vface.norm2();
       Eflux +=
           CoordinateVector<>::dot_product(vface, pflux) + 0.5 * vface2 * mflux;
+      EintFlux += mflux * 0.5 * vface2;
       pflux += mflux * vface;
     }
 

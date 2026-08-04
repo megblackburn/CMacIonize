@@ -1,0 +1,2 @@
+/usr/bin/ar qc ../lib/libDustEngine.a CMakeFiles/DustEngine.dir/DustScattering.cpp.o CMakeFiles/DustEngine.dir/DustSimulation.cpp.o
+/usr/bin/ranlib ../lib/libDustEngine.a

@@ -75,9 +75,9 @@ public:
     // allocate memory for data arrays
     const int_fast32_t tot_ncell = _number_of_cells[3] * ncell[0];
     _hydro_variables = new HydroVariables[tot_ncell];
-    _primitive_variable_limiters = new double[tot_ncell * 10];
+    _primitive_variable_limiters = new double[tot_ncell * 22];
 
-    for (int_fast32_t i = 0; i < 5 * tot_ncell; ++i) {
+    for (int_fast32_t i = 0; i < 11 * tot_ncell; ++i) {
       _primitive_variable_limiters[2 * i] = DBL_MAX;
       _primitive_variable_limiters[2 * i + 1] = -DBL_MAX;
     }
@@ -96,14 +96,14 @@ public:
 
     const int_fast32_t tot_ncell = _number_of_cells[3] * _number_of_cells[0];
     _hydro_variables = new HydroVariables[tot_ncell];
-    _primitive_variable_limiters = new double[tot_ncell * 10];
+    _primitive_variable_limiters = new double[tot_ncell * 22];
 
     // copy data arrays
     for (int_fast32_t i = 0; i < tot_ncell; ++i) {
       _hydro_variables[i].copy_all(original._hydro_variables[i]);
     }
 
-    for (int_fast32_t i = 0; i < 10 * tot_ncell; ++i) {
+    for (int_fast32_t i = 0; i < 22 * tot_ncell; ++i) {
       _primitive_variable_limiters[i] =
           original._primitive_variable_limiters[i];
     }
@@ -162,19 +162,20 @@ public:
       _hydro_variables[i].conserved(1) += mdt * a.x();
       _hydro_variables[i].conserved(2) += mdt * a.y();
       _hydro_variables[i].conserved(3) += mdt * a.z();
-      _hydro_variables[i].conserved(4) +=
+      _hydro_variables[i].conserved(4) += 
           timestep * CoordinateVector<>::dot_product(p, a);
+      _hydro_variables[i].conserved(4) += 0.5 * mdt * timestep * a.norm2(); // mgb edit 14.07.2026: add in cross term from L McCallum 
       _hydro_variables[i].conserved(4) += _hydro_variables[i].get_energy_term();
       _hydro_variables[i].set_energy_term(0.);
-      for (int_fast8_t j = 0; j < 5; ++j) {
+      for (int_fast8_t j = 0; j < 11; ++j) {
         _hydro_variables[i].conserved(j) +=
             _hydro_variables[i].delta_conserved(j) * timestep;
 
         // reset hydro variables
         _hydro_variables[i].delta_conserved(j) = 0;
         _hydro_variables[i].primitive_gradients(j) = CoordinateVector<>(0.);
-        _primitive_variable_limiters[10 * i + 2 * j] = DBL_MAX;
-        _primitive_variable_limiters[10 * i + 2 * j + 1] = -DBL_MAX;
+        _primitive_variable_limiters[22 * i + 2 * j] = DBL_MAX;
+        _primitive_variable_limiters[22 * i + 2 * j + 1] = -DBL_MAX;
       }
 
       cmac_assert(_hydro_variables[i].get_conserved_mass() ==
@@ -283,7 +284,7 @@ public:
         _number_of_cells[0] * _number_of_cells[3];
     for (int_fast32_t i = 0; i < tot_num_cells; ++i) {
       hydro.apply_slope_limiter(_hydro_variables[i],
-                                &_primitive_variable_limiters[10 * i],
+                                &_primitive_variable_limiters[22 * i],
                                 _cell_size);
     }
   }
@@ -581,8 +582,8 @@ public:
           // x direction
           hydro.do_gradient_calculation(
               0, _hydro_variables[index000], _hydro_variables[index100],
-              _inv_cell_size[0], &_primitive_variable_limiters[10 * index000],
-              &_primitive_variable_limiters[10 * index100]);
+              _inv_cell_size[0], &_primitive_variable_limiters[22 * index000],
+              &_primitive_variable_limiters[22 * index100]);
         }
       }
     }
@@ -596,8 +597,8 @@ public:
           // y direction
           hydro.do_gradient_calculation(
               1, _hydro_variables[index000], _hydro_variables[index010],
-              _inv_cell_size[1], &_primitive_variable_limiters[10 * index000],
-              &_primitive_variable_limiters[10 * index010]);
+              _inv_cell_size[1], &_primitive_variable_limiters[22 * index000],
+              &_primitive_variable_limiters[22 * index010]);
         }
       }
     }
@@ -611,8 +612,8 @@ public:
           // z direction
           hydro.do_gradient_calculation(
               2, _hydro_variables[index000], _hydro_variables[index001],
-              _inv_cell_size[2], &_primitive_variable_limiters[10 * index000],
-              &_primitive_variable_limiters[10 * index001]);
+              _inv_cell_size[2], &_primitive_variable_limiters[22 * index000],
+              &_primitive_variable_limiters[22 * index001]);
         }
       }
     }
@@ -723,8 +724,8 @@ public:
         hydro.do_gradient_calculation(
             i, left_grid->_hydro_variables[index_left],
             right_grid->_hydro_variables[index_right], dxinv,
-            &left_grid->_primitive_variable_limiters[10 * index_left],
-            &right_grid->_primitive_variable_limiters[10 * index_right]);
+            &left_grid->_primitive_variable_limiters[22 * index_left],
+            &right_grid->_primitive_variable_limiters[22 * index_right]);
       }
     }
   }
@@ -829,7 +830,7 @@ public:
         hydro.do_ghost_gradient_calculation(
             i, get_cell_midpoint(index_left) + offset,
             left_grid->_hydro_variables[index_left], boundary, dxinv,
-            &left_grid->_primitive_variable_limiters[10 * index_left]);
+            &left_grid->_primitive_variable_limiters[22 * index_left]);
       }
     }
   }
@@ -863,7 +864,13 @@ public:
   virtual void initialize_hydro(const uint_fast32_t index,
                                 const DensityValues &values) {
     _hydro_variables[index].set_primitives_velocity(values.get_velocity());
-  }
+    _hydro_variables[index].set_primitives_cooled_cold_field(values.get_cooled_neutral_scalar_field());
+    _hydro_variables[index].set_primitives_initial_cold_field(values.get_initial_neutral_scalar_field());
+    _hydro_variables[index].set_primitives_remaining_initial_cold_field(values.get_remaining_initial_neutral_scalar_field());
+    _hydro_variables[index].set_primitives_remaining_cooled_cold_field(values.get_remaining_cooled_neutral_scalar_field());
+    _hydro_variables[index].set_primitives_currently_cooled_cold_field(0.0); // mgb note: this is reset every timestep so initalise to zero
+
+    }
 
   /**
    * @brief Iterator to loop over the cells in the subgrid.
@@ -1093,8 +1100,8 @@ public:
       _hydro_variables[i] = HydroVariables(restart_reader);
       _ionization_variables[i] = IonizationVariables(restart_reader);
     }
-    _primitive_variable_limiters = new double[10 * number_of_cells];
-    for (int_fast32_t i = 0; i < 5 * number_of_cells; ++i) {
+    _primitive_variable_limiters = new double[22 * number_of_cells];
+    for (int_fast32_t i = 0; i < 11 * number_of_cells; ++i) {
       _primitive_variable_limiters[2 * i] = DBL_MAX;
       _primitive_variable_limiters[2 * i + 1] = -DBL_MAX;
     }

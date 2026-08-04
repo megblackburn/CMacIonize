@@ -1,0 +1,2 @@
+/usr/bin/ar qc ../lib/libCMILibrary.a CMakeFiles/CMILibrary.dir/CMILibrary.cpp.o CMakeFiles/CMILibrary.dir/SPHArrayInterface.cpp.o
+/usr/bin/ranlib ../lib/libCMILibrary.a

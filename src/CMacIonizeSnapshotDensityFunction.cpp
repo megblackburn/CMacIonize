@@ -28,6 +28,9 @@
 #include "Log.hpp"
 #include "ParameterFile.hpp"
 #include <cinttypes>
+#include <random>
+#include <vector>
+#include <algorithm>
 
 /**
  * @brief Constructor.
@@ -41,12 +44,12 @@
  */
 CMacIonizeSnapshotDensityFunction::CMacIonizeSnapshotDensityFunction(
     std::string filename, const bool use_density, const bool use_pressure,
-    const double initial_neutral_fraction, const double dust_gas_ratio,
-    const double fraction_silicates, Log *log)
+    const double initial_neutral_fraction, const double dust_gas_ratio, const bool randomize_velocity_flag, const double temperature_to_randomize,
+    const double fraction_silicates, const bool trace_initial_neutral_flag, const bool restart_tracer_fields, const double temperature_to_trace, Log *log)
     : _filename(filename), _use_density(use_density),
       _use_pressure(use_pressure),
       _initial_neutral_fraction(initial_neutral_fraction),
-      _dust_gas_ratio(dust_gas_ratio), _fraction_silicates(fraction_silicates),
+      _dust_gas_ratio(dust_gas_ratio), _randomize_velocity_flag(randomize_velocity_flag), _temperature_to_randomize(temperature_to_randomize), _fraction_silicates(fraction_silicates), _trace_initial_neutral_flag(trace_initial_neutral_flag), _restart_tracer_fields(restart_tracer_fields), _temperature_to_trace(temperature_to_trace),
       _log(log),
       _cartesian_grid(nullptr), _amr_grid(nullptr),
       _voronoi_pointlocations(nullptr) {
@@ -81,8 +84,15 @@ CMacIonizeSnapshotDensityFunction::CMacIonizeSnapshotDensityFunction(
                                      1.e-6),
           params.get_value< double >("DensityFunction:dust to gas",
                                       0.0),
+          params.get_value< bool > ("DensityFunction:randomize velocity flag", false),
+          params.get_physical_value< QUANTITY_TEMPERATURE >(
+              "DensityFunction:temperature to randomize", "1e4 K"),
           params.get_value< double >("DensityFunction:fraction silicates",
                                                     1.e-6),
+          params.get_value< bool >("DensityFunction:trace initial neutral flag", false),
+          params.get_value< bool >("DensityFunction:restart tracer fields", false),
+          params.get_physical_value< QUANTITY_TEMPERATURE >(
+                "DensityFunction:temperature to trace", "500. K"),
 
           log) {}
 
@@ -261,6 +271,71 @@ void CMacIonizeSnapshotDensityFunction::initialize() {
         HDF5Tools::read_dataset< CoordinateVector<> >(group, "Velocities");
   }
 
+
+  if (_log) {
+    _log->write_info("Initial Cold Field...");
+  }
+
+  std::vector< double > cell_initial_cold_gas_field;
+  if (HDF5Tools::group_exists(group, "InitialColdField")) {
+    cell_initial_cold_gas_field = HDF5Tools::read_dataset< double >(group, "InitialColdField");
+  }
+
+
+  if (_log) {
+    _log->write_info("Cooled Cold Field...");
+  }
+
+  std::vector< double > cell_cooled_cold_gas_field;
+  if (HDF5Tools::group_exists(group, "CooledColdField")) {
+    cell_cooled_cold_gas_field = HDF5Tools::read_dataset< double >(group, "CooledColdField");
+  }
+
+  if (_log) {
+    _log->write_info("Remaining Initial Cold Field...");
+  }
+
+  std::vector< double > cell_remaining_initial_cold_gas_field;
+  if (HDF5Tools::group_exists(group, "RemainingInitialColdField")) {
+    cell_remaining_initial_cold_gas_field = HDF5Tools::read_dataset< double >(group, "RemainingInitialColdField");
+  }
+
+
+  if (_log) {
+    _log->write_info("Remaining Cooled Cold Field...");
+  }
+
+  std::vector< double > cell_remaining_cooled_cold_gas_field;
+  if (HDF5Tools::group_exists(group, "RemainingCooledColdField")) {
+    cell_remaining_cooled_cold_gas_field = HDF5Tools::read_dataset< double >(group, "RemainingCooledColdField");
+  }
+
+
+
+// mgb edit start 05.03.2026: shuffle the velocities of cells with temperature < 1000 K to avoid forming stars in already ionised regions 
+  if (_randomize_velocity_flag==true) {
+    std::vector<size_t> indices_to_shuffle;
+    for (size_t i = 0; i < cell_temperatures.size(); ++i) {
+        if (cell_temperatures[i] < _temperature_to_randomize) {
+            indices_to_shuffle.push_back(i);
+        }
+    }
+
+    std::vector<CoordinateVector<>> velocities_to_shuffle;
+    for (size_t idx : indices_to_shuffle) {
+        velocities_to_shuffle.push_back(cell_velocities[idx]);
+    }
+
+    std::random_device rd;
+    std::mt19937 g(rd());
+    std::shuffle(velocities_to_shuffle.begin(), velocities_to_shuffle.end(), g);
+
+    for (size_t i = 0; i < indices_to_shuffle.size(); ++i) {
+        cell_velocities[indices_to_shuffle[i]] = velocities_to_shuffle[i];
+    }
+  }
+  // mgb edit end 05.03.2026
+
   HDF5Tools::close_group(group);
 
   if (_log) {
@@ -377,6 +452,34 @@ void CMacIonizeSnapshotDensityFunction::initialize() {
                     cell_densities[cell_index]);
                 _cartesian_grid[ix][iy][iz].set_temperature(
                     cell_temperatures[cell_index]);
+                // mgb edit 12.06.2026: add neutral gas scalar field counter to count the original gas
+                if (_trace_initial_neutral_flag == true){
+
+                  if (_restart_tracer_fields == true){
+                    if (_cartesian_grid[ix][iy][iz].get_temperature() <= _temperature_to_trace){
+                        _cartesian_grid[ix][iy][iz].set_initial_neutral_scalar_field(1.0);
+                        _cartesian_grid[ix][iy][iz].set_remaining_initial_neutral_scalar_field(1.0);
+                    } else {
+                       _cartesian_grid[ix][iy][iz].set_initial_neutral_scalar_field(0.0);
+                       _cartesian_grid[ix][iy][iz].set_remaining_initial_neutral_scalar_field(0.0);
+                    }
+                  _cartesian_grid[ix][iy][iz].set_cooled_neutral_scalar_field(0.0);
+                  _cartesian_grid[ix][iy][iz].set_remaining_cooled_neutral_scalar_field(0.0);
+                  } else if (!cell_remaining_initial_cold_gas_field.empty() && !cell_remaining_cooled_cold_gas_field.empty() && !cell_initial_cold_gas_field.empty() && !cell_cooled_cold_gas_field.empty()) {
+                    _cartesian_grid[ix][iy][iz].set_initial_neutral_scalar_field(cell_initial_cold_gas_field[cell_index]);
+                    _cartesian_grid[ix][iy][iz].set_remaining_initial_neutral_scalar_field(cell_remaining_initial_cold_gas_field[cell_index]);
+                    _cartesian_grid[ix][iy][iz].set_cooled_neutral_scalar_field(cell_cooled_cold_gas_field[cell_index]);
+                    _cartesian_grid[ix][iy][iz].set_remaining_cooled_neutral_scalar_field(cell_remaining_cooled_cold_gas_field[cell_index]);
+
+                  }
+                } else {
+                    _cartesian_grid[ix][iy][iz].set_initial_neutral_scalar_field(0.);
+                    _cartesian_grid[ix][iy][iz].set_remaining_initial_neutral_scalar_field(0.);
+                    _cartesian_grid[ix][iy][iz].set_cooled_neutral_scalar_field(0.);
+                    _cartesian_grid[ix][iy][iz].set_remaining_cooled_neutral_scalar_field(0.);
+
+                } // end of mgb edit 12.06.2026
+
                 _cartesian_grid[ix][iy][iz].set_fraction_silicates(_fraction_silicates);
                 _cartesian_grid[ix][iy][iz].set_dust_gas_ratio(_dust_gas_ratio);
                 for (int_fast32_t ion = 0; ion < NUMBER_OF_IONNAMES; ++ion) {
@@ -408,6 +511,7 @@ void CMacIonizeSnapshotDensityFunction::initialize() {
         }
       }
     }
+   
   } else if (type == "AMR") {
     // find the smallest number of blocks that fits the requested top level grid
     uint_fast32_t power_of_2_x = get_power_of_two(_ncell.x());

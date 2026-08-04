@@ -86,6 +86,8 @@ enum Quantity {
   QUANTITY_TIME,
   QUANTITY_VELOCITY,
   QUANTITY_VOLUME,
+  QUANTITY_MAGNETIC_FIELD, // mgb edit 21.04.2026
+  QUANTITY_MAGNETIC_FIELD_PSI, // mgb edit 21.04.2026
   NUMBER_OF_QUANTITIES
 };
 
@@ -162,6 +164,9 @@ public:
       return Unit(1., -1, -2, 1, 0, 0, 0);
     } else if (name == "bar") {
       return Unit(1.e5, -1, -2, 1, 0, 0, 0);
+    } else if (name == "T") { // mgb edit 21.04.2026
+      return Unit(1.0, 0,1,-2,-1,0,0); // 
+      /// add new units above
     } else {
       /// error handler
       cmac_error("Unknown unit: \"%s\"!", name.c_str());
@@ -229,6 +234,10 @@ public:
       return "m s^-1";
     case QUANTITY_VOLUME:
       return "m^3";
+    case QUANTITY_MAGNETIC_FIELD: // mgb edit 21.04.2026
+      return "T";
+    case QUANTITY_MAGNETIC_FIELD_PSI: // mgb edit 21.04.2026
+      return "T";
     default:
       cmac_error("Unknown quantity: %i!", quantity);
       return "";

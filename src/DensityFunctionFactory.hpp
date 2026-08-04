@@ -39,6 +39,11 @@
 #include "CoredDMProfileDensityFunction.hpp"
 #include "DiscICDensityFunction.hpp"
 #include "DiscPatchDensityFunction.hpp"
+#include "DiscPatchHydroEquilibriumDensityFunction.hpp"
+#include "DiscPatchDIGDensityFunction.hpp"
+#include "SolarNeighborhoodDensityFunction.hpp"
+#include "ArepoTallboxSnapshotDensityFunction.hpp"
+#include "StarburstDensityFunction.hpp" // mgb edit 09.07.2026
 #include "HomogeneousDensityFunction.hpp"
 #include "InterpolatedDensityFunction.hpp"
 #include "PhantomSnapshotDensityFunction.hpp"
@@ -149,9 +154,18 @@ public:
       return new DiscICDensityFunction(params, log);
     } else if (type == "DiscPatch") {
       return new DiscPatchDensityFunction(params);
+    } else if (type == "Starburst") {
+      return new StarburstDensityFunction(params);
+    } else if (type == "DiscPatchHydroEquilibrium") {
+      return new DiscPatchHydroEquilibriumDensityFunction(params);
+    } else if (type == "DiscPatchDIG"){
+      return new DiscPatchDIGDensityFunction(params);
     } else if (type == "Homogeneous") {
       return new HomogeneousDensityFunction(params, log);
-    } else if (type == "HDF5") {
+    } //else if (type == "SolarNeighborhood") {
+      //return new SolarNeighborhoodDensityFunction(params, log);
+    //}
+     else if (type == "HDF5") {
       return new HDF5DensityFunction(params, log);
     } else if (type == "Interpolated") {
       return new InterpolatedDensityFunction(params, log);
@@ -166,6 +180,8 @@ public:
       return new AmunSnapshotDensityFunction(params, log);
     } else if (type == "ArepoSnapshot") {
       return new ArepoSnapshotDensityFunction(params, log);
+    } else if (type == "ArepoTallboxSnapshot") {
+      return new ArepoTallboxSnapshotDensityFunction(params, log);
     } else if (type == "BufferedCMacIonizeSnapshot") {
       return new BufferedCMacIonizeSnapshotDensityFunction(params, log);
     } else if (type == "CMacIonizeSnapshot") {

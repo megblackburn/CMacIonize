@@ -1,0 +1,7 @@
+
+#ifndef COLLISIONALRATESDATALOCATION_HPP
+#define COLLISIONALRATESDATALOCATION_HPP
+
+#define COLLISIONALDATALOCATION "/Users/meg/Desktop/PhD/newcmac/CMacIonize/src/data/chianti_col_rates/"
+
+#endif // COLLISIONALRATESDATALOCATION_HPP

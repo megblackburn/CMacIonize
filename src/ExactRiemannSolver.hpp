@@ -1001,6 +1001,19 @@ public:
     }
   }
 
+  virtual void solve_for_flux_MHD(const double rhoL, const CoordinateVector<> uL,
+                                const double PL, const CoordinateVector<> BL, 
+                                const double BL_scalar, 
+                                const double rhoR, const CoordinateVector<> uR, 
+                                const double PR, const CoordinateVector<> BR, 
+                                const double BR_scalar,
+                                double &mflux, CoordinateVector<> &pflux,
+                                double &Eflux, double &EintFlux, CoordinateVector<> &Bflux, 
+                                double &B_scalarflux, const CoordinateVector<> normal, double current_etot, double _mach_limit, double current_eint,
+                                const CoordinateVector<> vface) const override {
+    // ExactRiemannSolver is hydro-only.
+    cmac_error("ExactRiemannSolver does not support MHD flux calculations!");
+  }
   /**
    * @brief Solve the Riemann problem with the given left and right state and
    * get the resulting flux accross an interface.
@@ -1021,7 +1034,7 @@ public:
                               const double PL, const double rhoR,
                               const CoordinateVector<> uR, const double PR,
                               double &mflux, CoordinateVector<> &pflux,
-                              double &Eflux, const CoordinateVector<> normal,
+                              double &Eflux, double &EintFlux, const CoordinateVector<> normal,
                               const CoordinateVector<> vface = 0.) const {
 
     // check input values
@@ -1073,8 +1086,10 @@ public:
 
       // rho*e = rho*u + 0.5*rho*v^2 = P/(gamma-1.) + 0.5*rho*v^2
       double rhoesol;
+      double rhoeintsol = 0.;
       if (_gamma > 1.) {
         rhoesol = 0.5 * rhosol * usol.norm2() + Psol * _gm1inv;
+        rhoeintsol = Psol * _gm1inv;
       } else {
         // this flux will be ignored, but we make sure it has a sensible value
         rhoesol = 0.5 * rhosol * usol.norm2();
@@ -1085,18 +1100,21 @@ public:
       mflux = rhosol * vsol;
       pflux = rhosol * vsol * usol + Psol * normal;
       Eflux = (rhoesol + Psol) * vsol;
+      EintFlux = rhoeintsol * vsol;
 
       // de-boost fluxes to fixed reference frame
       const double vface2 = vface.norm2();
       Eflux +=
           CoordinateVector<>::dot_product(vface, pflux) + 0.5 * vface2 * mflux;
       pflux += mflux * vface;
+      EintFlux += rhoeintsol * CoordinateVector<>::dot_product(vface, normal);
     } else {
       mflux = 0.;
       pflux[0] = 0.;
       pflux[1] = 0.;
       pflux[2] = 0.;
       Eflux = 0.;
+      EintFlux = 0.;
     }
   }
 };

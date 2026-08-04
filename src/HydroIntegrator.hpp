@@ -128,6 +128,8 @@ private:
   /*! @brief Bondi profile used for Bondi boundary conditions. */
   const BondiProfile *_bondi_profile;
 
+  const RiemannSolverFactory *_riemann_solver_factory;
+
   /**
    * @brief Get the HydroBoundaryConditionType corresponding to the given type
    * string.
@@ -365,7 +367,7 @@ public:
         const double dR_over_r, const RiemannSolver &solver,
         const CoordinateVector<> normal, const CoordinateVector<> vframe,
         const double surface_area, const double timestep, const bool isothermal,
-        double &mflux, CoordinateVector<> &pflux, double &Eflux) {
+        double &mflux, CoordinateVector<> &pflux, double &Eflux, double &EintFlux) {
 
       cmac_assert_message(rhoL == rhoL, "rhoL: %g, uL: [%g %g %g], PL: %g",
                           rhoL, uL.x(), uL.y(), uL.z(), PL);
@@ -472,7 +474,7 @@ public:
 #endif
 
       solver.solve_for_flux(rhoL_prime, uL_prime, PL_prime, rhoR_prime,
-                            uR_prime, PR_prime, mflux, pflux, Eflux, normal,
+                            uR_prime, PR_prime, mflux, pflux, Eflux, EintFlux, normal,
                             vframe);
 
       cmac_assert_message(mflux == mflux,
@@ -520,6 +522,7 @@ public:
       mflux *= tfac;
       pflux *= tfac;
       Eflux *= tfac;
+      EintFlux *= tfac;
     }
 
   public:
@@ -699,11 +702,12 @@ public:
         double mflux;
         CoordinateVector<> pflux;
         double Eflux;
+        double EintFlux;
         compute_fluxes(rhoL, uL, PL, rhoR, uR, PR, gradrhoL, graduL, gradPL,
                        gradrhoR, graduR, gradPR, dL, dR, dL_over_r, dR_over_r,
                        *_hydro_integrator._solver, normal, vframe, surface_area,
                        _timestep, _hydro_integrator._gamma == 1., mflux, pflux,
-                       Eflux);
+                       Eflux, EintFlux);
 
 #ifdef FLUX_LIMITER
         const double fluxfac = limit_flux(
@@ -716,6 +720,7 @@ public:
         mflux *= fluxfac;
         pflux *= fluxfac;
         Eflux *= fluxfac;
+        EintFlux *= fluxfac;
 #endif
 
         cell.get_hydro_variables().delta_conserved(0) += mflux;
@@ -723,6 +728,7 @@ public:
         cell.get_hydro_variables().delta_conserved(2) += pflux.y();
         cell.get_hydro_variables().delta_conserved(3) += pflux.z();
         cell.get_hydro_variables().delta_conserved(4) += Eflux;
+        cell.get_hydro_variables().delta_conserved(10) += EintFlux;
       }
     }
   };
@@ -1225,10 +1231,10 @@ public:
         _hydro_units->get_unit_SI_value< QUANTITY_VOLUME >());
     WorkDistributor<
         DensityGridTraversalJobMarket<
-            GradientCalculator::GradientComputation >,
-        DensityGridTraversalJob< GradientCalculator::GradientComputation > >
+            GradientCalculator::GradientComputation, DensityGrid >,
+        DensityGridTraversalJob< GradientCalculator::GradientComputation, DensityGrid > >
         gradient_workers;
-    DensityGridTraversalJobMarket< GradientCalculator::GradientComputation >
+    DensityGridTraversalJobMarket< GradientCalculator::GradientComputation, DensityGrid >
         gradient_jobs(grid, gradient_computation, block);
     hydro_start_parallel_timing_block();
     gradient_workers.do_in_parallel(gradient_jobs);
@@ -1311,10 +1317,10 @@ public:
     HydroFluxComputation hydro_flux_computation(*this, grid, grid_end,
                                                 internal_timestep);
 
-    WorkDistributor< DensityGridTraversalJobMarket< HydroFluxComputation >,
-                     DensityGridTraversalJob< HydroFluxComputation > >
+    WorkDistributor< DensityGridTraversalJobMarket< HydroFluxComputation, DensityGrid >,
+                     DensityGridTraversalJob< HydroFluxComputation, DensityGrid > >
         workers;
-    DensityGridTraversalJobMarket< HydroFluxComputation > jobs(
+    DensityGridTraversalJobMarket< HydroFluxComputation, DensityGrid > jobs(
         grid, hydro_flux_computation, block);
     grid.reset_access_flags();
     hydro_start_parallel_timing_block();

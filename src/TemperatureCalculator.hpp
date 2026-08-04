@@ -1,21 +1,3 @@
-/*******************************************************************************
- * This file is part of CMacIonize
- * Copyright (C) 2016 Bert Vandenbroucke (bert.vandenbroucke@gmail.com)
- *
- * CMacIonize is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * CMacIonize is distributed in the hope that it will be useful,
- * but WITOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with CMacIonize. If not, see <http://www.gnu.org/licenses/>.
- ******************************************************************************/
-
 /**
  * @file TemperatureCalculator.hpp
  *
@@ -28,6 +10,9 @@
 #define TEMPERATURECALCULATOR_HPP
 
 #include "DensityGrid.hpp"
+#include "DensitySubGrid.hpp" // mgb edit 24.04.2026
+#include "DensityGridMHD.hpp"
+#include "DensitySubGridMHD.hpp"
 #include "IonizationStateCalculator.hpp"
 #include "ParameterFile.hpp"
 
@@ -212,19 +197,22 @@ public:
      *
      * @param cell DensityGrid::iterator pointing to a single cell in the grid.
      */
-    inline void operator()(DensityGrid::iterator cell) {
+      template<typename IteratorType> // mgb edit 24.04.2026
+    inline void operator()( IteratorType cell) {
       _calculator.calculate_temperature(
           cell.get_ionization_variables(), _jfac / cell.get_volume(),
           _hfac / cell.get_volume(), cell.get_cell_midpoint(),_timestep);
     }
   };
-
+  template<typename GridType>
   void calculate_temperature(uint_fast32_t loop, double totweight,
-                             DensityGrid &grid,
+                             GridType &grid,
                              std::pair< cellsize_t, cellsize_t > &block, double timestep) const;
-
+  template<typename SubGridType>
   void calculate_temperature(const uint_fast32_t loop, const double totweight,
-                             DensitySubGrid &subgrid, double timestep, bool time_dependent, bool do_metals) const;
+                             SubGridType &subgrid, double timestep, bool time_dependent, bool do_metals) const;
+
+
 };
 
 #endif // TEMPERATURECALCULATOR_HPP

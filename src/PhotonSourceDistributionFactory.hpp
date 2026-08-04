@@ -46,6 +46,12 @@
 #include "IMFDiscPhotonSourceDistribution.hpp"
 #include "PeakDrivingPhotonSourceDistribution.hpp"
 #include "MixedDrivingPhotonSourceDistribution.hpp"
+#include "BurstyPhotonSourceDistribution.hpp"
+#include "BurstyPhotonSourceDistributionAsymmetric.hpp"
+#include "MilkyWayPhotonSourceDistribution.hpp" // mgb edit 02.06.2026
+#include "MovingSourcesPhotonSourceDistribution.hpp" // mgb edit 05.03.2026
+#include "ArepoTallboxSnapshotPhotonSourceDistribution.hpp" // mgb edit 30.06.2026
+#include "StarburstPhotonSourceDistribution.hpp" // mgb edit 09.07.2026
 #include "StellarClusterPhotonSourceDistribution.hpp"
 #include "SinkStarPhotonSourceDistribution.hpp"
 
@@ -130,6 +136,16 @@ public:
       return new PeakDrivingPhotonSourceDistribution(params, log);
     } else if (type == "MixedDriving") {
       return new MixedDrivingPhotonSourceDistribution(params,log);
+    } else if (type == "Bursty")  {
+      return new BurstyPhotonSourceDistribution(params, log); // edit mgb 19.09.2025
+    } else if (type == "BurstyAsymmetric"){
+      return new BurstyPhotonSourceDistributionAsymmetric(params,log); // mgb edit 14.11.2025 
+    } else if (type == "MilkyWay"){
+      return new MilkyWayPhotonSourceDistribution(params, log);
+    } else if (type == "MovingSources"){
+      return new MovingSourcesPhotonSourceDistribution(params,log); // mgb edit 05.03.2026
+    } else if (type == "ArepoTallboxSnapshot") {
+      return new ArepoTallboxSnapshotPhotonSourceDistribution(params, log); // mgb edit 30.06.2026
     } else if (type == "SILCC") {
       return new SILCCPhotonSourceDistribution(params, log);
     } else if (type == "SingleStar") {
@@ -140,6 +156,8 @@ public:
       return new SinkStarPhotonSourceDistribution(params, log);
     } else if (type == "StellarCluster") {
       return new StellarClusterPhotonSourceDistribution(params, log);
+    } else if (type == "Starburst") {
+      return new StarburstPhotonSourceDistribution(params, log);
     } else if (type  == "TextFile") {
       return new TextFilePhotonSourceDistribution(params,log);
     } else if (type == "UniformRandom") {
@@ -198,6 +216,16 @@ public:
       return new PeakDrivingPhotonSourceDistribution(restart_reader);
     } else if (tag == typeid(MixedDrivingPhotonSourceDistribution).name()) {
       return new MixedDrivingPhotonSourceDistribution(restart_reader);
+    } else if (tag == typeid(BurstyPhotonSourceDistribution).name()) {
+      return new BurstyPhotonSourceDistribution(restart_reader); // edit mgb 19.09.2025
+    } else if (tag == typeid(BurstyPhotonSourceDistributionAsymmetric).name()){
+      return new BurstyPhotonSourceDistributionAsymmetric(restart_reader); // mgb edit 14.11.2025
+    } else if (tag == typeid(MilkyWayPhotonSourceDistribution).name()){
+      return new MilkyWayPhotonSourceDistribution(restart_reader); // mgb edit 20.01.2026
+    } else if (tag == typeid(MovingSourcesPhotonSourceDistribution).name()){
+      return new MovingSourcesPhotonSourceDistribution(restart_reader); // mgb edit 05.03.2026
+    } else if (tag == typeid(ArepoTallboxSnapshotPhotonSourceDistribution).name()){
+      return new ArepoTallboxSnapshotPhotonSourceDistribution(restart_reader); // mgb edit 30.06.2026
     } else if (tag == typeid(SingleStarPhotonSourceDistribution).name()) {
       return new SingleStarPhotonSourceDistribution(restart_reader);
     } else if (tag == typeid(SingleSupernovaPhotonSourceDistribution).name()) {
@@ -206,6 +234,8 @@ public:
       return new SinkStarPhotonSourceDistribution(restart_reader);
     } else if (tag == typeid(StellarClusterPhotonSourceDistribution).name()) {
       return new StellarClusterPhotonSourceDistribution(restart_reader);
+    } else if (tag == typeid(StarburstPhotonSourceDistribution).name()) {
+      return new StarburstPhotonSourceDistribution(restart_reader);
     } else if (tag == typeid(UniformRandomPhotonSourceDistribution).name()) {
       return new UniformRandomPhotonSourceDistribution(restart_reader);
 #ifdef HAVE_HDF5

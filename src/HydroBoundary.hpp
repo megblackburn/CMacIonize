@@ -92,7 +92,7 @@ public:
 
     HydroVariables right_state;
 
-    for (uint_fast8_t j = 0; j < 5; ++j) {
+    for (uint_fast8_t j = 0; j < 11; ++j) {
       right_state.primitives(j) = left_state.primitives(j);
     }
 
@@ -116,7 +116,7 @@ public:
 
     HydroVariables right_state;
 
-    for (uint_fast8_t j = 0; j < 5; ++j) {
+    for (uint_fast8_t j = 0; j < 11; ++j) {
       right_state.primitives(j) = left_state.primitives(j);
       right_state.primitive_gradients(j) = left_state.primitive_gradients(j);
     }
@@ -146,7 +146,7 @@ public:
 
     HydroVariables right_state;
 
-    for (uint_fast8_t j = 0; j < 5; ++j) {
+    for (uint_fast8_t j = 0; j < 11; ++j) {
       right_state.primitives(j) = left_state.primitives(j);
     }
     // we need to reverse the velocity component aligned with the surface
@@ -175,7 +175,7 @@ public:
 
     HydroVariables right_state;
 
-    for (uint_fast8_t j = 0; j < 5; ++j) {
+    for (uint_fast8_t j = 0; j < 11; ++j) {
       right_state.primitives(j) = left_state.primitives(j);
       right_state.primitive_gradients(j) = left_state.primitive_gradients(j);
     }
@@ -211,7 +211,7 @@ public:
 
     HydroVariables right_state;
 
-    for (uint_fast8_t j = 0; j < 5; ++j) {
+    for (uint_fast8_t j = 0; j < 11; ++j) {
       right_state.primitives(j) = left_state.primitives(j);
     }
     // we need to reverse the velocity component aligned with the surface normal
@@ -237,7 +237,7 @@ public:
 
     HydroVariables right_state;
 
-    for (uint_fast8_t j = 0; j < 5; ++j) {
+    for (uint_fast8_t j = 0; j < 11; ++j) {
       right_state.primitives(j) = left_state.primitives(j);
       right_state.primitive_gradients(j) = left_state.primitive_gradients(j);
     }

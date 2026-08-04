@@ -36,16 +36,16 @@
 class HydroVariables {
 private:
   /*! @brief Primitive variables. */
-  double _primitives[5];
+  double _primitives[11];
 
   /*! @brief Conserved variables. */
-  double _conserved[5];
+  double _conserved[11];
 
   /*! @brief Conserved variable changes. */
-  double _delta_conserved[5];
+  double _delta_conserved[11];
 
   /*! @brief Gradients for the primitive variables. */
-  CoordinateVector<> _primitive_gradients[5];
+  CoordinateVector<> _primitive_gradients[11];
 
   /*! @brief Gravitational acceleration (in m s^-2). */
   CoordinateVector<> _gravitational_acceleration;
@@ -63,8 +63,8 @@ public:
    * @brief (Empty) constructor.
    */
   inline HydroVariables()
-      : _primitives{0., 0., 0., 0., 0.}, _conserved{0., 0., 0., 0., 0.},
-        _delta_conserved{0., 0., 0., 0., 0.}, _energy_rate_term(0.),
+      : _primitives{0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.}, _conserved{0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.},
+        _delta_conserved{0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.}, _energy_rate_term(0.),
         _energy_term(0.),_gravitational_potential(0.) {}
 
   /**
@@ -111,6 +111,52 @@ public:
    */
   inline double get_primitives_pressure() const { return _primitives[4]; }
 
+
+  /**
+   * @brief Get the primitive initial cold field..
+   *
+   * @return Fluid pressure (in kg m^-1 s^-2).
+   */
+  inline double get_primitives_initial_cold_field() const { return _primitives[5]; }
+
+  /**
+   * @brief Get the primitive cooled cold field.
+   *
+   * @return Fluid pressure (in kg m^-1 s^-2).
+   */
+  inline double get_primitives_cooled_cold_field() const { return _primitives[6]; }
+
+
+  /**
+   * @brief Get the primitive remaining cold initial cold field.
+   *
+   * @return Fluid pressure (in kg m^-1 s^-2).
+   */
+  inline double get_primitives_remaining_initial_cold_field() const { return _primitives[7]; }
+
+  /**
+   * @brief Get the primitive remaining cold cooled cold field.
+   *
+   * @return Fluid pressure (in kg m^-1 s^-2).
+   */
+  inline double get_primitives_remaining_cooled_cold_field() const { return _primitives[8]; }
+
+  /**
+   * @brief Get the primitive cold gas cooled at this timestep.
+   *
+   * @return Fluid pressure (in kg m^-1 s^-2).
+   */
+  inline double get_primitives_currently_cooled_cold_field() const { return _primitives[9]; }
+
+  /**
+   * @brief Get the internal energy scalar field.
+   *
+   * @return Internal energy scalar field.
+   */
+  inline double get_primitives_internal_energy() const { return _primitives[10]; } // end of mgb edit 21.04.2026
+  
+  
+
   /**
    * @brief Set the fluid density.
    *
@@ -139,6 +185,63 @@ public:
   inline void set_primitives_pressure(const double pressure) {
     _primitives[4] = pressure;
   }
+
+  /**
+   * @brief Set the fluid initial cold scalar field.
+   *
+   * @param initial_cold_scalar New fluid pressure (in kg m^-1 s^-2).
+   */
+  inline void set_primitives_initial_cold_field(const double initial_cold_scalar) {
+    _primitives[5] = initial_cold_scalar;
+  }
+
+
+  /**
+   * @brief Set the fluid cooled cold scalar field.
+   *
+   * @param cooled_cold_scalar New fluid pressure (in kg m^-1 s^-2).
+   */
+  inline void set_primitives_cooled_cold_field(const double cooled_cold_scalar) {
+    _primitives[6] = cooled_cold_scalar;
+  }
+
+  /**
+   * @brief Set the fluid remaining cold initial cold scalar field.
+   *
+   * @param remaining_initial_cold_scalar New fluid pressure (in kg m^-1 s^-2).
+   */
+  inline void set_primitives_remaining_initial_cold_field(const double remaining_initial_cold_scalar) {
+    _primitives[7] = remaining_initial_cold_scalar;
+  }
+
+  /**
+   * @brief Set the fluid initial cold scalar field.
+   *
+   * @param remaining_cooled_cold_scalar New fluid pressure (in kg m^-1 s^-2).
+   */
+  inline void set_primitives_remaining_cooled_cold_field(const double remaining_cooled_cold_scalar) {
+    _primitives[8] = remaining_cooled_cold_scalar;
+  }
+
+  /**
+   * @brief Set the fluid initial cold scalar field.
+   *
+   * @param currently_cooled_cold_scalar New fluid pressure (in kg m^-1 s^-2).
+   */
+  inline void set_primitives_currently_cooled_cold_field(const double currently_cooled_cold_scalar) {
+    _primitives[9] = currently_cooled_cold_scalar;
+  }
+
+  /**
+   * @brief Set the internal energy scalar field.
+   *
+   * @param internal_energy New internal energy scalar field.
+   */
+  inline void set_primitives_internal_energy(const double internal_energy) {
+    _primitives[10] = internal_energy;
+  } // end of mgb edit 21.04.2026
+
+
 
   /**
    * @brief Get read only access to the given component of the conserved
@@ -185,6 +288,52 @@ public:
   inline double get_conserved_total_energy() const { return _conserved[4]; }
 
   /**
+   * @brief Get the conserved initial cold field.
+   *
+   * @return Fluid total energy (in kg m^2 s^-2).
+   */
+  inline double get_conserved_initial_cold_field() const { return _conserved[5]; }
+
+  /**
+   * @brief Get the conserved cooled cold field.
+   *
+   * @return Fluid total energy (in kg m^2 s^-2).
+   */
+  inline double get_conserved_cooled_cold_field() const { return _conserved[6]; }
+
+
+  /**
+   * @brief Get the conserved remaining cold initial cold field.
+   *
+   * @return Fluid total energy (in kg m^2 s^-2).
+   */
+  inline double get_conserved_remaining_initial_cold_field() const { return _conserved[7]; }
+
+
+  /**
+   * @brief Get the conserved remaining cold cooled cold field.
+   *
+   * @return Fluid total energy (in kg m^2 s^-2).
+   */
+  inline double get_conserved_remaining_cooled_cold_field() const { return _conserved[8]; }
+
+  /**
+   * @brief Get the conserved tracker for currently cooled cold gas.
+   *
+   * @return Fluid total energy (in kg m^2 s^-2).
+   */
+  inline double get_conserved_currently_cooled_cold_field() const { return _conserved[9]; }
+
+  /**
+   * @brief Get the internal energy
+   *
+   * @return Fluid scalar field.
+   */
+  inline double get_conserved_internal_energy() const { return _conserved[10]; } // end of mgb edit 21.04.2026
+
+
+
+  /**
    * @brief Set the fluid mass.
    *
    * @param mass New fluid mass (in kg).
@@ -210,6 +359,56 @@ public:
   inline void set_conserved_total_energy(const double total_energy) {
     _conserved[4] = total_energy;
   }
+
+  /**
+   * @brief Set the fluid initial cold field.
+   *
+   * @param initial_cold_field_density (in kg m^-3).
+   */
+  inline void set_conserved_initial_cold_field(const double initial_cold_field_density) {
+    _conserved[5] = initial_cold_field_density;
+  }
+
+  /**
+   * @brief Set the fluid initial cold field.
+   *
+   * @param cooled_cold_field_density  (in kg m^-3).
+   */
+  inline void set_conserved_cooled_cold_field(const double cooled_cold_field_density) {
+    _conserved[6] = cooled_cold_field_density;
+  }
+
+
+  /**
+   * @brief Set the fluid remaining cold initial cold scalar field.
+   *
+   * @param remaining_initial_cold_density New fluid pressure (in kg m^-1 s^-2).
+   */
+  inline void set_conserved_remaining_initial_cold_field(const double remaining_initial_cold_density) {
+    _conserved[7] = remaining_initial_cold_density;
+  }
+
+  /**
+   * @brief Set the fluid initial cold scalar field.
+   *
+   * @param remaining_cooled_cold_density New fluid pressure (in kg m^-1 s^-2).
+   */
+  inline void set_conserved_remaining_cooled_cold_field(const double remaining_cooled_cold_density) {
+    _conserved[8] = remaining_cooled_cold_density;
+  }
+
+  /**
+   * @brief Set the fluid initial cold scalar field.
+   *
+   * @param currently_cooled_cold_density New fluid pressure (in kg m^-1 s^-2).
+   */
+  inline void set_conserved_currently_cooled_cold_field(const double currently_cooled_cold_density) {
+    _conserved[9] = currently_cooled_cold_density;
+  }
+
+  inline void set_conserved_internal_energy(const double internal_energy) {
+    _conserved[10] = internal_energy;
+  } 
 
   /**
    * @brief Get read only access to the given component of the conserved
@@ -330,7 +529,7 @@ public:
    */
   inline void copy_all(const HydroVariables &other) {
 
-    for (uint_fast8_t i = 0; i < 5; ++i) {
+    for (uint_fast8_t i = 0; i < 11; ++i) {
       _primitives[i] = other._primitives[i];
       _conserved[i] = other._conserved[i];
       _delta_conserved[i] = other._delta_conserved[i];
@@ -349,7 +548,7 @@ public:
    */
   inline void write_restart_file(RestartWriter &restart_writer) const {
 
-    for (uint_fast8_t i = 0; i < 5; ++i) {
+    for (uint_fast8_t i = 0; i < 11; ++i) {
       restart_writer.write(_primitives[i]);
       restart_writer.write(_conserved[i]);
       restart_writer.write(_delta_conserved[i]);
@@ -367,7 +566,7 @@ public:
    */
   inline HydroVariables(RestartReader &restart_reader) {
 
-    for (uint_fast8_t i = 0; i < 5; ++i) {
+    for (uint_fast8_t i = 0; i < 11; ++i) {
       _primitives[i] = restart_reader.read< double >();
       _conserved[i] = restart_reader.read< double >();
       _delta_conserved[i] = restart_reader.read< double >();

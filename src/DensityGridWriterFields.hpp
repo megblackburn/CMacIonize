@@ -61,6 +61,11 @@ enum DensityGridField {
   DENSITYGRIDFIELD_TOTAL_ENERGY,
   DENSITYGRIDFIELD_ACCELERATION,
   DENSITYGRIDFIELD_PHOTONCOUNTER,
+  DENSITYGRIDFIELD_INITIALCOLDFIELD,
+  DENSITYGRIDFIELD_COOLEDCOLDFIELD,
+  DENSITYGRIDFIELD_REMAININGINITIALCOLDFIELD,
+  DENSITYGRIDFIELD_REMAININGCOOLEDCOLDFIELD,
+  DENSITYGRIDFIELD_CURRENTLYCOOLEDCOLDFIELD,
   DENSITYGRIDFIELD_NUMBER
 };
 
@@ -126,6 +131,16 @@ public:
       return DENSITYGRIDFIELDTYPE_VECTOR_DOUBLE;
     case DENSITYGRIDFIELD_PHOTONCOUNTER:
       return DENSITYGRIDFIELDTYPE_SCALAR_DOUBLE;
+    case DENSITYGRIDFIELD_INITIALCOLDFIELD:
+      return DENSITYGRIDFIELDTYPE_SCALAR_DOUBLE;
+    case DENSITYGRIDFIELD_COOLEDCOLDFIELD:
+      return DENSITYGRIDFIELDTYPE_SCALAR_DOUBLE;
+    case DENSITYGRIDFIELD_REMAININGINITIALCOLDFIELD:
+      return DENSITYGRIDFIELDTYPE_SCALAR_DOUBLE;
+    case DENSITYGRIDFIELD_REMAININGCOOLEDCOLDFIELD:
+      return DENSITYGRIDFIELDTYPE_SCALAR_DOUBLE;
+    case DENSITYGRIDFIELD_CURRENTLYCOOLEDCOLDFIELD:
+      return DENSITYGRIDFIELDTYPE_SCALAR_DOUBLE;
     default:
       cmac_error("Unknown DensityGridField: %" PRIiFAST32, field_name);
       return DENSITYGRIDFIELDTYPE_NUMBER;
@@ -178,6 +193,16 @@ public:
       return "Acceleration";
     case DENSITYGRIDFIELD_PHOTONCOUNTER:
       return "PhotonCounter";
+    case DENSITYGRIDFIELD_INITIALCOLDFIELD:
+      return "InitialColdField";
+    case DENSITYGRIDFIELD_COOLEDCOLDFIELD:
+      return "CooledColdField";
+    case DENSITYGRIDFIELD_REMAININGINITIALCOLDFIELD:
+      return "RemainingInitialColdField";
+    case DENSITYGRIDFIELD_REMAININGCOOLEDCOLDFIELD:
+      return "RemainingCooledColdField";
+    case DENSITYGRIDFIELD_CURRENTLYCOOLEDCOLDFIELD:
+      return "CurrentlyCooledColdField";
     default:
       cmac_error("Unknown DensityGridField: %" PRIiFAST32, field_name);
       return "";
@@ -234,6 +259,16 @@ public:
       return false;
     case DENSITYGRIDFIELD_PHOTONCOUNTER:
       return false;
+    case DENSITYGRIDFIELD_INITIALCOLDFIELD:
+      return false;
+    case DENSITYGRIDFIELD_COOLEDCOLDFIELD:
+      return false;
+    case DENSITYGRIDFIELD_REMAININGINITIALCOLDFIELD:
+      return false;
+    case DENSITYGRIDFIELD_REMAININGCOOLEDCOLDFIELD:
+      return false;
+    case DENSITYGRIDFIELD_CURRENTLYCOOLEDCOLDFIELD:
+      return false;
     default:
       cmac_error("Unknown DensityGridField: %" PRIiFAST32, field_name);
       return false;
@@ -286,6 +321,17 @@ public:
       return false;
     case DENSITYGRIDFIELD_PHOTONCOUNTER:
       return false;
+    case DENSITYGRIDFIELD_INITIALCOLDFIELD:
+      return false;
+    case DENSITYGRIDFIELD_COOLEDCOLDFIELD:
+      return false;
+    case DENSITYGRIDFIELD_REMAININGINITIALCOLDFIELD:
+      return false;
+    case DENSITYGRIDFIELD_REMAININGCOOLEDCOLDFIELD:
+      return false;
+    case DENSITYGRIDFIELD_CURRENTLYCOOLEDCOLDFIELD:
+      return false;
+
     default:
       cmac_error("Unknown DensityGridField: %" PRIiFAST32, field_name);
       return false;
@@ -338,6 +384,16 @@ public:
       return false;
     case DENSITYGRIDFIELD_PHOTONCOUNTER:
       return false;
+    case DENSITYGRIDFIELD_INITIALCOLDFIELD:
+      return false;
+    case DENSITYGRIDFIELD_COOLEDCOLDFIELD:
+      return false;
+    case DENSITYGRIDFIELD_REMAININGINITIALCOLDFIELD:
+      return false;
+    case DENSITYGRIDFIELD_REMAININGCOOLEDCOLDFIELD:
+      return false;
+    case DENSITYGRIDFIELD_CURRENTLYCOOLEDCOLDFIELD:
+      return false;
     default:
       cmac_error("Unknown DensityGridField: %" PRIiFAST32, field_name);
       return false;
@@ -389,6 +445,16 @@ public:
     case DENSITYGRIDFIELD_ACCELERATION:
       return true;
     case DENSITYGRIDFIELD_PHOTONCOUNTER:
+      return false;
+    case DENSITYGRIDFIELD_INITIALCOLDFIELD:
+      return false;
+    case DENSITYGRIDFIELD_COOLEDCOLDFIELD:
+      return false;
+    case DENSITYGRIDFIELD_REMAININGINITIALCOLDFIELD:
+      return false;
+    case DENSITYGRIDFIELD_REMAININGCOOLEDCOLDFIELD:
+      return false;
+    case DENSITYGRIDFIELD_CURRENTLYCOOLEDCOLDFIELD:
       return false;
     default:
       cmac_error("Unknown DensityGridField: %" PRIiFAST32, field_name);
@@ -450,6 +516,22 @@ public:
     case DENSITYGRIDFIELD_PHOTONCOUNTER: {
       return it.get_ionization_variables().get_counter(false);
     }
+    case DENSITYGRIDFIELD_INITIALCOLDFIELD: {
+      return it.get_hydro_variables().get_primitives_initial_cold_field();
+    }
+    case DENSITYGRIDFIELD_COOLEDCOLDFIELD: {
+      return it.get_hydro_variables().get_primitives_cooled_cold_field();
+    }
+    case DENSITYGRIDFIELD_REMAININGINITIALCOLDFIELD: {
+      return it.get_hydro_variables().get_primitives_remaining_initial_cold_field();
+    }
+    case DENSITYGRIDFIELD_REMAININGCOOLEDCOLDFIELD: {
+      return it.get_hydro_variables().get_primitives_remaining_cooled_cold_field();
+    }
+    case DENSITYGRIDFIELD_CURRENTLYCOOLEDCOLDFIELD: {
+      return it.get_hydro_variables().get_primitives_currently_cooled_cold_field();
+    }
+
     default:
       cmac_error("Not a scalar DensityGridField: %" PRIiFAST32, field_name);
       return 0.;
@@ -510,6 +592,21 @@ public:
     }
     case DENSITYGRIDFIELD_PHOTONCOUNTER: {
       return it.get_ionization_variables().get_counter(false);
+    }
+    case DENSITYGRIDFIELD_INITIALCOLDFIELD: {
+      return it.get_hydro_variables().get_primitives_initial_cold_field();
+    }
+    case DENSITYGRIDFIELD_COOLEDCOLDFIELD: {
+      return it.get_hydro_variables().get_primitives_cooled_cold_field();
+    }
+    case DENSITYGRIDFIELD_REMAININGINITIALCOLDFIELD: {
+      return it.get_hydro_variables().get_primitives_remaining_initial_cold_field();
+    }
+    case DENSITYGRIDFIELD_REMAININGCOOLEDCOLDFIELD: {
+      return it.get_hydro_variables().get_primitives_remaining_cooled_cold_field();
+    }
+    case DENSITYGRIDFIELD_CURRENTLYCOOLEDCOLDFIELD: {
+      return it.get_hydro_variables().get_primitives_currently_cooled_cold_field();
     }
     default:
       cmac_error("Not a scalar DensityGridField: %" PRIiFAST32, field_name);

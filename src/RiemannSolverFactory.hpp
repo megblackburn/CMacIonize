@@ -26,11 +26,14 @@
 #ifndef RIEMANNSOLVERFACTORY_HPP
 #define RIEMANNSOLVERFACTORY_HPP
 
+#include <string>
+
 #include "RiemannSolver.hpp"
 
 // implementations
 #include "ExactRiemannSolver.hpp"
 #include "HLLCRiemannSolver.hpp"
+#include "PhysicalConstants.hpp"
 
 /**
  * @brief General interface for Riemann solvers.
@@ -45,11 +48,13 @@ public:
    *
    * @param type Type of Riemann solver to generate.
    * @param gamma Polytropic index of the gas.
+
    * @return Pointer to a newly created RiemannSolver instance. Memory
    * management for the pointer needs to be done by the calling routine.
    */
   static RiemannSolver *generate(const std::string type = "Exact",
-                                 const double gamma = 5. / 3.) {
+                                 const double gamma = 5. / 3.) 
+                                  {
 
     if (type == "Exact") {
       return new ExactRiemannSolver(gamma);

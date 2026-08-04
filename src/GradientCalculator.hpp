@@ -60,17 +60,23 @@ public:
                    const double volume_unit_in_SI = 1.) {
 
     // get the cell variables
-    const double WL[5] = {cell.get_hydro_variables().primitives(0),
+    const double WL[11] = {cell.get_hydro_variables().primitives(0),
                           cell.get_hydro_variables().primitives(1),
                           cell.get_hydro_variables().primitives(2),
                           cell.get_hydro_variables().primitives(3),
-                          cell.get_hydro_variables().primitives(4)};
+                          cell.get_hydro_variables().primitives(4),
+                          cell.get_hydro_variables().primitives(5),
+                          cell.get_hydro_variables().primitives(6),
+                          cell.get_hydro_variables().primitives(7),
+                          cell.get_hydro_variables().primitives(8),
+                          cell.get_hydro_variables().primitives(9), 
+                          cell.get_hydro_variables().primitives(10)};
     const CoordinateVector<> position_L = cell.get_cell_midpoint();
 
     // first loop over the neighbours: compute gradients
     auto ngbs = cell.get_neighbours();
-    double phi_ngb_max[5] = {-DBL_MAX, -DBL_MAX, -DBL_MAX, -DBL_MAX, -DBL_MAX};
-    double phi_ngb_min[5] = {DBL_MAX, DBL_MAX, DBL_MAX, DBL_MAX, DBL_MAX};
+    double phi_ngb_max[11] = {-DBL_MAX, -DBL_MAX, -DBL_MAX, -DBL_MAX, -DBL_MAX, -DBL_MAX, -DBL_MAX, -DBL_MAX, -DBL_MAX, -DBL_MAX, -DBL_MAX};
+    double phi_ngb_min[11] = {DBL_MAX, DBL_MAX, DBL_MAX, DBL_MAX, DBL_MAX, DBL_MAX, DBL_MAX, DBL_MAX, DBL_MAX, DBL_MAX, DBL_MAX};
     for (auto ngbit = ngbs.begin(); ngbit != ngbs.end(); ++ngbit) {
       // get the neighbour variables
       DensityGrid::iterator ngb = std::get< 0 >(*ngbit);
@@ -80,13 +86,20 @@ public:
           std::get< 3 >(*ngbit) * inverse_surface_area_unit_in_SI;
       const CoordinateVector<> position_R = position_L + std::get< 4 >(*ngbit);
 
-      double WR[5];
+      double WR[11];
       if (ngb != grid_end) {
         WR[0] = ngb.get_hydro_variables().primitives(0);
         WR[1] = ngb.get_hydro_variables().primitives(1);
         WR[2] = ngb.get_hydro_variables().primitives(2);
         WR[3] = ngb.get_hydro_variables().primitives(3);
         WR[4] = ngb.get_hydro_variables().primitives(4);
+        WR[5] = ngb.get_hydro_variables().primitives(5);
+        WR[6] = ngb.get_hydro_variables().primitives(6);
+        WR[7] = ngb.get_hydro_variables().primitives(7);
+        WR[8] = ngb.get_hydro_variables().primitives(8);
+        WR[9] = ngb.get_hydro_variables().primitives(9);
+        WR[10] = ngb.get_hydro_variables().primitives(10);
+
       } else {
         // apply boundary conditions
         WR[0] = WL[0];
@@ -112,6 +125,14 @@ public:
           WR[3] = -WR[3];
         }
         WR[4] = WL[4];
+        WR[5] = WL[5];
+        WR[6] = WL[6];
+        WR[7] = WL[7];
+        WR[8] = WL[8];
+        WR[9] = WL[9];
+        WR[10] = WL[10];
+
+
       }
 
       const CoordinateVector<> halfpoint = 0.5 * (position_L + position_R);
@@ -122,7 +143,7 @@ public:
       const double rLR_inv = 1. / rLR.norm();
       const double fac = surface_area * rLR_inv;
 
-      for (uint_fast8_t i = 0; i < 5; ++i) {
+      for (uint_fast8_t i = 0; i < 11; ++i) {
         phi_ngb_max[i] = std::max(phi_ngb_max[i], WR[i]);
         phi_ngb_min[i] = std::min(phi_ngb_min[i], WR[i]);
         for (uint_fast8_t j = 0; j < 3; ++j) {
@@ -134,14 +155,14 @@ public:
 
     // normalize the gradients
     const double Vinv = volume_unit_in_SI / cell.get_volume();
-    for (uint_fast8_t i = 0; i < 5; ++i) {
+    for (uint_fast8_t i = 0; i < 11; ++i) {
       for (uint_fast8_t j = 0; j < 3; ++j) {
         cell.get_hydro_variables().primitive_gradients(i)[j] *= Vinv;
       }
     }
 
-    double phi_ext_max[5] = {-DBL_MAX, -DBL_MAX, -DBL_MAX, -DBL_MAX, -DBL_MAX};
-    double phi_ext_min[5] = {DBL_MAX, DBL_MAX, DBL_MAX, DBL_MAX, DBL_MAX};
+    double phi_ext_max[11] = {-DBL_MAX, -DBL_MAX, -DBL_MAX, -DBL_MAX, -DBL_MAX, -DBL_MAX, -DBL_MAX, -DBL_MAX, -DBL_MAX, -DBL_MAX, -DBL_MAX};
+    double phi_ext_min[11] = {DBL_MAX, DBL_MAX, DBL_MAX, DBL_MAX, DBL_MAX, DBL_MAX, DBL_MAX, DBL_MAX, DBL_MAX, DBL_MAX, DBL_MAX};
     // second loop over the neighbours: slope limit
     for (auto ngbit = ngbs.begin(); ngbit != ngbs.end(); ++ngbit) {
       // get the neighbour variables
@@ -149,7 +170,7 @@ public:
 
       const CoordinateVector<> deltaLR =
           (midpoint - position_L) * inverse_length_unit_in_SI;
-      for (uint_fast8_t i = 0; i < 5; ++i) {
+      for (uint_fast8_t i = 0; i < 11; ++i) {
         const double phi_ext = CoordinateVector<>::dot_product(
             cell.get_hydro_variables().primitive_gradients(i), deltaLR);
         phi_ext_max[i] = std::max(phi_ext_max[i], phi_ext);
@@ -158,7 +179,7 @@ public:
     }
 
     // slope limiting
-    for (uint_fast8_t i = 0; i < 5; ++i) {
+    for (uint_fast8_t i = 0; i < 11; ++i) {
       double alpha = 0.;
       if (phi_ext_max[i] != 0. && phi_ext_min[i] != 0.) {
         alpha = std::min(

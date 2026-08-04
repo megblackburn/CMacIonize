@@ -53,7 +53,17 @@ private:
 
   const double _dust_gas_ratio;
 
+  const bool _randomize_velocity_flag;
+
+  const double _temperature_to_randomize;
+
   const double _fraction_silicates;
+
+  const bool _trace_initial_neutral_flag;
+
+  const bool _restart_tracer_fields;
+
+  const double _temperature_to_trace;
 
   /*! @brief Log to write logging info to. */
   Log *_log;
@@ -115,7 +125,12 @@ public:
                                     const bool use_pressure,
                                     const double initial_neutral_fraction,
                                     const double dust_gas_ratio,
+                                    const bool randomize_velocity_flag,
+                                    const double temperature_to_randomize,
                                     const double fraction_silicates,
+                                    const bool trace_initial_neutral_flag,
+                                    const bool restart_tracer_fields,
+                                    const double temperature_to_trace,
                                     Log *log = nullptr);
 
   CMacIonizeSnapshotDensityFunction(ParameterFile &params, Log *log = nullptr);

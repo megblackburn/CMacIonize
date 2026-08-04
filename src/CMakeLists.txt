@@ -101,6 +101,24 @@ message(STATUS "WMBasicDataLocation.hpp: ${WMBASICDATALOCATION}")
 configure_file(${PROJECT_SOURCE_DIR}/src/WMBasicDataLocation.hpp.in
                ${PROJECT_BINARY_DIR}/src/WMBasicDataLocation.hpp @ONLY)
 
+# MilkyWaySFRDataLocation.hpp
+set(MILKYWAYDATA ${PROJECT_SOURCE_DIR}/data/MilkyWaySFR)
+
+execute_process(COMMAND ${CMAKE_COMMAND} -E copy_directory ${MILKYWAYDATA}
+                ${PROJECT_BINARY_DIR}/data/MilkyWaySFR)
+set(MILKYWAYSFRDATALOCATION ${PROJECT_BINARY_DIR}/data/MilkyWaySFR/)
+message(STATUS "MilkyWaySFRDataLocation.hpp: ${MILKYWAYSFRDATALOCATION}")
+configure_file(${PROJECT_SOURCE_DIR}/src/MilkyWaySFRDataLocation.hpp.in
+               ${PROJECT_BINARY_DIR}/src/MilkyWaySFRDataLocation.hpp @ONLY)
+
+# FUVLumToMassDataLocation.hpp
+set(FUVLUMTOMASSDATA ${PROJECT_SOURCE_DIR}/data/FUV_heating)
+execute_process(COMMAND ${CMAKE_COMMAND} -E copy_directory ${FUVLUMTOMASSDATA}
+                ${PROJECT_BINARY_DIR}/data/FUV_heating)
+set(FUVLUMTOMASSDATALOCATION ${PROJECT_BINARY_DIR}/data/FUV_heating/)
+message(STATUS "FUVLumToMassDataLocation.hpp: ${FUVLUMTOMASSDATALOCATION}")
+configure_file(${PROJECT_SOURCE_DIR}/src/FUVLumToMassDataLocation.hpp.in
+               ${PROJECT_BINARY_DIR}/src/FUVLumToMassDataLocation.hpp @ONLY)
 
 
 # CollisionalRatesDataLocation.hpp
@@ -179,7 +197,7 @@ configure_file(${PROJECT_SOURCE_DIR}/src/ConfigurationInfo.hpp.in
 
 set(LIBSHAREDENGINE_SOURCES
   ArepoSnapshotDensityFunction.cpp
-  ArepoSnapshotPhotonSourceDistribution.cpp
+  ArepoTallboxSnapshotDensityFunction.cpp
   AsciiFileDensityFunction.cpp
   AsciiFileDensityGridWriter.cpp
   AsciiFileTablePhotonSourceDistribution.cpp
@@ -219,6 +237,9 @@ set(LIBSHAREDENGINE_SOURCES
   VernerCrossSections.cpp
   VernerRecombinationRates.cpp
   WMBasicPhotonSourceSpectrum.cpp
+  ReadMilkyWaySFR.cpp
+  ReadFUVLumToMass.cpp
+
 
   ${PROJECT_BINARY_DIR}/src/CompilerInfo.cpp
   ${PROJECT_BINARY_DIR}/src/ConfigurationInfo.cpp
@@ -232,11 +253,14 @@ if(HAVE_HDF5)
        AmunSnapshotDensityFunction.cpp
        CastelliKuruczPhotonSourceSpectrum.cpp
        CMacIonizeSnapshotDensityFunction.cpp
+       CMacIonizeSnapshotDensityFunctionMHD.cpp
        CMacIonizeVoronoiGeneratorDistribution.cpp
        FLASHSnapshotDensityFunction.cpp
        GadgetDensityGridWriter.cpp
+       GadgetDensityGridWriterMHD.cpp
        GadgetSnapshotDensityFunction.cpp
        GadgetSnapshotPhotonSourceDistribution.cpp
+       ArepoSnapshotPhotonSourceDistribution.cpp
        )
 endif(HAVE_HDF5)
 add_library(SharedEngine ${LIBSHAREDENGINE_SOURCES})
@@ -273,6 +297,7 @@ target_link_libraries(LegacyEngine SharedEngine)
 set(LIBTASKBASEDENGINE_SOURCES
   TaskBasedIonizationSimulation.cpp
   TaskBasedRadiationHydrodynamicsSimulation.cpp
+  TaskBasedRadiationMagnetoHydrodynamicsSimulation.cpp
 )
 add_library(TaskBasedEngine ${LIBTASKBASEDENGINE_SOURCES})
 target_link_libraries(TaskBasedEngine SharedEngine)

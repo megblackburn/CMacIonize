@@ -102,9 +102,19 @@ private:
   /*! @brief Constant initial temperature, @f$T@f$ (in K). */
   const double _temperature;
 
+  /*! @brief Flag for tracing initial neutral gas,
+   *  */
+  const double _trace_initial_neutral_flag;
+
+  /*! @brief Temperature to trace
+   *  */
+  const double _temperature_to_trace;
+
   /*! @brief Constant initial neutral fraction for hydrogen,
    *  @f$x_{\rm{}H}@f$. */
   const double _neutral_fraction;
+
+  
 
   /**
    * @brief Get the mean particle mass @f$\mu{} m_p@f$ corresponding to the
@@ -189,7 +199,10 @@ public:
                                   const double scale_height,
                                   const double gas_fraction,
                                   const double temperature,
-                                  const double neutral_fraction)
+                                  const bool trace_initial_neutral_flag,
+                                  const double temperature_to_trace,
+                                  const double neutral_fraction
+                                  )
       : _disc_z(disc_z), _b_inv(1. / scale_height),
         _exponent(-2. * scale_height /
                   get_gas_disc_scale_height(surface_density, temperature,
@@ -198,7 +211,7 @@ public:
                       get_mass_fraction_factor(_exponent) * _b_inv /
                       PhysicalConstants::get_physical_constant(
                           PHYSICALCONSTANT_PROTON_MASS)),
-        _temperature(temperature), _neutral_fraction(neutral_fraction) {}
+        _temperature(temperature), _trace_initial_neutral_flag(trace_initial_neutral_flag), _temperature_to_trace(temperature_to_trace), _neutral_fraction(neutral_fraction) {}
 
   /**
    * @brief ParameterFile constructor.
@@ -226,13 +239,17 @@ public:
             params.get_value< double >("DensityFunction:gas fraction", 0.1),
             params.get_physical_value< QUANTITY_TEMPERATURE >(
                 "DensityFunction:temperature", "1.e4 K"),
-            params.get_value< double >("DensityFunction:neutral fraction",
-                                       1e-6)) {}
+            params.get_value< bool >("DensityFunction:trace initial neutral flag", false),
+            params.get_physical_value< QUANTITY_TEMPERATURE >(
+                "DensityFunction:temperature to trace", "500. K"),
+            params.get_value< double >("DensityFunction:neutral fraction",1e-6)
+            
+                                       ) {} 
 
   /**
    * @brief Virtual destructor.
    */
-  virtual ~DiscPatchDensityFunction() {}
+  virtual ~DiscPatchDensityFunction() {} /// Lewis's edited density function: mgb note 30.10.2025
 
   /**
    * @brief Function that gives the density for a given cell.
@@ -256,6 +273,23 @@ public:
     values.set_number_density(nH*1e6);
     values.set_temperature(_temperature);
     values.set_ionic_fraction(ION_H_n, _neutral_fraction);
+
+    if (_trace_initial_neutral_flag == true){
+        if (values.get_temperature() <= _temperature_to_trace){
+            values.set_initial_neutral_scalar_field(1.0);
+            values.set_remaining_initial_neutral_scalar_field(1.0);
+        } else {
+            values.set_initial_neutral_scalar_field(0.0);
+            values.set_remaining_initial_neutral_scalar_field(0.0);
+        }
+        values.set_cooled_neutral_scalar_field(0.0);
+        values.set_remaining_cooled_neutral_scalar_field(0.0);
+    } else {
+        values.set_initial_neutral_scalar_field(0.0);
+        values.set_cooled_neutral_scalar_field(0.0);
+        values.set_remaining_initial_neutral_scalar_field(0.0);
+        values.set_remaining_cooled_neutral_scalar_field(0.0);
+    }
 
     return values;
   }

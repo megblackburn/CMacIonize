@@ -55,13 +55,36 @@ public:
    * @param Eflux Energy flux solution.
    * @param normal Surface normal of the interface.
    * @param vface Velocity of the interface, used to boost the fluxes.
+   * @param BL Left state magnetic field.
+   * @param BR Right state magnetic field.
+   * @param BL_scalar Left state scalar magnetic field.
+   * @param BR_scalar Right state scalar magnetic field.
+   * @param Bflux Magnetic field flux solution.
+   * @param B_scalar_flux Scalar magnetic field flux solution.
+
    */
   virtual void solve_for_flux(const double rhoL, const CoordinateVector<> uL,
                               const double PL, const double rhoR,
                               const CoordinateVector<> uR, const double PR,
                               double &mflux, CoordinateVector<> &pflux,
-                              double &Eflux, const CoordinateVector<> normal,
+                              double &Eflux, double &EintFlux, const CoordinateVector<> normal,
                               const CoordinateVector<> vface = 0.) const = 0;
+
+ 
+ virtual void solve_for_flux_MHD(const double rhoL, 
+                              const CoordinateVector<> uL, const double PL, 
+                              const CoordinateVector<> BL, const double BL_scalar,
+                              const double rhoR,
+                              const CoordinateVector<> uR, const double PR,
+                              const CoordinateVector<> BR, const double BR_scalar, 
+                              double &mflux, CoordinateVector<> &pflux,
+                              double &Eflux, double &EintFlux, CoordinateVector<> &Bflux,
+                              double &B_scalar_flux,
+                              const CoordinateVector<> normal,
+                              double current_etot,
+                              double _mach_limit,
+                              double current_eint,
+                              const CoordinateVector<> vface = 0.) const = 0;                             
 };
 
 #endif // RIEMANNSOLVER_HPP
