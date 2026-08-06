@@ -154,11 +154,11 @@ public:
    * @param params ParameterFile to read from.
    */
   inline HLLDRiemannSolver(ParameterFile &params)
-      : HLLDRiemannSolver(params.get_value< double >("MagnetoHydro:polytropic index", 5. / 3.),
+      : HLLDRiemannSolver(params.get_value< double >("Hydro:polytropic index", 5. / 3.),
               params.get_physical_value< QUANTITY_VELOCITY >(
-                  "MagnetoHydro:maximum velocity", "1.e99 m s^-1"),
+                  "Hydro:maximum velocity", "1.e99 m s^-1"),
               
-              params.get_value<double>("MagnetoHydro:cleaning speed factor",1.0) // mgb edit 21.04.2026 - factor to multiply the cleaning speed by (default: 1.0)
+              params.get_value<double>("Hydro:cleaning speed factor",1.0) // mgb edit 21.04.2026 - factor to multiply the cleaning speed by (default: 1.0)
               ) {}
   /**
    * @brief Virtual destructor.

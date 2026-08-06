@@ -30,10 +30,7 @@
 #include "DensityGrid.hpp"
 #include "DensityGridTraversalJobMarket.hpp"
 #include "DensitySubGrid.hpp"
-#include "DensityGridMHD.hpp"
-#include "DensitySubGridMHD.hpp"
 #include "HydroDensitySubGrid.hpp"
-#include "MagnetoHydroDensitySubGrid.hpp"
 #include "DensityValues.hpp"
 #include "Error.hpp"
 #include "RecombinationRates.hpp"
@@ -1637,20 +1634,13 @@ void IonizationStateCalculator::compute_time_dependent_metals(
 template void IonizationStateCalculator::calculate_ionization_state<DensityGrid>(
     double, DensityGrid&, std::pair<unsigned long, unsigned long>&, double) const;
 
-template void IonizationStateCalculator::calculate_ionization_state<DensityGridMHD>(
-    double, DensityGridMHD&, std::pair<unsigned long, unsigned long>&, double) const;
 
 template void IonizationStateCalculator::calculate_ionization_state<DensitySubGrid>(
     double, DensitySubGrid&, double, bool, bool) const;
 
-template void IonizationStateCalculator::calculate_ionization_state<DensitySubGridMHD>(
-    double, DensitySubGridMHD&, double, bool, bool) const;
 
 template void IonizationStateCalculator::calculate_ionization_state<HydroDensitySubGrid>(
     double, HydroDensitySubGrid&, double, bool, bool) const;
-
-template void IonizationStateCalculator::calculate_ionization_state<MagnetoHydroDensitySubGrid>(
-    double, MagnetoHydroDensitySubGrid&, double, bool, bool) const;
 
 
 

@@ -10,9 +10,7 @@
 #define TEMPERATURECALCULATOR_HPP
 
 #include "DensityGrid.hpp"
-#include "DensitySubGrid.hpp" // mgb edit 24.04.2026
-#include "DensityGridMHD.hpp"
-#include "DensitySubGridMHD.hpp"
+#include "DensitySubGrid.hpp" 
 #include "IonizationStateCalculator.hpp"
 #include "ParameterFile.hpp"
 

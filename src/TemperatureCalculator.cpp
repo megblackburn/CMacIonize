@@ -31,10 +31,7 @@
 #include "DensityGrid.hpp"
 #include "DensityGridTraversalJobMarket.hpp"
 #include "DensitySubGrid.hpp"
-#include "DensityGridMHD.hpp"
-#include "DensitySubGridMHD.hpp"
 #include "HydroDensitySubGrid.hpp"
-#include "MagnetoHydroDensitySubGrid.hpp"
 #include "DensityValues.hpp"
 #include "DeRijckeRadiativeCooling.hpp"
 #include "IonizationStateCalculator.hpp"
@@ -1137,23 +1134,11 @@ template void TemperatureCalculator::calculate_temperature<DensityGrid>(
     uint_fast32_t loop, double totweight, DensityGrid &grid,
     std::pair<cellsize_t, cellsize_t> &block, double timestep) const;
 
-template void TemperatureCalculator::calculate_temperature<DensityGridMHD>(
-    uint_fast32_t loop, double totweight, DensityGridMHD &grid,
-    std::pair<cellsize_t, cellsize_t> &block, double timestep) const;
-
-
 template void TemperatureCalculator::calculate_temperature<DensitySubGrid>(
     const uint_fast32_t loop, const double totweight,
     DensitySubGrid &subgrid, double timestep, bool time_dependent, bool do_metals) const;
-
-template void TemperatureCalculator::calculate_temperature<DensitySubGridMHD>(
-    const uint_fast32_t loop, const double totweight,
-    DensitySubGridMHD &subgrid, double timestep, bool time_dependent, bool do_metals) const;
 
 template void TemperatureCalculator::calculate_temperature<HydroDensitySubGrid>(
     const uint_fast32_t loop, const double totweight,
     HydroDensitySubGrid &subgrid, double timestep, bool time_dependent, bool do_metals) const;
 
-template void TemperatureCalculator::calculate_temperature<MagnetoHydroDensitySubGrid>(
-    const uint_fast32_t loop, const double totweight,
-    MagnetoHydroDensitySubGrid &subgrid, double timestep, bool time_dependent, bool do_metals) const;

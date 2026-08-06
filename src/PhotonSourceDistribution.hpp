@@ -28,11 +28,8 @@
 
 #include "CoordinateVector.hpp"
 #include "DensityGrid.hpp"
-#include "DensityGridMHD.hpp"
 #include "HydroDensitySubGrid.hpp"
-#include "MagnetoHydroDensitySubGrid.hpp"
 #include "DensitySubGridCreator.hpp"
-#include "DensitySubGridCreatorMHD.hpp"
 
 /*! @brief Size of a variable that stores the number of photon sources. */
 typedef uint_fast32_t photonsourcenumber_t;
@@ -102,22 +99,16 @@ public:
 
   virtual bool update(DensitySubGridCreator< HydroDensitySubGrid > *grid_creator, double actual_timestep) {return false;}
 
-  virtual bool update(DensitySubGridCreatorMHD< MagnetoHydroDensitySubGrid > *grid_creator, MagnetoHydro &magnetohydro) {return false;}
-  virtual bool update(DensitySubGridCreatorMHD< MagnetoHydroDensitySubGrid > *grid_creator) {return false;}
-  virtual bool update(DensitySubGridCreatorMHD< MagnetoHydroDensitySubGrid > *grid_creator, double actual_timestep) {return false;}
 
   virtual void update_fuv_background_sources(DensitySubGridCreator< HydroDensitySubGrid> *grid_creator) {};
   virtual double get_total_stellar_mass(double area_kpc) {return 0.0;};
   virtual double get_FUV_field_strength(DensitySubGridCreator< HydroDensitySubGrid > *grid_creator) {return 0.0;};
 
   virtual void set_initial_velocity(DensitySubGridCreator< HydroDensitySubGrid > *grid_creator, double timestep) {}
-  virtual void set_initial_velocity(DensitySubGridCreatorMHD< MagnetoHydroDensitySubGrid > *grid_creator, double timestep) {}
 
   virtual void float_sources(DensitySubGridCreator< HydroDensitySubGrid > *grid_creator, double timestep) {}
-  virtual void float_sources(DensitySubGridCreatorMHD< MagnetoHydroDensitySubGrid > *grid_creator, double timestep) {}
 
   virtual void accrete_gas(DensitySubGridCreator< HydroDensitySubGrid > *grid_creator, Hydro &hydro) {}
-  virtual void accrete_gas(DensitySubGridCreatorMHD< MagnetoHydroDensitySubGrid > *grid_creator, MagnetoHydro &magnetohydro) {}
 
   virtual std::vector<CoordinateVector<double>> get_sink_positions() {
     std::vector<CoordinateVector<double>> vect;
@@ -139,14 +130,11 @@ public:
    */
   virtual void add_stellar_feedback(DensityGrid &grid,
                                     const double current_time) {}
-  virtual void add_stellar_feedback(DensityGridMHD &grid,
-                                    const double current_time) {}
+
 
   virtual void get_sne_radii(HydroDensitySubGrid &subgrid) {}
-  virtual void get_sne_radii(MagnetoHydroDensitySubGrid &subgrid) {}
 
   virtual void get_sne_radii(DensitySubGridCreator< HydroDensitySubGrid > &grid_creator) {}
-  virtual void get_sne_radii(DensitySubGridCreatorMHD< MagnetoHydroDensitySubGrid > &grid_creator) {}
 
   /**
    * @brief Will the distribution do stellar feedback at the given time?
@@ -170,11 +158,9 @@ public:
    * @param subgrid DensitySubGrid to operate on.
    */
   virtual void add_stellar_feedback(HydroDensitySubGrid &subgrid) {}
-  virtual void add_stellar_feedback(MagnetoHydroDensitySubGrid &subgrid) {}
 
 
   virtual void add_stellar_feedback(HydroDensitySubGrid &subgrid, Hydro &hydro) {}
-  virtual void add_stellar_feedback(MagnetoHydroDensitySubGrid &subgrid, MagnetoHydro &magnetohydro) {}
 
   /**
    * @brief Finalise adding stellar feedback to a distributed grid.

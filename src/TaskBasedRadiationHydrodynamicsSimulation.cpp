@@ -3027,7 +3027,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                 double mh = PhysicalConstants::get_physical_constant(PHYSICALCONSTANT_PROTON_MASS);
                 const double h0 = ionization_variables.get_ionic_fraction(ION_H_n);
                 double inverse_volume = 1/cellit.get_volume();
-                double gamma_minus_one = params->get_value< double >("MagnetoHydro:polytropic index", 5. / 3.)-1.;
+                double gamma_minus_one = params->get_value< double >("Hydro:polytropic index", 5. / 3.)-1.;
 
 
 

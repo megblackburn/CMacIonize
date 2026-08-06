@@ -27,7 +27,6 @@
 #define DISTRIBUTEDPHOTONSOURCE_HPP
 
 #include "DensitySubGridCreator.hpp"
-#include "DensitySubGridCreatorMHD.hpp"
 #include "PhotonSourceDistribution.hpp"
 #include "RandomGenerator.hpp"
 #include "ThreadLock.hpp"

@@ -253,11 +253,9 @@ if(HAVE_HDF5)
        AmunSnapshotDensityFunction.cpp
        CastelliKuruczPhotonSourceSpectrum.cpp
        CMacIonizeSnapshotDensityFunction.cpp
-       CMacIonizeSnapshotDensityFunctionMHD.cpp
        CMacIonizeVoronoiGeneratorDistribution.cpp
        FLASHSnapshotDensityFunction.cpp
        GadgetDensityGridWriter.cpp
-       GadgetDensityGridWriterMHD.cpp
        GadgetSnapshotDensityFunction.cpp
        GadgetSnapshotPhotonSourceDistribution.cpp
        ArepoSnapshotPhotonSourceDistribution.cpp
@@ -297,7 +295,6 @@ target_link_libraries(LegacyEngine SharedEngine)
 set(LIBTASKBASEDENGINE_SOURCES
   TaskBasedIonizationSimulation.cpp
   TaskBasedRadiationHydrodynamicsSimulation.cpp
-  TaskBasedRadiationMagnetoHydrodynamicsSimulation.cpp
 )
 add_library(TaskBasedEngine ${LIBTASKBASEDENGINE_SOURCES})
 target_link_libraries(TaskBasedEngine SharedEngine)

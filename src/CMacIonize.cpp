@@ -35,7 +35,6 @@
 #include "RadiationHydrodynamicsSimulation.hpp"
 #include "TaskBasedIonizationSimulation.hpp"
 #include "TaskBasedRadiationHydrodynamicsSimulation.hpp"
-#include "TaskBasedRadiationMagnetoHydrodynamicsSimulation.hpp"
 #include "TerminalLog.hpp"
 #include "Timer.hpp"
 
@@ -175,8 +174,6 @@ int main(int argc, char **argv) {
                     COMMANDLINEOPTION_NOARGUMENT, "false");
   parser.add_option("task-based-rhd", 0, "Run a task-based RHD simulation.",
                     COMMANDLINEOPTION_NOARGUMENT, "false");
-  parser.add_option("task-based-rmhd", 0, "Run a task-based RMHD simulation.",
-                    COMMANDLINEOPTION_NOARGUMENT, "false");
   parser.add_option("no-initial-output", 0,
                     "Do not output a snapshot before the first iteration.",
                     COMMANDLINEOPTION_NOARGUMENT, "false");
@@ -188,8 +185,7 @@ int main(int argc, char **argv) {
 #endif
   TaskBasedRadiationHydrodynamicsSimulation::add_command_line_parameters(
       parser);
-  TaskBasedRadiationMagnetoHydrodynamicsSimulation::add_command_line_parameters(
-      parser); // mgb edit 22.04.2026
+
 
     
   parser.parse_arguments(argc, argv);
@@ -349,14 +345,7 @@ int main(int argc, char **argv) {
     }
     return TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         parser, write_output, programtimer, log);
-  } else if (parser.get_value< bool >("task-based-rmhd")) {
-
-    if (comm.get_size() > 1) {
-      cmac_error("MPI RMHD is not (yet) supported!");
-    }
-    return TaskBasedRadiationMagnetoHydrodynamicsSimulation::do_simulation(
-        parser, write_output, programtimer, log);
-  }  else {
+  } else {
 
     IonizationSimulation simulation(
         write_output, parser.get_value< bool >("every-iteration-output"),

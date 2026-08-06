@@ -28,7 +28,6 @@
 #define PHOTONTRAVERSALTHREADCONTEXT_HPP
 
 #include "DensitySubGrid.hpp"
-#include "DensitySubGridMHD.hpp"
 #include "PhotonBuffer.hpp"
 #include "ThreadContext.hpp"
 #include "TravelDirections.hpp"
