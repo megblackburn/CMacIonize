@@ -806,7 +806,7 @@ auto calculate_E2_fast = [](const double tau) -> double {
 
 inline static void get_thermal_gain_loss(double &gain, double &loss,
                               IonizationVariables &ionization_variables,
-                              const double inverse_volume, const double surface_density_top, const double surface_density_bottom, const double FUV_radiation_field, const bool _do_FUV_heating,
+                              const double inverse_volume, const double surface_density_top, const double surface_density_bottom, const double FUV_radiation_field, const bool _do_FUV_heating, const bool _attenuate_FUV_heating,
                               LineCoolingData &line_cooling_data,
                               double abund[LINECOOLINGDATA_NUMELEMENTS], double AHe,
                               DeRijckeRadiativeCooling* radiative_cooling, bool use_cooling_tables, double &fuv_cell_heating){
@@ -871,8 +871,12 @@ if (_do_FUV_heating) {
     const double attenuation_factor = 0.5 * (gsl_sf_expint_En(2, tau_top) + gsl_sf_expint_En(2, tau_bottom)); // linear combination of upper and lower attenuation factor for FUV radiation field
  //  const double attenuation_factor = 0.5 * (calculate_E2_fast(tau_top)+calculate_E2_fast(tau_bottom));
    // std::cout<< "Calculated attenuation factor!" << std::endl;
-    const double FUV_heating_rate = FUV_solar_neighbourhood_heating_rate * h0 * (0.0024 + ((FUV_radiation_field / FUV_interstellar_radiation_field) * attenuation_factor)); // J s^-1 per H atom
-
+    double FUV_heating_rate;
+    if (_attenuate_FUV_heating){
+       FUV_heating_rate = FUV_solar_neighbourhood_heating_rate * h0 * (0.0024 + ((FUV_radiation_field / FUV_interstellar_radiation_field) * attenuation_factor)); // J s^-1 per H atom
+    } else {
+       FUV_heating_rate = FUV_solar_neighbourhood_heating_rate * h0 * (0.0024 + (FUV_radiation_field / FUV_interstellar_radiation_field)); // J s^-1 per H atom
+    }
 
     const double volumetric_fuv_heating = FUV_heating_rate * n; // J s^-1 m^-3
 
@@ -949,7 +953,7 @@ inline static void do_explicit_heat_cool(IonizationVariables &ionization_variabl
                               Hydro &hydro, double _cooling_temp_floor,
                               double gamma_minus_one,
                               LineCoolingData &line_cooling_data,
-                              Abundances &abundances, bool use_cooling_tables, const bool _do_FUV_heating, double &fuv_cell_heating) {
+                              Abundances &abundances, bool use_cooling_tables, const bool _do_FUV_heating, const bool _attenuate_FUV_heating, double &fuv_cell_heating) {
 
 
   double rho = hydro_variables.get_primitives_density();
@@ -1074,7 +1078,7 @@ while (clock < total_dt) {
 
   time_left = total_dt - clock;
 
-  get_thermal_gain_loss(gain, loss, ionization_variables, inverse_volume, surface_density_top, surface_density_bottom, FUV_radiation_field, _do_FUV_heating,
+  get_thermal_gain_loss(gain, loss, ionization_variables, inverse_volume, surface_density_top, surface_density_bottom, FUV_radiation_field, _do_FUV_heating, _attenuate_FUV_heating,
                               line_cooling_data, abund, AHe, radiative_cooling, use_cooling_tables, fuv_cell_heating);
 
   
@@ -1126,7 +1130,7 @@ while (clock < total_dt) {
     
     //ionization_variables.set_temperature(temp_from_eint);
   //}
-  get_thermal_gain_loss(gain, loss, ionization_variables, inverse_volume, surface_density_top, surface_density_bottom, FUV_radiation_field, _do_FUV_heating,
+  get_thermal_gain_loss(gain, loss, ionization_variables, inverse_volume, surface_density_top, surface_density_bottom, FUV_radiation_field, _do_FUV_heating, _attenuate_FUV_heating,
                               line_cooling_data, abund, AHe, radiative_cooling, use_cooling_tables, fuv_cell_heating); // mgb comment 21.05.2026 - no temperature set
 
   
@@ -1785,6 +1789,10 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
   const bool _do_FUV_heating = params->get_value< bool >( // mgb edit 20.07.2026
     "TaskBasedRadiationHydrodynamicsSimulation:do FUV heating", false
+  );
+  
+  const bool _attenuate_FUV_heating = params->get_value< bool >( // mgb edit 06.08.2026
+    "TaskBasedRadiationHydrodynamicsSimulation:attenuate FUV heating", false
   );
 
   const CoordinateVector< int_fast32_t> number_of_cells = params->get_value< CoordinateVector< int_fast32_t > >(
@@ -3401,7 +3409,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                         1. / cellit.get_volume(), nH2 * cellit.get_volume(), surface_density_top, surface_density_bottom, FUV_radiation_field,
                         actual_timestep, radiative_cooling, hydro,
                           _cooling_temp_floor,_gamma-1.,line_cooling_data, abundances,
-                          use_cool_tables, _do_FUV_heating, fuv_cell_heating);
+                          use_cool_tables, _do_FUV_heating, _attenuate_FUV_heating, fuv_cell_heating);
 
               total_fuv_heating_counter += fuv_cell_heating;
             }
