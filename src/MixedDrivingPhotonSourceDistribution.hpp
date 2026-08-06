@@ -27,6 +27,11 @@
 #define MIXEDDRIVINGPHOTONSOURCEDISTRIBUTION_HPP
 
 #include "Log.hpp"
+#include "ExternalPotential.hpp"
+#include "GalacticShearingBox.hpp"
+#ifdef HAVE_HDF5
+#include "HDF5Tools.hpp"
+#endif
 #include "ParameterFile.hpp"
 #include "PhotonSourceDistribution.hpp"
 #include "RandomGenerator.hpp"
@@ -42,6 +47,29 @@
 #include <fstream>
 #include <unistd.h>
 #include <vector>
+
+/**
+ * @brief Wrap a moving source through ordinary periodic box boundaries.
+ *
+ * @param position Source position to update.
+ * @param box Simulation box.
+ * @param periodicity Periodicity flags for each axis.
+ */
+inline void wrap_mixed_driving_source_position(
+    CoordinateVector<> &position, const Box<> &box,
+    const CoordinateVector< bool > &periodicity) {
+  const CoordinateVector<> &anchor = box.get_anchor();
+  const CoordinateVector<> &sides = box.get_sides();
+  for (uint_fast8_t axis = 0; axis < 3; ++axis) {
+    if (periodicity[axis]) {
+      double offset = std::fmod(position[axis] - anchor[axis], sides[axis]);
+      if (offset < 0.) {
+        offset += sides[axis];
+      }
+      position[axis] = anchor[axis] + offset;
+    }
+  }
+}
 
 
 
@@ -59,10 +87,20 @@ private:
   /*! @brief Positions of the sources (in m). */
   std::vector< CoordinateVector<> > _source_positions;
 
+  /*! @brief Velocities inherited from the gas at source birth (in m s^-1). */
+  std::vector< CoordinateVector<> > _source_velocities;
+
   /*! @brief Remaining lifetime of the sources (in s). */
   std::vector< double > _source_lifetimes;
 
   std::vector< double > _source_luminosities;
+
+  /*! @brief Initial stellar masses (in Msol). */
+  std::vector< double > _source_masses;
+
+  /*! @brief Supernovae that occurred since the preceding HDF5 snapshot. */
+  std::vector< CoordinateVector<> > _snapshot_supernova_positions;
+  std::vector< double > _snapshot_supernova_times;
 
   std::vector<int> _to_delete;
 
@@ -111,6 +149,12 @@ private:
 
   const double _peak_fraction;
 
+  /*! @brief Density exponent used for the density-selected birth CDF. */
+  const double _clustering_factor;
+
+  /*! @brief Whether sources move after formation. */
+  const bool _float_sources;
+
   /*! @brief Pseudo-random number generator. */
 
   double init_running_mass;
@@ -134,6 +178,12 @@ private:
   bool _holmes_added = false;
 
   double _last_sf = 0.;
+
+  /*! @brief Whether moving sources changed the source-copy hierarchy. */
+  bool _sources_changed = false;
+
+  /*! @brief Whether file-loaded sources still need their local gas velocity. */
+  bool _initialize_imported_source_velocities = false;
 
   RandomGenerator _random_generator;
 
@@ -271,6 +321,65 @@ size_t findClosestIndex(double value, const std::vector<double>& values) {
 
     }
 
+    /** Recover a best available mass for sources in legacy restart files. */
+    double mass_from_luminosity(const double luminosity) const {
+      if (luminosity <= 0. || _lum_adjust <= 0. ||
+          (_holmes_lum > 0. &&
+           std::abs(luminosity - _holmes_lum) < 1.e-12 * _holmes_lum)) {
+        return 0.;
+      }
+      const std::vector<double> masses =
+          {57.95, 46.94, 38.08, 34.39, 30.98, 28.0, 25.29, 22.90,
+           20.76, 18.80, 17.08, 15.55};
+      const std::vector<double> log_luminosities =
+          {49.64, 49.44, 49.22, 49.10, 48.99, 48.88, 48.75, 48.61,
+           48.44, 48.27, 48.06, 47.88};
+      const double log_luminosity =
+          std::log10(std::max(luminosity / _lum_adjust, 1.e-99));
+      if (log_luminosity >= log_luminosities.front()) {
+        return masses.front();
+      }
+      for (size_t i = 0; i + 1 < masses.size(); ++i) {
+        if (log_luminosities[i] >= log_luminosity &&
+            log_luminosity >= log_luminosities[i + 1]) {
+          const double fraction =
+              (log_luminosity - log_luminosities[i]) /
+              (log_luminosities[i + 1] - log_luminosities[i]);
+          return masses[i] + fraction * (masses[i + 1] - masses[i]);
+        }
+      }
+      return 0.;
+    }
+
+    void initialize_spectra(Log *log) {
+      _all_spectra.push_back(new WMBasicPhotonSourceSpectrum(32000,25,log));
+      _all_spectra.push_back(new WMBasicPhotonSourceSpectrum(34000,25,log));
+      _all_spectra.push_back(new WMBasicPhotonSourceSpectrum(34000,25,log));
+      _all_spectra.push_back(new WMBasicPhotonSourceSpectrum(35000,40,log));
+      _all_spectra.push_back(new WMBasicPhotonSourceSpectrum(36000,25,log));
+      _all_spectra.push_back(new WMBasicPhotonSourceSpectrum(37000,25,log));
+      _all_spectra.push_back(new WMBasicPhotonSourceSpectrum(39000,25,log));
+      _all_spectra.push_back(new WMBasicPhotonSourceSpectrum(39000,25,log));
+      _all_spectra.push_back(new WMBasicPhotonSourceSpectrum(40000,25,log));
+      _all_spectra.push_back(new WMBasicPhotonSourceSpectrum(41000,40,log));
+      _all_spectra.push_back(new WMBasicPhotonSourceSpectrum(42000,40,log));
+      _all_spectra.push_back(new WMBasicPhotonSourceSpectrum(43000,40,log));
+      _all_spectra.push_back(new WMBasicPhotonSourceSpectrum(44000,40,log));
+      _all_spectra.push_back(new WMBasicPhotonSourceSpectrum(45000,40,log));
+      _all_spectra.push_back(new Pegase3PhotonSourceSpectrum(1e10,0.02,log));
+    }
+
+    /** Recover the spectrum bin from a luminosity in legacy restart files. */
+    size_t spectrum_index_from_luminosity(const double luminosity) {
+      if (_holmes_lum > 0. &&
+          std::abs(luminosity - _holmes_lum) < 1.e-12 * _holmes_lum) {
+        return 14;
+      }
+      const double mass = mass_from_luminosity(luminosity);
+      return findClosestIndex(interpolate(mass, stellarMasses, temperatures),
+                              avail_temps);
+    }
+
 
 
 public:
@@ -302,6 +411,8 @@ public:
       const double lum_adjust=1.0,
       const double scaleheight=0.0,
       const double peak_fraction=0.5,
+      const double clustering_factor=2.0,
+      const bool float_sources=false,
       const double holmes_time=0.0,
       const double holmes_sh=3e18,
       const double holmes_lum=5e46,
@@ -313,30 +424,21 @@ public:
       : _star_formation_rate(star_formation_rate), _update_interval(update_interval),
         _output_file(nullptr), _number_of_updates(1), _next_index(0),
         _sne_energy(sne_energy), _lum_adjust(lum_adjust), _scaleheight(scaleheight),
-        _peak_fraction(peak_fraction),_holmes_time(holmes_time),
+        _peak_fraction(peak_fraction), _clustering_factor(clustering_factor),
+        _float_sources(float_sources), _holmes_time(holmes_time),
         _holmes_sh(holmes_sh),_holmes_lum(holmes_lum),_number_of_holmes(number_of_holmes),
         _read_file(read_file), _filename(filename), _time(time),
         _random_generator(seed), _log(log){
+
+    if (_clustering_factor <= 0.) {
+      cmac_error("The star-formation clustering factor must be positive.");
+    }
 
     novahandler = new SupernovaHandler(_sne_energy);
 
     
 
-    _all_spectra.push_back(new WMBasicPhotonSourceSpectrum(32000,25,log));
-    _all_spectra.push_back(new WMBasicPhotonSourceSpectrum(34000,25,log));
-    _all_spectra.push_back(new WMBasicPhotonSourceSpectrum(34000,25,log));
-    _all_spectra.push_back(new WMBasicPhotonSourceSpectrum(35000,40,log));
-    _all_spectra.push_back(new WMBasicPhotonSourceSpectrum(36000,25,log));
-    _all_spectra.push_back(new WMBasicPhotonSourceSpectrum(37000,25,log));
-    _all_spectra.push_back(new WMBasicPhotonSourceSpectrum(39000,25,log));
-    _all_spectra.push_back(new WMBasicPhotonSourceSpectrum(39000,25,log));
-    _all_spectra.push_back(new WMBasicPhotonSourceSpectrum(40000,25,log));
-    _all_spectra.push_back(new WMBasicPhotonSourceSpectrum(41000,40,log));
-    _all_spectra.push_back(new WMBasicPhotonSourceSpectrum(42000,40,log));
-    _all_spectra.push_back(new WMBasicPhotonSourceSpectrum(43000,40,log));
-    _all_spectra.push_back(new WMBasicPhotonSourceSpectrum(44000,40,log));
-    _all_spectra.push_back(new WMBasicPhotonSourceSpectrum(45000,40,log));
-    _all_spectra.push_back(new Pegase3PhotonSourceSpectrum(1e10,0.02,log));
+    initialize_spectra(log);
 
 
 
@@ -418,8 +520,12 @@ public:
         if (std::find(_to_delete.begin(), _to_delete.end(), index) == _to_delete.end()) {
             
             _source_positions.push_back(CoordinateVector<double>(posx,posy,posz));
+            // Historical source files do not contain velocities. These are
+            // initialized from the local gas on the first grid update.
+            _source_velocities.push_back(CoordinateVector<double>());
 
             _source_luminosities.push_back(luminosity);
+            _source_masses.push_back(mass);
             
             double lifetime = a0z + a1z*std::log10(mass) + a2z*(std::log10(mass)*std::log10(mass));
             lifetime = std::pow(10.0,lifetime);
@@ -463,6 +569,7 @@ public:
 
 
   file.close();
+  _initialize_imported_source_velocities = true;
   }
 
 
@@ -498,6 +605,10 @@ public:
    *    (default: 0. Myr)
    *  - output sources: Whether or not to write the source positions to a file
    *    (default: false)
+   *  - clustering factor: Density exponent for the CDF used to select
+   *    density-born stars (default: 2; one restores mass weighting)
+   *  - float sources: Move stars with the gas gravitational acceleration and
+   *    Galactic-frame source terms (default: false)
    *
    * @param params ParameterFile to read from.
    * @param log Log to write logging info to.
@@ -520,6 +631,8 @@ public:
             params.get_physical_value<QUANTITY_LENGTH> (
               "PhotonSourceDistribution:scale height","0.0 m"),
             params.get_value< double >("PhotonSourceDistribution:peak fraction",0.5),
+            params.get_value< double >("PhotonSourceDistribution:clustering factor",2.0),
+            params.get_value< bool >("PhotonSourceDistribution:float sources",false),
             params.get_physical_value<QUANTITY_TIME> (
                 "PhotonSourceDistribution:holmes time","50 Myr"),
             params.get_physical_value<QUANTITY_LENGTH>(
@@ -530,7 +643,10 @@ public:
             params.get_value<bool>("PhotonSourceDistribution:read file",false),
             params.get_value<std::string>("PhotonSourceDistribution:filename","SourceFile.txt"),
             params.get_physical_value<QUANTITY_TIME>("PhotonSourceDistribution:time","0.0 Myr"),
-            log) {}
+            log) {
+    novahandler->set_tigress_like_injection(params.get_value< bool >(
+        "SupernovaHandler:TIGRESS like injection", true));
+  }
 
   /**
    * @brief Virtual destructor.
@@ -562,6 +678,10 @@ public:
   }
 
 
+
+  virtual void set_tigress_like_supernova_injection(const bool value) {
+    novahandler->set_tigress_like_injection(value);
+  }
 
   virtual void get_sne_radii(DensitySubGridCreator< HydroDensitySubGrid > &grid_creator) {
 
@@ -614,6 +734,75 @@ public:
     _num_cells_injected.clear();
     _nbar.clear();
 
+  }
+
+  /**
+   * @brief Append live stars and supernovae since the previous snapshot.
+   */
+  virtual void write_snapshot_metadata(const std::string &filename,
+                                       const double simulation_time) override {
+#ifdef HAVE_HDF5
+    if (filename.empty()) {
+      return;
+    }
+    cmac_assert(_source_positions.size() == _source_luminosities.size());
+    cmac_assert(_source_positions.size() == _source_masses.size());
+    HDF5Tools::HDF5File file =
+        HDF5Tools::open_file(filename, HDF5Tools::HDF5FILEMODE_APPEND);
+
+    HDF5Tools::HDF5Group sources =
+        HDF5Tools::create_group(file, "PhotonSources");
+    uint32_t number_of_sources = _source_positions.size();
+    std::string coordinate_units = "m";
+    std::string luminosity_units = "s^-1";
+    std::string mass_units = "Msol";
+    HDF5Tools::write_attribute< uint32_t >(
+        sources, "NumberOfSources", number_of_sources);
+    HDF5Tools::write_attribute< std::string >(
+        sources, "CoordinateUnits", coordinate_units);
+    HDF5Tools::write_attribute< std::string >(
+        sources, "IonizingLuminosityUnits", luminosity_units);
+    HDF5Tools::write_attribute< std::string >(
+        sources, "MassUnits", mass_units);
+    if (!_source_positions.empty()) {
+      HDF5Tools::write_dataset< CoordinateVector<> >(
+          sources, "Coordinates", _source_positions);
+      HDF5Tools::write_dataset< double >(
+          sources, "IonizingLuminosity", _source_luminosities);
+      HDF5Tools::write_dataset< double >(sources, "Mass", _source_masses);
+    }
+    HDF5Tools::close_group(sources);
+
+    HDF5Tools::HDF5Group supernovae =
+        HDF5Tools::create_group(file, "SupernovaEvents");
+    uint32_t number_of_supernovae =
+        _snapshot_supernova_positions.size();
+    std::string time_units = "s";
+    double snapshot_time = simulation_time;
+    HDF5Tools::write_attribute< uint32_t >(
+        supernovae, "NumberOfEvents", number_of_supernovae);
+    HDF5Tools::write_attribute< std::string >(
+        supernovae, "CoordinateUnits", coordinate_units);
+    HDF5Tools::write_attribute< std::string >(
+        supernovae, "TimeUnits", time_units);
+    HDF5Tools::write_attribute< double >(
+        supernovae, "SnapshotTime", snapshot_time);
+    if (!_snapshot_supernova_positions.empty()) {
+      HDF5Tools::write_dataset< CoordinateVector<> >(
+          supernovae, "Coordinates", _snapshot_supernova_positions);
+      HDF5Tools::write_dataset< double >(
+          supernovae, "Time", _snapshot_supernova_times);
+    }
+    HDF5Tools::close_group(supernovae);
+    HDF5Tools::close_file(file);
+
+    // Only clear after the HDF5 file was closed successfully.
+    _snapshot_supernova_positions.clear();
+    _snapshot_supernova_times.clear();
+#else
+    (void)filename;
+    (void)simulation_time;
+#endif
   }
 
 
@@ -674,8 +863,26 @@ public:
 
     _total_time += actual_timestep;
 
+    // Historical source catalogues contain positions but no velocities.  A
+    // zero velocity makes every imported star fall towards the centre as soon
+    // as source floating is enabled.  Give these stars the same local gas
+    // velocity that newly formed stars inherit at birth.
+    if (_initialize_imported_source_velocities) {
+      for (size_t isource = 0; isource < _source_positions.size(); ++isource) {
+        if (grid_creator->get_box().inside(_source_positions[isource])) {
+          HydroDensitySubGrid &subgrid =
+              *grid_creator->get_subgrid(_source_positions[isource]);
+          const auto cell = subgrid.get_hydro_cell(_source_positions[isource]);
+          _source_velocities[isource] =
+              cell.get_hydro_variables().get_primitives_velocity();
+        }
+      }
+      _initialize_imported_source_velocities = false;
+    }
 
-    bool updated = false;
+
+    bool updated = _sources_changed;
+    _sources_changed = false;
 
 
 
@@ -688,13 +895,19 @@ public:
       if (_source_lifetimes[i] <= 0.) {
         // remove the element
         if (_output_file != nullptr) {
-          *_output_file << _total_time << "\t0.\t0.\t0.\t2\t"
-                        << _source_indices[i] << "\t0\t0\tSNe\n";    
+          *_output_file << _total_time << "\t" << _source_positions[i].x()
+                        << "\t" << _source_positions[i].y() << "\t"
+                        << _source_positions[i].z() << "\t2\t"
+                        << _source_indices[i] << "\t0\t0\tSNe\n";
         }
         _to_do_feedback.push_back(_source_positions[i]);
+        _snapshot_supernova_positions.push_back(_source_positions[i]);
+        _snapshot_supernova_times.push_back(_total_time);
         _source_positions.erase(_source_positions.begin() + i);
+        _source_velocities.erase(_source_velocities.begin() + i);
         _source_lifetimes.erase(_source_lifetimes.begin() + i);
         _source_luminosities.erase(_source_luminosities.begin() + i);
+        _source_masses.erase(_source_masses.begin() + i);
         _spectrum_index.erase(_spectrum_index.begin() + i);
         _source_indices.erase(_source_indices.begin() + i);
         _num_sne = _num_sne + 1;
@@ -738,8 +951,11 @@ public:
                      std::log(_random_generator.get_uniform_random_double())) *
            std::cos(2. * M_PI *
                     _random_generator.get_uniform_random_double());
-      if (grid_creator->get_box().inside(CoordinateVector<double>(x,y,z))) {
-              _to_do_feedback.push_back(CoordinateVector<double>(x,y,z));
+            if (grid_creator->get_box().inside(CoordinateVector<double>(x,y,z))) {
+              const CoordinateVector<> position(x, y, z);
+              _to_do_feedback.push_back(position);
+              _snapshot_supernova_positions.push_back(position);
+              _snapshot_supernova_times.push_back(_total_time);
       }
 
       //dotype1
@@ -770,14 +986,20 @@ public:
         }
 
         _source_positions.push_back(CoordinateVector<double>(x,y,z));
+        auto grid = grid_creator->get_subgrid(_source_positions.back());
+        auto cell = (*grid).get_hydro_cell(_source_positions.back());
+        _source_velocities.push_back(
+            cell.get_hydro_variables().get_primitives_velocity());
 
         double lifetime = 1e99;
 
         _source_lifetimes.push_back(lifetime);
         _source_luminosities.push_back(_holmes_lum);
+        // HOLMES represents a population rather than one massive star.
+        _source_masses.push_back(0.);
+        _source_indices.push_back(_next_index);
+        ++_next_index;
         if (_output_file != nullptr) {
-          _source_indices.push_back(_next_index);
-          ++_next_index;
           const CoordinateVector<> &pos = _source_positions.back();
           *_output_file << _total_time << "\t" << pos.x() << "\t" << pos.y()
                         << "\t" << pos.z() << "\t1\t"
@@ -792,7 +1014,11 @@ public:
     }
 
 
-    if (_total_time - _last_sf >= _update_interval) { // mgb edit 20.07.2026 - edit from L McCallum
+    if (_total_time - _last_sf >= _update_interval) {
+
+      // Use the actual elapsed time so that a late hydro step does not discard
+      // star formation between the scheduled update and the current time.
+      const double star_formation_interval = _total_time - _last_sf;
 
 
 
@@ -803,11 +1029,12 @@ public:
 
 
 
-      std::vector<double> cumulative_mass(total_cells);
+      std::vector<double> cumulative_weight(total_cells);
 
       AtomicValue< size_t > igrid(0);
       i = 0;
       double running_mass = 0.0;
+      double running_weight = 0.0;
       while (igrid.value() < grid_creator->number_of_original_subgrids()) {
         const size_t this_igrid = igrid.post_increment();
         if (this_igrid < grid_creator->number_of_original_subgrids()) {
@@ -823,7 +1050,17 @@ public:
             }
 
             running_mass+= cell_mass;
-            cumulative_mass[i] = running_mass;
+            // A density exponent of one reproduces the original mass-weighted
+            // CDF.  The volume factor makes larger exponents resolution
+            // independent: weight is proportional to rho^p dV.
+            double cell_weight = 0.;
+            if (cell_mass > 0.) {
+              cell_weight = it.get_volume() * std::pow(
+                  std::max(0., it.get_hydro_variables().get_primitives_density()),
+                  _clustering_factor);
+            }
+            running_weight += cell_weight;
+            cumulative_weight[i] = running_weight;
 
             i += 1;
 
@@ -833,6 +1070,18 @@ public:
       }
       if (_number_of_updates == 1) {
           init_running_mass = running_mass;
+      }
+
+      if (running_mass <= 0. || init_running_mass <= 0. ||
+          running_weight <= 0.) {
+        if (_log != nullptr) {
+          _log->write_warning(
+              "No positive mass or density weight available for star formation.");
+        }
+        _last_sf = _total_time;
+        updated = true;
+        ++_number_of_updates;
+        return updated;
       }
 
 
@@ -847,7 +1096,7 @@ public:
 
       for (size_t i=0;i<total_cells;i++) {
 
-        cumulative_mass[i] = cumulative_mass[i]/running_mass;
+        cumulative_weight[i] = cumulative_weight[i] / running_weight;
       }
 
 
@@ -860,16 +1109,11 @@ public:
 
 
 
-
-      // Use the actual elapsed time so that a late hydro step does not discard
-      // star formation between the scheduled update and the current time.
-      const double star_formation_interval = _total_time - _last_sf;
-
-      // 0.207 factor is to take into account we only form stars over 8Msol - mgb
+      // 0.207 is the Kroupa IMF mass fraction in stars above 8 Msol.
       // mass_to_generate in units of Msol to match IMF
-      // Where we want to update the star_formation_rate to time dependent mgb
-      // if (_total_time >= start_time_of_burst) && (_total_time < end_time_of_burst) {star_formation_rate = _star_formation_rate * burst_factor;} else {star_formation_rate = _star_formation_rate;} mgb
-      double mass_to_generate = star_formation_interval*_star_formation_rate/1.988e30*0.207*(std::pow(running_mass/init_running_mass,1.4));
+      const double mass_to_generate =
+          star_formation_interval * _star_formation_rate / 1.988e30 * 0.207 *
+          std::pow(running_mass / init_running_mass, 1.4);
 
 
        std::cout << "SHOULD BE GENERATING " << mass_to_generate - _excess_mass<< std::endl;
@@ -887,6 +1131,7 @@ public:
 
           double source_pos_val = _random_generator.get_uniform_random_double();
           CoordinateVector<> cell_midpoint;
+          CoordinateVector<> source_velocity;
           double cell_length = 0;
 
           AtomicValue< size_t > igrid(0);
@@ -899,9 +1144,11 @@ public:
               for (auto it = subgrid.hydro_begin(); it != subgrid.hydro_end();
                    ++it) {
 
-                if (cumulative_mass[i] >= source_pos_val){
+                if (cumulative_weight[i] >= source_pos_val){
 
                   cell_midpoint = it.get_cell_midpoint();
+                  source_velocity =
+                      it.get_hydro_variables().get_primitives_velocity();
                   cell_length = std::pow(it.get_volume(),1./3.);
                   goto afterloop;
 
@@ -922,6 +1169,7 @@ public:
         blur[2] = _random_generator.get_uniform_random_double()*cell_length - (0.5*cell_length);
 
         _source_positions.push_back(cell_midpoint + blur);
+        _source_velocities.push_back(source_velocity);
 
       } else {
         double x =
@@ -937,6 +1185,14 @@ public:
                       _random_generator.get_uniform_random_double());
 
         _source_positions.push_back(CoordinateVector<double>(x,y,z));
+        CoordinateVector<> source_velocity;
+        if (grid_creator->get_box().inside(_source_positions.back())) {
+          auto grid = grid_creator->get_subgrid(_source_positions.back());
+          auto cell = (*grid).get_hydro_cell(_source_positions.back());
+          source_velocity =
+              cell.get_hydro_variables().get_primitives_velocity();
+        }
+        _source_velocities.push_back(source_velocity);
 
       }
        
@@ -948,23 +1204,14 @@ public:
         double a1z = -3.3370109454102326;
         double a2z = 0.8116654874025604;
        // double lifetime = 1.e10 * std::pow(m_cur,-2.5) * 3.154e+7;
-        double lifetime = a0z + a1z*std::log10(m_cur) + a2z*(std::log10(m_cur)*std::log10(m_cur));
-        lifetime = std::pow(10.0,lifetime);
-        lifetime = lifetime*3.154e+7;
-        std::cout << "lifetime defined " << lifetime << std::endl; // mgb 06.10
-
-        double offset =
-              _random_generator.get_uniform_random_double() * star_formation_interval;
-        std::cout << "offset =  " << offset<< std::endl; // mgb 06.10
-        double lifetime_minus_offset = lifetime - offset;  
-        std::cout << "source lifetime-offset defined =  " << lifetime_minus_offset << std::endl; // mgb 06.10
-        _source_lifetimes.push_back(lifetime_minus_offset);
-        std::cout << "source lifetimes pushed =  " << sizeof(_source_lifetimes)<< std::endl; // mgb 06.10
-        double luminosity_from_mass = lum_from_mass(m_cur);
-        std::cout << "source luminosity =  " << luminosity_from_mass << " mass = " << m_cur << std::endl; // mgb 06.10
-        _source_luminosities.push_back(luminosity_from_mass);
-        std::cout << "source luminosities pushed =  " << offset<< std::endl; // mgb 06.10
-        std::cout << "source indices =  " << _next_index<< std::endl; // mgb 06.10
+       double lifetime = a0z + a1z*std::log10(m_cur) + a2z*(std::log10(m_cur)*std::log10(m_cur));
+       lifetime = std::pow(10.0,lifetime);
+       lifetime = lifetime*3.154e+7;
+        double offset = _random_generator.get_uniform_random_double() *
+                        star_formation_interval;
+        _source_lifetimes.push_back(lifetime-offset);
+        _source_luminosities.push_back(lum_from_mass(m_cur));
+        _source_masses.push_back(m_cur);
         _source_indices.push_back(_next_index);
         std::cout << "source indices pushed, before ++next_index " << _next_index<< std::endl; // mgb 06.10 
         ++_next_index;
@@ -1022,6 +1269,82 @@ public:
   }
 
 
+  /**
+   * @brief Move stellar sources with the external potential and local shear.
+   *
+   * Gas supplies the initial velocity at formation.  Thereafter the source is
+   * treated as a collisionless particle: first the local gas gravitational
+   * acceleration (external potential plus self gravity, when enabled), then
+   * the same Coriolis/tidal rotation used for gas, followed by drift.
+   */
+  virtual void float_sources(
+      DensitySubGridCreator< HydroDensitySubGrid > *grid_creator,
+      const double timestep, const ExternalPotential *external_potential,
+      const GalacticShearingBox *galactic_shearing_box,
+      const CoordinateVector< bool > &periodicity) override {
+    if (!_float_sources || timestep <= 0.) {
+      return;
+    }
+    size_t i = 0;
+    while (i < _source_positions.size()) {
+      const bool was_inside =
+          grid_creator->get_box().inside(_source_positions[i]);
+      size_t old_subgrid = 0;
+      if (was_inside) {
+        old_subgrid = grid_creator->get_subgrid(_source_positions[i]).get_index();
+      }
+      if (grid_creator->get_box().inside(_source_positions[i])) {
+        HydroDensitySubGrid &subgrid =
+            *grid_creator->get_subgrid(_source_positions[i]);
+        const auto cell = subgrid.get_hydro_cell(_source_positions[i]);
+        _source_velocities[i] +=
+            cell.get_hydro_variables().get_gravitational_acceleration() *
+            timestep;
+      } else if (external_potential != nullptr) {
+        // A source can leave through a vertical boundary before disappearing.
+        _source_velocities[i] += external_potential->get_acceleration(
+                                    _source_positions[i]) *
+                                timestep;
+      }
+      if (galactic_shearing_box != nullptr) {
+        galactic_shearing_box->apply_to_source(_source_positions[i],
+                                                _source_velocities[i],
+                                                timestep);
+      }
+      _source_positions[i] += _source_velocities[i] * timestep;
+
+      // Source particles obey the same ordinary periodic boundaries as the
+      // gas.  (The Galactic shearing box still has no shearing remap.)
+      const Box<> box = grid_creator->get_box();
+      wrap_mixed_driving_source_position(_source_positions[i], box,
+                                         periodicity);
+      if (!grid_creator->get_box().inside(_source_positions[i])) {
+        if (_log != nullptr) {
+          _log->write_warning(
+              "Removing MixedDriving source after it left the simulation box.");
+        }
+        _source_positions.erase(_source_positions.begin() + i);
+        _source_velocities.erase(_source_velocities.begin() + i);
+        _source_lifetimes.erase(_source_lifetimes.begin() + i);
+        _source_luminosities.erase(_source_luminosities.begin() + i);
+        _source_masses.erase(_source_masses.begin() + i);
+        _spectrum_index.erase(_spectrum_index.begin() + i);
+        if (i < _source_indices.size()) {
+          _source_indices.erase(_source_indices.begin() + i);
+        }
+        _sources_changed = true;
+      } else {
+        if (was_inside &&
+            old_subgrid !=
+                grid_creator->get_subgrid(_source_positions[i]).get_index()) {
+          _sources_changed = true;
+        }
+        ++i;
+      }
+    }
+  }
+
+
 // --------------------------------------
 
   /**
@@ -1037,6 +1360,8 @@ public:
     restart_writer.write(_excess_mass);
     restart_writer.write(_scaleheight);
     restart_writer.write(_peak_fraction);
+    restart_writer.write(_clustering_factor);
+    restart_writer.write(_float_sources);
     restart_writer.write(init_running_mass);
     restart_writer.write(_num_sne);
     restart_writer.write(_holmes_time);
@@ -1056,6 +1381,13 @@ public:
       }
     }
     {
+      const auto size = _source_velocities.size();
+      restart_writer.write(size);
+      for (std::vector< CoordinateVector<> >::size_type i = 0; i < size; ++i) {
+        _source_velocities[i].write_restart_file(restart_writer);
+      }
+    }
+    {
       const auto size = _source_lifetimes.size();
       restart_writer.write(size);
       for (std::vector< double >::size_type i = 0; i < size; ++i) {
@@ -1070,6 +1402,24 @@ public:
       }
 
     }
+    {
+      const auto size = _source_masses.size();
+      restart_writer.write(size);
+      for (const double mass : _source_masses) {
+        restart_writer.write(mass);
+      }
+    }
+    {
+      const auto size = _snapshot_supernova_positions.size();
+      restart_writer.write(size);
+      for (const CoordinateVector<> &position :
+           _snapshot_supernova_positions) {
+        position.write_restart_file(restart_writer);
+      }
+      for (const double time : _snapshot_supernova_times) {
+        restart_writer.write(time);
+      }
+    }
     restart_writer.write(_number_of_updates);
     const bool has_output = (_output_file != nullptr);
     restart_writer.write(has_output);
@@ -1080,15 +1430,15 @@ public:
       restart_writer.write(filepos);
       const auto filepos2 = _output_file2->tellp();
       restart_writer.write(filepos2);
-      {
-        const auto size = _source_indices.size();
-        restart_writer.write(size);
-        for (std::vector< uint_fast32_t >::size_type i = 0; i < size; ++i) {
-          restart_writer.write(_source_indices[i]);
-        }
-      }
-      restart_writer.write(_next_index);
     }
+    {
+      const auto size = _source_indices.size();
+      restart_writer.write(size);
+      for (std::vector< uint_fast32_t >::size_type i = 0; i < size; ++i) {
+        restart_writer.write(_source_indices[i]);
+      }
+    }
+    restart_writer.write(_next_index);
   }
 
   /**
@@ -1096,24 +1446,30 @@ public:
    *
    * @param restart_reader Restart file to read from.
    */
-  inline MixedDrivingPhotonSourceDistribution(RestartReader &restart_reader)
+  inline MixedDrivingPhotonSourceDistribution(RestartReader &restart_reader,
+                                               const bool extended = false)
       : _star_formation_rate(restart_reader.read< double >()),
         _update_interval(restart_reader.read< double >()),
+        _output_file(nullptr), _output_file2(nullptr), _number_of_updates(0),
+        _next_index(0),
         _lum_adjust(restart_reader.read< double >()),
         _excess_mass(restart_reader.read<double>()),
         _scaleheight(restart_reader.read<double>()),
         _peak_fraction(restart_reader.read<double>()),
+        _clustering_factor(restart_reader.read<double>()),
+        _float_sources(restart_reader.read<bool>()),
         init_running_mass(restart_reader.read<double>()),
-        _num_sne(restart_reader.read<double>()),
+        _num_sne(restart_reader.read<uint_fast32_t>()),
         _holmes_time(restart_reader.read<double>()),
         _holmes_sh(restart_reader.read<double>()),
         _holmes_lum(restart_reader.read<double>()),
         _number_of_holmes(restart_reader.read<uint_fast32_t>()),
+        _read_file(false), _filename(), _time(0.),
         type1done(restart_reader.read<int>()),
         _total_time(restart_reader.read<double>()),
         _holmes_added(restart_reader.read<bool>()),
         _last_sf(restart_reader.read<double>()),
-        _random_generator(restart_reader) {
+        _random_generator(restart_reader), novahandler(nullptr), _log(nullptr) {
 
     {
       const std::vector< CoordinateVector<> >::size_type size =
@@ -1121,6 +1477,14 @@ public:
       _source_positions.resize(size);
       for (std::vector< CoordinateVector<> >::size_type i = 0; i < size; ++i) {
         _source_positions[i] = CoordinateVector<>(restart_reader);
+      }
+    }
+    {
+      const std::vector< CoordinateVector<> >::size_type size =
+          restart_reader.read< std::vector< CoordinateVector<> >::size_type >();
+      _source_velocities.resize(size);
+      for (std::vector< CoordinateVector<> >::size_type i = 0; i < size; ++i) {
+        _source_velocities[i] = CoordinateVector<>(restart_reader);
       }
     }
     {
@@ -1137,6 +1501,30 @@ public:
       _source_luminosities.resize(size);
       for (std::vector< double >::size_type i = 0; i < size; ++i) {
         _source_luminosities[i] = restart_reader.read< double >();
+      }
+    }
+    if (extended) {
+      const std::vector< double >::size_type size =
+          restart_reader.read< std::vector< double >::size_type >();
+      _source_masses.resize(size);
+      for (double &mass : _source_masses) {
+        mass = restart_reader.read< double >();
+      }
+      const std::vector< CoordinateVector<> >::size_type number_of_supernovae =
+          restart_reader
+              .read< std::vector< CoordinateVector<> >::size_type >();
+      _snapshot_supernova_positions.resize(number_of_supernovae);
+      _snapshot_supernova_times.resize(number_of_supernovae);
+      for (CoordinateVector<> &position : _snapshot_supernova_positions) {
+        position = CoordinateVector<>(restart_reader);
+      }
+      for (double &time : _snapshot_supernova_times) {
+        time = restart_reader.read< double >();
+      }
+    } else {
+      _source_masses.reserve(_source_luminosities.size());
+      for (const double luminosity : _source_luminosities) {
+        _source_masses.push_back(mass_from_luminosity(luminosity));
       }
     }
     _number_of_updates = restart_reader.read< uint_fast32_t >();
@@ -1160,16 +1548,31 @@ public:
       _output_file2 = new std::ofstream("TotalLuminosity.txt",
                                             std::ios_base::app);
 
-
-      {
+      if (!extended) {
         const std::vector< uint_fast32_t >::size_type size =
             restart_reader.read< std::vector< uint_fast32_t >::size_type >();
         _source_indices.resize(size);
         for (std::vector< uint_fast32_t >::size_type i = 0; i < size; ++i) {
           _source_indices[i] = restart_reader.read< uint_fast32_t >();
         }
+        _next_index = restart_reader.read< uint_fast32_t >();
+      }
+    }
+    if (extended) {
+      const std::vector< uint_fast32_t >::size_type size =
+          restart_reader.read< std::vector< uint_fast32_t >::size_type >();
+      _source_indices.resize(size);
+      for (uint_fast32_t &index : _source_indices) {
+        index = restart_reader.read< uint_fast32_t >();
       }
       _next_index = restart_reader.read< uint_fast32_t >();
+    } else if (!has_output) {
+      // Legacy restarts only stored source indices when text output was on.
+      _source_indices.resize(_source_positions.size());
+      for (uint_fast32_t i = 0; i < _source_indices.size(); ++i) {
+        _source_indices[i] = i;
+      }
+      _next_index = _source_indices.size();
     }
 
 
@@ -1188,6 +1591,10 @@ public:
           _cum_imf.push_back(part_integral/full_area);
         }
 
+  initialize_spectra(nullptr);
+  for (const double luminosity : _source_luminosities) {
+    _spectrum_index.push_back(spectrum_index_from_luminosity(luminosity));
+  }
   novahandler = new SupernovaHandler(_sne_energy);
   }
 };

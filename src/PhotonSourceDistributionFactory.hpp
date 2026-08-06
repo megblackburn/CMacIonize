@@ -54,6 +54,7 @@
 #include "StarburstPhotonSourceDistribution.hpp" // mgb edit 09.07.2026
 #include "StellarClusterPhotonSourceDistribution.hpp"
 #include "SinkStarPhotonSourceDistribution.hpp"
+#include "SwiggumFilePhotonSourceDistribution.hpp"
 
 
 // library dependent implementations
@@ -70,6 +71,17 @@
  * @brief Factory class for PhotonSourceDistribution instances.
  */
 class PhotonSourceDistributionFactory {
+private:
+  inline static PhotonSourceDistribution *configure_supernova_injection(
+      PhotonSourceDistribution *distribution,
+      const bool use_tigress_like_injection) {
+    if (distribution != nullptr) {
+      distribution->set_tigress_like_supernova_injection(
+          use_tigress_like_injection);
+    }
+    return distribution;
+  }
+
 public:
   /**
    * @brief Method that checks if the requested PhotonSourceDistribution
@@ -158,6 +170,8 @@ public:
       return new StellarClusterPhotonSourceDistribution(params, log);
     } else if (type == "Starburst") {
       return new StarburstPhotonSourceDistribution(params, log);
+    } else if (type == "SwiggumFile") {
+      return new SwiggumFilePhotonSourceDistribution(params, log);
     } else if (type  == "TextFile") {
       return new TextFilePhotonSourceDistribution(params,log);
     } else if (type == "UniformRandom") {
@@ -187,7 +201,10 @@ public:
   write_restart_file(RestartWriter &restart_writer,
                      PhotonSourceDistribution &distribution) {
 
-    const std::string tag = typeid(distribution).name();
+    const std::string tag =
+        typeid(distribution) == typeid(MixedDrivingPhotonSourceDistribution)
+            ? "MixedDrivingPhotonSourceDistributionV2"
+            : typeid(distribution).name();
     restart_writer.write(tag);
     distribution.write_restart_file(restart_writer);
   }
@@ -197,23 +214,40 @@ public:
    *
    * @param restart_reader Restart file to read from.
    * @param log Log to write logging info to.
+   * @param use_tigress_like_injection True for TIGRESS-like supernova
+   * injection, false for the legacy SILCC-like prescription.
    * @return Pointer to a newly created PhotonSourceDistribution implementation.
    * Memory management for the pointer needs to be done by the calling routine.
    */
-  inline static PhotonSourceDistribution *restart(RestartReader &restart_reader,
-                                                  Log *log = nullptr) {
+  inline static PhotonSourceDistribution *restart(
+      RestartReader &restart_reader, Log *log = nullptr,
+      const bool use_tigress_like_injection = true) {
 
     const std::string tag = restart_reader.read< std::string >();
     if (tag == typeid(AsciiFilePhotonSourceDistribution).name()) {
-      return new AsciiFilePhotonSourceDistribution(restart_reader);
+      return configure_supernova_injection(
+          new AsciiFilePhotonSourceDistribution(restart_reader),
+          use_tigress_like_injection);
     } else if (tag == typeid(CaproniPhotonSourceDistribution).name()) {
-      return new CaproniPhotonSourceDistribution(restart_reader);
+      return configure_supernova_injection(
+          new CaproniPhotonSourceDistribution(restart_reader),
+          use_tigress_like_injection);
     } else if (tag == typeid(DiscPatchPhotonSourceDistribution).name()) {
-      return new DiscPatchPhotonSourceDistribution(restart_reader);
+      return configure_supernova_injection(
+          new DiscPatchPhotonSourceDistribution(restart_reader),
+          use_tigress_like_injection);
     } else if (tag == typeid(IMFDiscPhotonSourceDistribution).name()) {
-      return new IMFDiscPhotonSourceDistribution(restart_reader);
+      return configure_supernova_injection(
+          new IMFDiscPhotonSourceDistribution(restart_reader),
+          use_tigress_like_injection);
     } else if (tag == typeid(PeakDrivingPhotonSourceDistribution).name()) {
-      return new PeakDrivingPhotonSourceDistribution(restart_reader);
+      return configure_supernova_injection(
+          new PeakDrivingPhotonSourceDistribution(restart_reader),
+          use_tigress_like_injection);
+    } else if (tag == "MixedDrivingPhotonSourceDistributionV2") {
+      return configure_supernova_injection(
+          new MixedDrivingPhotonSourceDistribution(restart_reader, true),
+          use_tigress_like_injection);
     } else if (tag == typeid(MixedDrivingPhotonSourceDistribution).name()) {
       return new MixedDrivingPhotonSourceDistribution(restart_reader);
     } else if (tag == typeid(BurstyPhotonSourceDistribution).name()) {
@@ -226,21 +260,41 @@ public:
       return new MovingSourcesPhotonSourceDistribution(restart_reader); // mgb edit 05.03.2026
     } else if (tag == typeid(ArepoTallboxSnapshotPhotonSourceDistribution).name()){
       return new ArepoTallboxSnapshotPhotonSourceDistribution(restart_reader); // mgb edit 30.06.2026
+      return configure_supernova_injection(
+          new MixedDrivingPhotonSourceDistribution(restart_reader),
+          use_tigress_like_injection);
     } else if (tag == typeid(SingleStarPhotonSourceDistribution).name()) {
-      return new SingleStarPhotonSourceDistribution(restart_reader);
+      return configure_supernova_injection(
+          new SingleStarPhotonSourceDistribution(restart_reader),
+          use_tigress_like_injection);
     } else if (tag == typeid(SingleSupernovaPhotonSourceDistribution).name()) {
-      return new SingleSupernovaPhotonSourceDistribution(restart_reader);
+      return configure_supernova_injection(
+          new SingleSupernovaPhotonSourceDistribution(restart_reader),
+          use_tigress_like_injection);
     } else if (tag == typeid(SinkStarPhotonSourceDistribution).name()) {
-      return new SinkStarPhotonSourceDistribution(restart_reader);
+      return configure_supernova_injection(
+          new SinkStarPhotonSourceDistribution(restart_reader),
+          use_tigress_like_injection);
     } else if (tag == typeid(StellarClusterPhotonSourceDistribution).name()) {
       return new StellarClusterPhotonSourceDistribution(restart_reader);
     } else if (tag == typeid(StarburstPhotonSourceDistribution).name()) {
       return new StarburstPhotonSourceDistribution(restart_reader);
+      return configure_supernova_injection(
+          new StellarClusterPhotonSourceDistribution(restart_reader),
+          use_tigress_like_injection);
+    } else if (tag == typeid(SwiggumFilePhotonSourceDistribution).name()) {
+      return configure_supernova_injection(
+          new SwiggumFilePhotonSourceDistribution(restart_reader, log),
+          use_tigress_like_injection);
     } else if (tag == typeid(UniformRandomPhotonSourceDistribution).name()) {
-      return new UniformRandomPhotonSourceDistribution(restart_reader);
+      return configure_supernova_injection(
+          new UniformRandomPhotonSourceDistribution(restart_reader),
+          use_tigress_like_injection);
 #ifdef HAVE_HDF5
     } else if (tag == typeid(HDF5PhotonSourceDistribution).name()) {
-      return new HDF5PhotonSourceDistribution(restart_reader);
+      return configure_supernova_injection(
+          new HDF5PhotonSourceDistribution(restart_reader),
+          use_tigress_like_injection);
 #endif
     } else {
       cmac_error("Restarting is not supported for distribution type: \"%s\".",

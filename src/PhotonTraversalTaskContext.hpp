@@ -56,7 +56,7 @@ private:
   ThreadSafeVector< Task > &_tasks;
 
   /*! @brief Number of photon packets that has been terminated. */
-  AtomicValue< uint_fast32_t > &_num_photon_done;
+  AtomicValue< uint_fast64_t > &_num_photon_done;
 
   /*! @brief Statistical information about photon packets. */
   PhotonPacketStatistics *_statistics;
@@ -82,7 +82,7 @@ public:
       MemorySpace &buffers,
       _creator_type &grid_creator,
       ThreadSafeVector< Task > &tasks,
-      AtomicValue< uint_fast32_t > &num_photon_done,
+      AtomicValue< uint_fast64_t > &num_photon_done,
       PhotonPacketStatistics *statistics, const bool do_reemission,
       const double max_photon_distance)
       : _buffers(buffers), _grid_creator(grid_creator), _tasks(tasks),
@@ -184,7 +184,7 @@ public:
           new_index = _buffers.get_free_buffer();
           PhotonBuffer &buffer = _buffers[new_index];
           buffer.set_subgrid_index(ngb);
-          buffer.set_direction(TravelDirections::output_to_input_direction(i));
+          buffer.set_direction(this_grid.get_neighbour_input_direction(i));
           this_grid.set_active_buffer(i, new_index);
         }
 

@@ -34,6 +34,8 @@
 /*! @brief Size of a variable that stores the number of photon sources. */
 typedef uint_fast32_t photonsourcenumber_t;
 class RandomGenerator;
+class ExternalPotential;
+class GalacticShearingBox;
 
 /**
  * @brief General interface for photon source distribution functors.
@@ -108,6 +110,32 @@ public:
 
   virtual void float_sources(DensitySubGridCreator< HydroDensitySubGrid > *grid_creator, double timestep) {}
 
+  /**
+   * @brief Move sources with the external and Galactic-frame source terms.
+   *
+   * The two-argument form is retained for older source distributions.  A
+   * distribution that needs these source terms can override this overload.
+   */
+  virtual void float_sources(
+      DensitySubGridCreator< HydroDensitySubGrid > *grid_creator,
+      double timestep, const ExternalPotential *external_potential,
+      const GalacticShearingBox *galactic_shearing_box) {
+    float_sources(grid_creator, timestep);
+  }
+
+  /**
+   * @brief Move sources while respecting the simulation-box periodicity.
+   */
+  virtual void float_sources(
+      DensitySubGridCreator< HydroDensitySubGrid > *grid_creator,
+      double timestep, const ExternalPotential *external_potential,
+      const GalacticShearingBox *galactic_shearing_box,
+      const CoordinateVector< bool > &periodicity) {
+    (void)periodicity;
+    float_sources(grid_creator, timestep, external_potential,
+                  galactic_shearing_box);
+  }
+
   virtual void accrete_gas(DensitySubGridCreator< HydroDensitySubGrid > *grid_creator, Hydro &hydro) {}
 
   virtual std::vector<CoordinateVector<double>> get_sink_positions() {
@@ -131,6 +159,19 @@ public:
   virtual void add_stellar_feedback(DensityGrid &grid,
                                     const double current_time) {}
 
+  /**
+   * @brief Select the supernova injection prescription, where supported.
+   *
+   * The default implementation is a no-op for source distributions without
+   * supernova feedback. This hook also lets restart-created distributions be
+   * configured from the current parameter file without changing the binary
+   * restart-file layout.
+   *
+   * @param use_tigress_like_injection True for TIGRESS-like injection, false
+   * for the legacy SILCC-like prescription.
+   */
+  virtual void set_tigress_like_supernova_injection(
+      const bool use_tigress_like_injection) {}
 
   virtual void get_sne_radii(HydroDensitySubGrid &subgrid) {}
 
@@ -166,6 +207,15 @@ public:
    * @brief Finalise adding stellar feedback to a distributed grid.
    */
   virtual void done_stellar_feedback() {}
+
+  /**
+   * @brief Append distribution-specific metadata to a completed snapshot.
+   *
+   * Most distributions have no extra snapshot data. Implementations that do
+   * write metadata should open and close the file entirely within this call.
+   */
+  virtual void write_snapshot_metadata(const std::string &filename,
+                                       const double simulation_time) {}
 
   /**
    * @brief Write the distribution to the given restart file.

@@ -42,7 +42,6 @@
 #include <gsl/gsl_odeiv2.h>
 #include <gsl/gsl_errno.h>
 
-
 /**
  * @brief Constructor.
  *
@@ -657,9 +656,33 @@ void IonizationStateCalculator::calculate_ionization_state(
 
 
   for (auto cellit = subgrid.begin(); cellit != subgrid.end(); ++cellit) {
-    calculate_ionization_state(jfac / cellit.get_volume(),
-                               hfac / cellit.get_volume(),
-                               cellit.get_ionization_variables(),timestep, time_dependent, do_metals);
+    const double cell_volume = cellit.get_volume();
+    const IonizationVariables &variables = cellit.get_ionization_variables();
+    const double mean_intensity_h =
+        variables.get_mean_intensity(ION_H_n);
+#ifdef HAS_HELIUM
+    const double mean_intensity_he =
+        variables.get_mean_intensity(ION_He_n);
+#endif
+    if (!std::isfinite(cell_volume) || cell_volume <= 0. ||
+        !std::isfinite(mean_intensity_h)
+#ifdef HAS_HELIUM
+        || !std::isfinite(mean_intensity_he)
+#endif
+    ) {
+#ifdef HAS_HELIUM
+      cmac_error("Invalid radiation estimator before the ionization-state "
+                 "calculation (volume: %g, H: %g, He: %g).",
+                 cell_volume, mean_intensity_h, mean_intensity_he);
+#else
+      cmac_error("Invalid radiation estimator before the ionization-state "
+                 "calculation (volume: %g, H: %g).",
+                 cell_volume, mean_intensity_h);
+#endif
+    }
+    calculate_ionization_state(jfac / cell_volume, hfac / cell_volume,
+                               cellit.get_ionization_variables(), timestep,
+                               time_dependent, do_metals);
   }
 }
 
@@ -1062,7 +1085,7 @@ int hydrogen_ode_system(double t, const double y[], double f[], void *params) {
     // Preventing negative growth for negative values
       if (y[0] < 1e-14) {
           f[0] = std::max(f[0], 0.0);
-      } 
+      }
       // Preventing positive growth for values greater than 1
       else if (y[0] > 1.0) {
               f[0] = std::min(f[0], 0.0);
@@ -1095,7 +1118,6 @@ double IonizationStateCalculator::compute_time_dependent_hydrogen(
       cmac_warning("Error in solver! xn = %g",y[0]);
      // xn = 1e-14;
   }
-    
 
   gsl_odeiv2_driver_free(driver);
 
@@ -1131,7 +1153,7 @@ int hydrogen_helium_ode_system(double t, const double y[], double f[], void *par
     double gammaHe2 = coefficients[9];
     double sqrtT = coefficients[10];
     double alpha_e_2sP = coefficients[11];
-    
+
 
     // Neutral fraction
     double xh = y[0];
@@ -1198,7 +1220,7 @@ void IonizationStateCalculator::compute_time_dependent_hydrogen_helium(
       std::cout << nH << " "  << AHe << " "  << T << " "  << std::endl;
       cmac_error("Error in solver!");
   }
-    
+
 
   gsl_odeiv2_driver_free(driver);
 
@@ -1365,7 +1387,7 @@ void IonizationStateCalculator::compute_time_dependent_metals(
       if (status != GSL_SUCCESS) {
           cmac_error("Error in solver!");
       }
-    
+
       gsl_odeiv2_driver_free(driver);
       //set new 
       ionization_variables.set_ionic_fraction(ION_C_p1, std::min(1.0,std::max(y[0],1e-14)));
@@ -1425,7 +1447,7 @@ void IonizationStateCalculator::compute_time_dependent_metals(
       if (status != GSL_SUCCESS) {
           cmac_error("Error in solver!");
       }
-    
+
       gsl_odeiv2_driver_free(driver);
       //set new 
       ionization_variables.set_ionic_fraction(ION_N_n, std::min(1.0,std::max(y[0],1e-14)));
@@ -1491,7 +1513,7 @@ void IonizationStateCalculator::compute_time_dependent_metals(
       if (status != GSL_SUCCESS) {
           cmac_error("Error in solver!");
       }
-    
+
       gsl_odeiv2_driver_free(driver);
       //set new 
       ionization_variables.set_ionic_fraction(ION_O_n, std::min(1.0,std::max(y[0],1e-14)));
@@ -1553,7 +1575,7 @@ void IonizationStateCalculator::compute_time_dependent_metals(
       if (status != GSL_SUCCESS) {
           cmac_error("Error in solver!");
       }
-    
+
       gsl_odeiv2_driver_free(driver);
       //set new 
       ionization_variables.set_ionic_fraction(ION_Ne_n, std::min(1.0,std::max(y[0],1e-14)));
@@ -1617,7 +1639,7 @@ void IonizationStateCalculator::compute_time_dependent_metals(
       if (status != GSL_SUCCESS) {
           cmac_error("Error in solver!");
       }
-    
+
       gsl_odeiv2_driver_free(driver);
       //set new 
       ionization_variables.set_ionic_fraction(ION_S_p1, std::min(1.0,std::max(y[0],1e-14)));
@@ -1631,18 +1653,6 @@ void IonizationStateCalculator::compute_time_dependent_metals(
     
     
   }
-template void IonizationStateCalculator::calculate_ionization_state<DensityGrid>(
-    double, DensityGrid&, std::pair<unsigned long, unsigned long>&, double) const;
-
-
-template void IonizationStateCalculator::calculate_ionization_state<DensitySubGrid>(
-    double, DensitySubGrid&, double, bool, bool) const;
-
-
-template void IonizationStateCalculator::calculate_ionization_state<HydroDensitySubGrid>(
-    double, HydroDensitySubGrid&, double, bool, bool) const;
-
-
-
-
-
+template void IonizationStateCalculator::calculate_ionization_state<DensityGrid>(double, DensityGrid&, std::pair<unsigned long, unsigned long>&, double) const;
+template void IonizationStateCalculator::calculate_ionization_state<DensitySubGrid>(double, DensitySubGrid&, double, bool, bool) const;
+template void IonizationStateCalculator::calculate_ionization_state<HydroDensitySubGrid>(double, HydroDensitySubGrid&, double, bool, bool) const;

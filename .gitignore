@@ -27,3 +27,10 @@
 *.exe
 *.out
 *.app
+
+/build
+/build2
+/buildhydrogen
+
+# Reusable top-down projections made by the Swiggum plotting script
+.swiggum_plot_cache/

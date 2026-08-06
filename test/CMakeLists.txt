@@ -278,6 +278,64 @@ add_unit_test(NAME testIonizationStateCalculator
               SOURCES ${TESTIONIZATIONSTATECALCULATOR_SOURCES}
               LIBS LegacyEngine)
 
+## Regression test for moving MixedDriving source periodic coordinates
+set(TESTMIXEDDRIVINGSOURCEPOSITION_SOURCES
+    testMixedDrivingSourcePosition.cpp
+)
+add_unit_test(NAME testMixedDrivingSourcePosition
+              SOURCES ${TESTMIXEDDRIVINGSOURCEPOSITION_SOURCES}
+              LIBS SharedEngine)
+
+
+## Regression test for the conservative Galactic shearing-periodic boundary
+set(TESTGALACTICSHEARINGBOX_SOURCES
+    testGalacticShearingBox.cpp
+)
+add_unit_test(NAME testGalacticShearingBox
+              SOURCES ${TESTGALACTICSHEARINGBOX_SOURCES}
+              LIBS SharedEngine)
+configure_file(
+    ${PROJECT_SOURCE_DIR}/test/test_galactic_shearing_box.param
+    ${PROJECT_BINARY_DIR}/rundir/test/test_galactic_shearing_box.param
+    COPYONLY)
+
+## Regression test for the task-based RHD last-radiation restart state
+set(TESTTASKBASEDRADIATIONRESTART_SOURCES
+    testTaskBasedRadiationRestart.cpp
+)
+add_unit_test(NAME testTaskBasedRadiationRestart
+              SOURCES ${TESTTASKBASEDRADIATIONRESTART_SOURCES}
+              LIBS SharedEngine)
+
+
+## Unit test for SwiggumFilePhotonSourceDistribution restart ordering
+set(TESTSWIGGUMFILEPHOTONSOURCEDISTRIBUTION_SOURCES
+    testSwiggumFilePhotonSourceDistribution.cpp
+)
+add_unit_test(NAME testSwiggumFilePhotonSourceDistribution
+              SOURCES ${TESTSWIGGUMFILEPHOTONSOURCEDISTRIBUTION_SOURCES}
+              LIBS SharedEngine ${OpenMP_CXX_LIBRARIES})
+configure_file(
+    ${PROJECT_SOURCE_DIR}/test/test_swiggum_file_photon_source_distribution.csv
+    ${PROJECT_BINARY_DIR}/rundir/test/test_swiggum_file_photon_source_distribution.csv
+    COPYONLY)
+configure_file(
+    ${PROJECT_SOURCE_DIR}/test/test_swiggum_file_photon_source_distribution.yml
+    ${PROJECT_BINARY_DIR}/rundir/test/test_swiggum_file_photon_source_distribution.yml
+    COPYONLY)
+configure_file(
+    ${PROJECT_SOURCE_DIR}/test/test_swiggum_snap_stars.csv
+    ${PROJECT_BINARY_DIR}/rundir/test/test_swiggum_snap_stars.csv
+    COPYONLY)
+configure_file(
+    ${PROJECT_SOURCE_DIR}/test/test_swiggum_snap_clusters.csv
+    ${PROJECT_BINARY_DIR}/rundir/test/test_swiggum_snap_clusters.csv
+    COPYONLY)
+configure_file(
+    ${PROJECT_SOURCE_DIR}/test/test_swiggum_snap.yml
+    ${PROJECT_BINARY_DIR}/rundir/test/test_swiggum_snap.yml
+    COPYONLY)
+
 ## Unit test for AMRDensityGrid
 set(TESTAMRDENSITYGRID_SOURCES
     testAMRDensityGrid.cpp
@@ -957,6 +1015,13 @@ set(TESTDENSITYSUBGRIDCREATOR_SOURCES
 add_unit_test(NAME testDensitySubGridCreator
               SOURCES ${TESTDENSITYSUBGRIDCREATOR_SOURCES})
 
+## Regression test for near-tangent cubed-sphere subgrid entry
+set(TESTSPHERICALDENSITYSUBGRIDENTRY_SOURCES
+    testSphericalDensitySubGridEntry.cpp
+)
+add_unit_test(NAME testSphericalDensitySubGridEntry
+              SOURCES ${TESTSPHERICALDENSITYSUBGRIDENTRY_SOURCES})
+
 ## Unit test for TaskBasedIonizationSimulation
 set(TESTTASKBASEDIONIZATIONSIMULATION_SOURCES
     testTaskBasedIonizationSimulation.cpp
@@ -995,7 +1060,8 @@ set(TESTALVELIUSTURBULENCEFORCING_SOURCES
     testAlveliusTurbulenceForcing.cpp
 )
 add_unit_test(NAME testAlveliusTurbulenceForcing
-              SOURCES ${TESTALVELIUSTURBULENCEFORCING_SOURCES})
+              SOURCES ${TESTALVELIUSTURBULENCEFORCING_SOURCES}
+              LIBS ${OpenMP_CXX_LIBRARIES})
 
 # Unit test for MemoryLogger
 set(TESTMEMORYLOGGER_SOURCES

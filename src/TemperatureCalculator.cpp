@@ -1130,15 +1130,7 @@ void TemperatureCalculator::calculate_temperature(
 
 
 }
-template void TemperatureCalculator::calculate_temperature<DensityGrid>(
-    uint_fast32_t loop, double totweight, DensityGrid &grid,
-    std::pair<cellsize_t, cellsize_t> &block, double timestep) const;
 
-template void TemperatureCalculator::calculate_temperature<DensitySubGrid>(
-    const uint_fast32_t loop, const double totweight,
-    DensitySubGrid &subgrid, double timestep, bool time_dependent, bool do_metals) const;
-
-template void TemperatureCalculator::calculate_temperature<HydroDensitySubGrid>(
-    const uint_fast32_t loop, const double totweight,
-    HydroDensitySubGrid &subgrid, double timestep, bool time_dependent, bool do_metals) const;
-
+template void TemperatureCalculator::calculate_temperature<DensityGrid>(unsigned long, double, DensityGrid&, std::pair<unsigned long, unsigned long>&, double) const;
+template void TemperatureCalculator::calculate_temperature<DensitySubGrid>(unsigned long, double, DensitySubGrid&, double, bool, bool) const;
+template void TemperatureCalculator::calculate_temperature<HydroDensitySubGrid>(unsigned long, double, HydroDensitySubGrid&, double, bool, bool) const;
