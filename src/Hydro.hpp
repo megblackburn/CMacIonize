@@ -1098,7 +1098,7 @@ public:
               left_state.primitives(j), right_state.primitives(j), dxinv);
 
           left_state.primitive_gradients(j)[i] += dwdx;
-          right_state.primitive_gradients(j)[i] += dwdx; // changed - to +
+          right_state.primitive_gradients(j)[i] -= dwdx; // changed - to +
 
           WLlim[2 * j] = std::min(WLlim[2 * j], right_state.primitives(j));
           WLlim[2 * j + 1] = std::max(WLlim[2 * j + 1], right_state.primitives(j));
@@ -1292,6 +1292,12 @@ public:
     
     CoordinateVector<> v_new;
 
+   /* if (dvxdy != 0 || dvxdz != 0){
+      std::cout<<"new vx = " << vx - dt * (vx * dvxdx + vy * dvxdy + vz * dvxdz + rhoinv * dPdx - ax) << std::endl;
+      std::cout<<"old vx = " << vx - dt * (vx * divv + rhoinv * dPdx - ax) << std::endl;
+      std::cout<<"cross terms: dvxdx: " << dvxdx <<"dvxdy: "<< dvxdy << "dvxdz"<< dvxdz << std::endl;
+      std::cout<<"divergence: " << divv << std::endl;
+    }*/
     // 2. Assign the components based on the flag
     if (_revert_to_1d_hydro) {
         v_new = CoordinateVector<>(

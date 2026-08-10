@@ -45,10 +45,12 @@
 #include "ArepoTallboxSnapshotDensityFunction.hpp"
 #include "StarburstDensityFunction.hpp" // mgb edit 09.07.2026
 #include "HomogeneousDensityFunction.hpp"
+#include "InhomogeneousDensityFunction.hpp"
 #include "InterpolatedDensityFunction.hpp"
 #include "PhantomSnapshotDensityFunction.hpp"
 #include "SPHNGSnapshotDensityFunction.hpp"
 #include "SpiralGalaxyDensityFunction.hpp"
+#include "KelvinHelmholtzDensityFunction.hpp"
 
 // HDF5 dependent implementations
 #ifdef HAVE_HDF5
@@ -164,7 +166,11 @@ public:
       return new DiscPatchDIGDensityFunction(params);
     } else if (type == "Homogeneous") {
       return new HomogeneousDensityFunction(params, log);
-    } //else if (type == "SolarNeighborhood") {
+    } else if (type == "Inhomogeneous") {
+      return new InhomogeneousDensityFunction(params, log);
+    } else if (type == "KelvinHelmholtz") {
+      return new KelvinHelmholtzDensityFunction(params, log);
+    }//else if (type == "SolarNeighborhood") {
       //return new SolarNeighborhoodDensityFunction(params, log);
     //}
      else if (type == "HDF5") {

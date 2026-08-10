@@ -515,6 +515,7 @@ public:
         _random_generator(seed), _log(log){
 
     novahandler = new SupernovaHandler(_sne_energy);
+    fuvlumtomass = new ReadFUVLumToMass(_fuv_LtoM_filename);
 
     
 
@@ -946,15 +947,14 @@ public:
     double Lsol = 3.828e26; // W
 
     bool debug = false;
-    
-  //  fuvlumtomass = new ReadFUVLumToMass(_fuv_LtoM_filename);
-    
 
+  //  fuvlumtomass = new ReadFUVLumToMass(_fuv_LtoM_filename);
+  
     double total_fuv_luminosity_Lsol = 0.0;
 
     for (size_t i = 0; i < _fuv_source_masses.size(); ++i){
 
-      double mass_Msol = _fuv_source_masses[i]; // kg
+      double mass_Msol = _fuv_source_masses[i]; // Msol
       double birth_time_s = _fuv_source_birth_time[i]; // seconds
 
       double source_age = _total_time - birth_time_s; // seconds
@@ -1328,7 +1328,7 @@ public:
 
       // mgb edit 23.07.2026: addition of FUV source trackers
       _fuv_source_birth_time.push_back(_total_time);
-      _fuv_source_masses.push_back(mass_to_generate);
+      _fuv_source_masses.push_back(mass_to_generate/0.207);
 
       if (_output_file2 != nullptr) {
         double totallum = get_total_luminosity();
