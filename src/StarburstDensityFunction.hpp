@@ -19,207 +19,78 @@
 /**
  * @file StarburstDensityFunction.hpp
  *
- * @brief Disc patch density function.
+ * @brief Starburst density function.
  *
- * @author Bert Vandenbroucke (bv7@st-andrews.ac.uk)
+ * @author Meg Blackburn (mgb27@st-andrews.ac.uk)
  */
-#ifndef STARBURSTDENSITYFUNCTION_HPDENSITYFUNCTION_HPP
+#ifndef STARBURSTDENSITYFUNCTION_HPP
 #define STARBURSTDENSITYFUNCTION_HPP
 
 #include "CoordinateVector.hpp"
 #include "DensityFunction.hpp"
 #include "ParameterFile.hpp"
 #include "PhysicalConstants.hpp"
+#include "RandomGenerator.hpp"
 
 #include <cmath>
+#include <string>
+#include <stdexcept>
 
 /**
- * @brief Disc patch density function.
- *
- * Represents a gas density profile that is initially in hydrostatic equilibrium
- * with a DiscPatchExternalPotential corresponding to a matter density profile
- * of the form
- * \f[
- *   \rho{}_M = \frac{\Sigma{}_M}{2b_M} \left(\cosh\left(\frac{z}{b_M}\right)
- *   \right)^{-2},
- * \f]
- * with @f$z@f$ the third component of the position, @f$\Sigma{}_M@f$ the
- * surface density of matter in the plane @f$z=0@f$ and @f$b_M@f$ a vertical
- * scale height for the density profile.
- *
- * The gas density profile itself has the general form
- * \f[
- *   \rho{}_g = \frac{\Sigma{}_g}{2b_M} \left(\cosh\left(\frac{z}{b_M}\right)
- *   \right)^{-\frac{2b_M}{b_g}},
- * \f]
- * where @f$\Sigma{}_g@f$ and @f$b_g@f$ are the surface density and scale height
- * for the gas density profile. The latter is given by
- * \f[
- *   b_g = \frac{k_B T}{\mu{} m_p \pi{} G \Sigma{}_M},
- * \f]
- * with @f$T@f$ the hydrostatic equilibrium temperature and @f$\mu{}@f$ the
- * mean molecular weight,
- * \f[
- *   \mu{} = \frac{1}{2} (1 + x_{\rm{}H}),
- * \f]
- * with @f$x_{\rm{}H}@f$ the hydrogen neutral fraction (we assume a hydrogen
- * only gas). @f$k_B@f$, @f$m_p@f$ and @f$G@f$ are respectively Bolzmann's
- * constant, the proton mass and Newton's constant.
- *
- * The gas surface density @f$\Sigma{}_g@f$ can be related to the total surface
- * density @f$\Sigma{}_M@f$ by imposing a fixed mass ratio
- * @f$f_g = \frac{M_g}{M_M}@f$, with
- * \f[
- *   M_X = \int_{-\infty{}}^{+\infty{}} \rho{}_X (z)~{\rm{}d}z, X = [M, g].
- * \f]
- * The corresponding expression is
- * \f[
- *   \Sigma{}_g = \frac{2}{I\left(-\frac{2b_M}{b_g}\right)} f_g \Sigma{}_M,
- * \f]
- * with
- * \f[
- *   I(d) = \int_{-\infty{}}^{+\infty{}} (\cosh(x))^d~{\rm{}d}x.
- * \f]
- * This integral has to be evaluated numerically. We use a third order
- * polynomial fit in log-log space to approximate it.
+ * @brief Starburst Galaxy Density Function.
+ * matches CGOLS for full M82 like simulation or can simulate a patch of a starburst galaxy
  */
 class StarburstDensityFunction : public DensityFunction {
+public:
+  enum ProfileMode {
+      MODE_GLOBAL = 0, // Uses fully dynamic 3D coordinate wells from center (0,0,0)
+      MODE_PATCH  = 1  //  stratified local tall-box patch radius
+  };
+
 private:
-  /*! @brief Vertical position of the disc (in m). */
+  ProfileMode _mode;
+  double _patch_radius_kpc;
+
   const double _disc_z;
-
-  /*! @brief Inverse vertical scale height of the disc, @f$\frac{1}{b_M}@f$
-   *  (in m^-1). */
   const double _b_inv;
-
-  /*! @brief Exponent of the density profile, @f$-\frac{2b_M}{b_g}@f$. */
   const double _exponent;
-
-  /*! @brief Norm of the density profile, @f$\frac{\Sigma{}_g}{2b_Mm_p}@f$
-   *  (in m^-3). */
   const double _density_norm;
 
-  /*! @brief Constant initial temperature, @f$T@f$ (in K). */
   const double _temperature;
-
-  /*! @brief Flag for tracing initial neutral gas,
-   *  */
-  const double _trace_initial_neutral_flag;
-
-  /*! @brief Temperature to trace
-   *  */
+  const bool _trace_initial_neutral_flag;
   const double _temperature_to_trace;
-
-  /*! @brief Constant initial neutral fraction for hydrogen,
-   *  @f$x_{\rm{}H}@f$. */
   const double _neutral_fraction;
-
   const double _velocity_dispersion;
 
-  
-  /*! @brief Pseudo-random number generator. */
-  RandomGenerator _random_generator;
+  mutable RandomGenerator _random_generator;
 
-  /**
-   * @brief Get the mean particle mass @f$\mu{} m_p@f$ corresponding to the
-   * given neutral fraction.
-   *
-   * @param neutral_fraction Neutral fraction of hydrogen, @f$x_{\rm{}H}@f$.
-   * @return Mean particle mass, @f$\mu{}m_p@f$ (in kg).
-   */
   static inline double get_mean_particle_mass(const double neutral_fraction) {
     return 0.5 *
-           PhysicalConstants::get_physical_constant(
-               PHYSICALCONSTANT_PROTON_MASS) *
+           PhysicalConstants::get_physical_constant(PHYSICALCONSTANT_PROTON_MASS) *
            (1. + neutral_fraction);
   }
 
-  /**
-   * @brief Get the scale height of a gas disc in hydrostatic equilibrium with
-   * a potential with the given surface density.
-   *
-   * @param surface_density Surface density of the disc, @f$\Sigma{}_M@f$
-   * (in kg m^-2).
-   * @param temperature Hydrostatic equilibrium temperature of the gas, @f$T@f$
-   * (in K).
-   * @param neutral_fraction Neutral fraction for hydrogen, @f$x_{\rm{}H}@f$.
-   * @return Scale height for the corresponding equilibrium gas disc, @f$b_g@f$.
-   */
-  static inline double
-  get_gas_disc_scale_height(const double surface_density,
-                            const double temperature,
-                            const double neutral_fraction) {
-    return (PhysicalConstants::get_physical_constant(
-                PHYSICALCONSTANT_BOLTZMANN) *
-            temperature) /
-           (get_mean_particle_mass(neutral_fraction) * M_PI *
-            PhysicalConstants::get_physical_constant(
-                PHYSICALCONSTANT_NEWTON_CONSTANT) *
-            surface_density);
-  }
-
-  /**
-   * @brief Get the scale height of a gas disc in hydrostatic equilibrium with
-   * a potential with the given surface density.
-   *
-   * @param surface_density Surface density of the disc, @f$\Sigma{}_M@f$
-   * (in kg m^-2).
-   * @param temperature Hydrostatic equilibrium temperature of the gas, @f$T@f$
-   * (in K).
-   * @param neutral_fraction Neutral fraction for hydrogen, @f$x_{\rm{}H}@f$.
-   * @return Scale height for the corresponding equilibrium gas disc, @f$b_g@f$.
-   */
-  static inline double
-  get_turbulent_gas_disc_scale_height(const double surface_density,
-                            const double velocity_diserpsion) {
-    return (velocity_diserpsion * velocity_diserpsion /(M_PI *
-            PhysicalConstants::get_physical_constant(
-                PHYSICALCONSTANT_NEWTON_CONSTANT) *
+  static inline double get_turbulent_gas_disc_scale_height(const double surface_density,
+                                                          const double velocity_dispersion) {
+    return (velocity_dispersion * velocity_dispersion / (M_PI *
+            PhysicalConstants::get_physical_constant(PHYSICALCONSTANT_NEWTON_CONSTANT) *
             surface_density));
   }
 
-
-  /**
-   * @brief Get the mass fraction factor for the given density profile exponent
-   * @f$d@f$.
-   *
-   * This is the numerical integration of
-   * \f[
-   *   \int_{-\infty{}}^{+\infty{}} \left(\cosh(x)\right)^d~{\rm{}d}x.
-   * \f]
-   *
-   * We made a fit to this expression for values of the scale height ratio
-   * @f$r = \frac{b_M}{b_g} = -\frac{1}{2} d@f$ in log-log space.
-   *
-   * @param exponent Exponent @f$d@f$.
-   * @return Mass fraction factor: extra factor needed to convert from total
-   * surface density @f$\Sigma{}_M@f$ into gas surface density @f$\Sigma{}_g@f$
-   * due to the different slope of the gas density profile.
-   */
   static inline double get_mass_fraction_factor(const double exponent) {
     const double x = std::log10(-0.5 * exponent);
     const double x2 = x * x;
-    // polynomial fit to actual integral
-    const double y =
-        0.01499337 * x2 * x - 0.08454788 * x2 + 0.63503798 * x - 0.01018254;
+    const double y = 0.01499337 * x2 * x - 0.08454788 * x2 + 0.63503798 * x - 0.01018254;
     return std::pow(10., y);
   }
 
 public:
   /**
-   * @brief Constructor.
-   *
-   * @param disc_z Vertical position of the disc (in m).
-   * @param surface_density Surface density of the disc, @f$\Sigma{}_M@f$
-   * (in kg m^-2).
-   * @param scale_height Scale height of the disc, @f$b_M@f$ (in m).
-   * @param gas_fraction Fraction of the total mass content of the disc that is
-   * in gas, @f$f_g@f$.
-   * @param temperature Constant initial temperature, @f$T@f$ (in K).
-   * @param neutral_fraction Constant initial neutral fraction for hydrogen,
-   * @f$x_{\rm{}H}@f$.
+   * @brief construct
    */
-  inline StarburstDensityFunction(const double disc_z,
+  inline StarburstDensityFunction(const ProfileMode mode,
+                                  const double patch_radius_kpc,
+                                  const double disc_z,
                                   const double surface_density,
                                   const double scale_height,
                                   const double gas_fraction,
@@ -227,102 +98,150 @@ public:
                                   const double velocity_dispersion,
                                   const bool trace_initial_neutral_flag,
                                   const double temperature_to_trace,
-                                  const double neutral_fraction
-                                  )
-      : _disc_z(disc_z), _b_inv(1. / scale_height),
-        _exponent(-2. * scale_height /
-                  get_turbulent_gas_disc_scale_height(surface_density, velocity_dispersion)),
+                                  const double neutral_fraction)
+      : _mode(mode),
+        _patch_radius_kpc(patch_radius_kpc),
+        _disc_z(disc_z), _b_inv(1. / scale_height),
+        _exponent(-2. * scale_height / get_turbulent_gas_disc_scale_height(surface_density, velocity_dispersion)),
         _density_norm(0.5 * gas_fraction * surface_density *
                       get_mass_fraction_factor(_exponent) * _b_inv /
-                      PhysicalConstants::get_physical_constant(
-                          PHYSICALCONSTANT_PROTON_MASS)),
-        _temperature(temperature), _trace_initial_neutral_flag(trace_initial_neutral_flag), _temperature_to_trace(temperature_to_trace), _neutral_fraction(neutral_fraction), _velocity_dispersion(velocity_dispersion) {}
+                      PhysicalConstants::get_physical_constant(PHYSICALCONSTANT_PROTON_MASS)),
+        _temperature(temperature),
+        _trace_initial_neutral_flag(trace_initial_neutral_flag),
+        _temperature_to_trace(temperature_to_trace),
+        _neutral_fraction(neutral_fraction),
+        _velocity_dispersion(velocity_dispersion),
+        _random_generator() {}
 
   /**
-   * @brief ParameterFile constructor.
-   *
-   * We accept the following parameters:
-   *  - disc z: Vertical position of the disc (default: 0. pc)
-   *  - surface density: Surface density of the disc (default: 30. Msol pc^-2)
-   *  - scale height: Scale height of the disc (default: 200. pc)
-   *  - gas fraction: Fraction of the total mass content of the disc that is in
-   *    gas (default: 0.1)
-   *  - temperature: Constant initial temperature (default: 1.e4 K)
-   *  - neutral fraction: Constant initial neutral fraction for hydrogen
-   *    (default: 1.e-6)
-   *
-   * @param params ParameterFile to read from.
+   * @brief Read parameters
    */
   inline StarburstDensityFunction(ParameterFile &params)
-      : StarburstDensityFunction(
-            params.get_physical_value< QUANTITY_LENGTH >(
-                "DensityFunction:disc z", "0. m"),
-            params.get_physical_value< QUANTITY_SURFACE_DENSITY >(
-                "DensityFunction:surface density", "30. Msol pc^-2"),
-            params.get_physical_value< QUANTITY_LENGTH >(
-                "DensityFunction:scale height", "200. pc"),
-            params.get_value< double >("DensityFunction:gas fraction", 0.1),
-            params.get_physical_value< QUANTITY_TEMPERATURE >(
-                "DensityFunction:temperature", "1.e4 K"),
-            params.get_value< double >("DensityFunction:velocity dispersion", 67500.0),
-            params.get_value< bool >("DensityFunction:trace initial neutral flag", false),
-            params.get_physical_value< QUANTITY_TEMPERATURE >(
-                "DensityFunction:temperature to trace", "500. K"),
-            params.get_value< double >("DensityFunction:neutral fraction",1e-6)
-            
-                                       ) {} 
+      : _disc_z(params.get_physical_value< QUANTITY_LENGTH >("DensityFunction:disc z", "0. m")),
+        _b_inv(1. / params.get_physical_value< QUANTITY_LENGTH >("DensityFunction:scale height", "200. pc")),
+        _exponent(-2. * params.get_physical_value< QUANTITY_LENGTH >("DensityFunction:scale height", "200. pc") /
+                  get_turbulent_gas_disc_scale_height(
+                      params.get_physical_value< QUANTITY_SURFACE_DENSITY >("DensityFunction:surface density", "30. Msol pc^-2"),
+                      params.get_physical_value< QUANTITY_VELOCITY >("InitialConditions:velocity_dispersion", "10. km s^-1"))),
+        _density_norm(0.5 * params.get_value< double >("DensityFunction:gas fraction", 0.1) *
+                      params.get_physical_value< QUANTITY_SURFACE_DENSITY >("DensityFunction:surface density", "30. Msol pc^-2") *
+                      get_mass_fraction_factor(_exponent) * _b_inv /
+                      PhysicalConstants::get_physical_constant(PHYSICALCONSTANT_PROTON_MASS)),
+        _temperature(params.get_physical_value< QUANTITY_TEMPERATURE >("DensityFunction:temperature", "1.e4 K")),
+        _trace_initial_neutral_flag(params.get_value< bool >("DensityFunction:trace initial neutral flag", false)),
+        _temperature_to_trace(params.get_physical_value< QUANTITY_TEMPERATURE >("DensityFunction:temperature to trace", "500. K")),
+        _neutral_fraction(params.get_value< double >("DensityFunction:neutral fraction", 1.0)),
+        _velocity_dispersion(params.get_physical_value< QUANTITY_VELOCITY >("InitialConditions:velocity_dispersion", "10. km s^-1")),
+        _random_generator() 
+  {
+      std::string mode_str = params.get_value<std::string>("ExternalPotential:mode", "patch");
+      if (mode_str == "global") {
+          _mode = MODE_GLOBAL;
+      } else if (mode_str == "patch") {
+          _mode = MODE_PATCH;
+      } else {
+          throw std::runtime_error("StarburstDensityFunction: Invalid parameter mode! Use 'global' or 'patch'.");
+      }
 
+      double r_m = params.get_physical_value< QUANTITY_LENGTH >("ExternalPotential:patch radius", "1.5 kpc");
+      _patch_radius_kpc = r_m / 3.086e16; 
+  }
+
+  virtual ~StarburstDensityFunction() {}
+
+  double get_cgols_potential_value(const double x, const double y, const double z) const {
+    const double G = PhysicalConstants::get_physical_constant(PHYSICALCONSTANT_NEWTON_CONSTANT);
+    
+    const double M_disk  = 6.0e9  * 1.989e30; 
+    const double a_disk  = 1100.  * 3.086e16; 
+    const double b_disk  = 150.   * 3.086e16; 
+    const double M_bulge = 5.0e8  * 1.989e30; 
+    const double c_bulge = 180.   * 3.086e16; 
+    const double M_halo  = 5.0e10 * 1.989e30; 
+    const double r_s     = 9000.  * 3.086e16;
+
+    const double R2 = x*x + y*y;
+    const double r  = std::sqrt(R2 + z*z + 1e-20);
+
+    const double z_param = std::sqrt(z*z + b_disk*b_disk);
+    const double disk_term = a_disk + z_param;
+    const double phi_disk = -G * M_disk / std::sqrt(R2 + disk_term * disk_term);
+
+    const double phi_bulge = -G * M_bulge / (r + c_bulge);
+
+    const double x_halo = r / r_s;
+    const double nfw_norm = std::log(1.0 + (90000.0/9000.0)) - (10.0 / 11.0); 
+    const double phi_halo = (-G * M_halo / (r * nfw_norm)) * std::log(1.0 + x_halo);
+
+    return phi_disk + phi_bulge + phi_halo;
+  }
   /**
-   * @brief Virtual destructor.
+   * @brief Set initial fields
    */
-  virtual ~StarburstDensityFunction() {} /// Lewis's edited density function: mgb note 30.10.2025
+  virtual DensityValues operator()(const Cell &cell) override {
+    double x = cell.get_cell_midpoint().x();
+    double y = cell.get_cell_midpoint().y();
+    const double z = cell.get_cell_midpoint().z() - _disc_z;
 
-  /**
-   * @brief Function that gives the density for a given cell.
-   *
-   * @param cell Geometrical information about the cell.
-   * @return Initial physical field values for that cell.
-   */
-  virtual DensityValues operator()(const Cell &cell) {
+    if (_mode == MODE_PATCH) {
+        const double R_fixed = _patch_radius_kpc * 3.086e16;
+        x = R_fixed;
+        y = 0.0;
+    }
 
- 
+    // hydrostatic equilibrium
+    const double phi_midplane = get_cgols_potential_value(x, y, 0.0);
+    const double phi_local    = get_cgols_potential_value(x, y, z);
+    const double delta_phi    = phi_local - phi_midplane;
 
+    const double thermal_cs2 = (PhysicalConstants::get_physical_constant(PHYSICALCONSTANT_BOLTZMANN) * _temperature) /
+                               get_mean_particle_mass(_neutral_fraction);
+    
+    const double total_support_sigma2 = thermal_cs2 + (_velocity_dispersion * _velocity_dispersion);
+    const double equilibrium_exponent = -delta_phi / total_support_sigma2;
+    
+    double number_density;
+    if (equilibrium_exponent < -50.0) {
+        number_density = 1.0e-10 * 1.e6; 
+    } else {
+        number_density = _density_norm * std::exp(equilibrium_exponent);
+    }
 
-    const double dz = cell.get_cell_midpoint().z() - _disc_z;
-    const double cosh = std::cosh(dz * _b_inv);
-    const double nH = _density_norm * std::pow(cosh, _exponent);
+    // Gaussian turbulent velocity vectors (Box-Muller)
+    double u1 = _random_generator.get_uniform_random_double();
+    double u2 = _random_generator.get_uniform_random_double();
+    double u3 = _random_generator.get_uniform_random_double();
+    double u4 = _random_generator.get_uniform_random_double();
+
+    double g1 = std::sqrt(-2.0 * std::log(u1 + 1e-20)) * std::cos(2.0 * M_PI * u2);
+    double g2 = std::sqrt(-2.0 * std::log(u1 + 1e-20)) * std::sin(2.0 * M_PI * u2);
+    double g3 = std::sqrt(-2.0 * std::log(u3 + 1e-20)) * std::cos(2.0 * M_PI * u4);
+
+    double vx = g1 * _velocity_dispersion;
+    double vy = g2 * _velocity_dispersion;
+    double vz = g3 * _velocity_dispersion;
 
     DensityValues values;
-    values.set_number_density(nH*1e6);
+    values.set_number_density(number_density);
     values.set_temperature(_temperature);
     values.set_ionic_fraction(ION_H_n, _neutral_fraction);
-    
-    double u1_x = _random_generator.get_uniform_random_double();
-    double u2_x = _random_generator.get_uniform_random_double();
-    double vx = _velocity_dispersion * std::sqrt(-2. * std::log(u1_x)) * std::cos(2. * M_PI * u2_x);
+    values.set_velocity(CoordinateVector<>(vx, vy, vz));
 
-    double u1_y = _random_generator.get_uniform_random_double();
-    double u2_y = _random_generator.get_uniform_random_double();
-    double vy = _velocity_dispersion * std::sqrt(-2. * std::log(u1_y)) * std::cos(2. * M_PI * u2_y);
-
-    double u1_z = _random_generator.get_uniform_random_double();
-    double u2_z = _random_generator.get_uniform_random_double();
-    double vz = _velocity_dispersion * std::sqrt(-2. * std::log(u1_z)) * std::cos(2. * M_PI * u2_z);
-
-    values.set_velocity(CoordinateVector<double>(vx, vy, vz));
-
-
-
-    if (_trace_initial_neutral_flag == true){
-        if (values.get_temperature() <= _temperature_to_trace){
+    if (_trace_initial_neutral_flag == true) {
+        if (values.get_temperature() <= _temperature_to_trace) {
             values.set_initial_neutral_scalar_field(1.0);
+            values.set_remaining_initial_neutral_scalar_field(1.0);
         } else {
             values.set_initial_neutral_scalar_field(0.0);
+            values.set_remaining_initial_neutral_scalar_field(0.0);
         }
         values.set_cooled_neutral_scalar_field(0.0);
+        values.set_remaining_cooled_neutral_scalar_field(0.0);
     } else {
         values.set_initial_neutral_scalar_field(0.0);
         values.set_cooled_neutral_scalar_field(0.0);
+        values.set_remaining_initial_neutral_scalar_field(0.0);
+        values.set_remaining_cooled_neutral_scalar_field(0.0);
     }
 
     return values;

@@ -17,14 +17,13 @@
  ******************************************************************************/
 
 /**
- * @file DiscPatchExternalPotential.hpp
+ * @file StarburstExternalPotential.hpp
  *
- * @brief Disc patch external potential.
+ * @brief Starburst external potential.
  *
  * @author Meg Blackburn (mgb27@st-andrews.ac.uk)
  */
 
-#endif // DISCPATCHEXTERNALPOTENTIAL_HPP
 #ifndef STARBURSTEXTERNALPOTENTIAL_HPP
 #define STARBURSTEXTERNALPOTENTIAL_HPP
 
@@ -44,27 +43,27 @@ public:
      * @brief Runtime operational flags determining the geometric coordinate mapping system.
      */
     enum PotentialMode {
-        POTENTIAL_GLOBAL = 0, ///< (0,0,0) is galactic center; calculates complete 3D vectors (ax, ay, az).
-        POTENTIAL_PATCH  = 1  ///< (0,0) is box center; locks radial radius to R_patch, returns vertical (0, 0, az).
+        POTENTIAL_GLOBAL = 0, // (0,0,0) is galactic center; calculates complete 3D vectors (ax, ay, az).
+        POTENTIAL_PATCH  = 1  // (0,0) is box center; locks radial radius to R_patch, returns vertical (0, 0, az).
     };
 
 private:
     double _G;
-    PotentialMode _mode;  ///< Runtime structural toggle switch
-    double _R_patch;      ///< Localised orbital distance from galaxy center (m) [Used only in PATCH mode]
+    PotentialMode _mode;  // Runtime structural toggle switch
+    double _R_patch;      // Localised orbital distance from galaxy center (m) [Used only in PATCH mode]
     
     // --- Miyamoto-Nagai Disk Parameters ---
-    double _M_disk;   ///< Total Mass of the Stellar Disk (kg)
-    double _a_disk;   ///< Radial Scale Length of Disk (m)
-    double _b_disk;   ///< Vertical Scale Thickness of Disk (m)
+    double _M_disk;   // Total Mass of the Stellar Disk (kg)
+    double _a_disk;   // Radial Scale Length of Disk (m)
+    double _b_disk;   // Vertical Scale Thickness of Disk (m)
 
     // --- Hernquist Bulge Parameters ---
-    double _M_bulge;  ///< Total Mass of Central Bulge Core (kg)
-    double _c_bulge;  ///< Scale Radius of Bulge Core (m)
+    double _M_bulge;  // Total Mass of Central Bulge Core (kg)
+    double _c_bulge;  // Scale Radius of Bulge Core (m)
 
     // --- NFW Dark Matter Halo Parameters ---
-    double _M_halo;   ///< Scale Characteristic Mass of Dark Matter Halo (kg)
-    double _r_s;      ///< Core Scale Radius of Halo Profile (m)
+    double _M_halo;   // Scale Characteristic Mass of Dark Matter Halo (kg)
+    double _r_s;      // Core Scale Radius of Halo Profile (m)
 
 public:
     /**
@@ -93,7 +92,6 @@ public:
     inline StarburstExternalPotential(ParameterFile &params) {
         _G = PhysicalConstants::get_physical_constant(PHYSICALCONSTANT_NEWTON_CONSTANT);
         
-        // Parse execution environment geometry mode string
         std::string mode_str = params.get_value<std::string>("ExternalPotential:mode", "patch");
         if (mode_str == "global") {
             _mode = POTENTIAL_GLOBAL;
@@ -126,7 +124,6 @@ public:
         double R2 = 0.0;
         double r  = 0.0;
 
-        // Branch 1: Evaluate geometric radial parameter maps based on flag constraints
         if (_mode == POTENTIAL_GLOBAL) {
             R2 = x * x + y * y;
             r  = std::sqrt(R2 + z * z + 1e-20);
@@ -175,7 +172,6 @@ public:
         }
         az += halo_factor * z;
 
-        // Branch 2: Enforce zeroed horizontal forces if executing under patch environment specs
         if (_mode == POTENTIAL_PATCH) {
             return CoordinateVector<>(0.0, 0.0, az);
         }

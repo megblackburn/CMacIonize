@@ -33,6 +33,7 @@
 #include "CoredDMProfileExternalPotential.hpp"
 #include "DiscPatchExternalPotential.hpp"
 #include "PointMassExternalPotential.hpp"
+#include "StarburstExternalPotential.hpp"
 
 /**
  * @brief Factory for ExternalPotential instances.
@@ -70,6 +71,8 @@ public:
       return new DiscPatchExternalPotential(params);
     } else if (type == "PointMass") {
       return new PointMassExternalPotential(params);
+    } else if (type == "Starburst") {
+      return new StarburstExternalPotential(params);
     } else if ("None") {
       return nullptr;
     } else {
