@@ -1544,6 +1544,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
   TimeLogger time_logger;
 
   time_logger.start("initialization");
+  std::cout<<"Started initialization has been called"<<std::endl;
 
   time_logger.start("parameter reading");
 
@@ -2237,8 +2238,8 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
       sourcedistribution->write_snapshot_metadata(
           writer->get_snapshot_filename(0), 0.);
     }
-    time_logger.end("snapshot");
   }
+    time_logger.end("snapshot");
 }
 
   double maximum_timestep = hydro_maximum_timestep;
@@ -2371,7 +2372,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     has_next_step = restart_reader->read< bool >();
     actual_timestep = restart_reader->read< double >();
     current_time = restart_reader->read< double >();
-    lastrad_time = TaskBasedRadiationRestart::read_last_radiation_time(
+    lastrad_time = TaskBasedRadiationRestart::read_last_radiation_time( // taken out to fix restart bug
         *restart_reader, current_time, actual_timestep, hydro_lastrad,
         hydro_radtime);
     if (log) {
@@ -2384,10 +2385,13 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     delete restart_reader;
     restart_reader = nullptr;
   }
+  std::cout<<"After initialisation but before time logger end"<<std::endl;
 
   double current_time_restarted = current_time + _restart_time; //current_time + _restart_time; // mgb edit 10.11.2025
 
+  std::cout<<"Just before time logger end call"<< std::endl;
   time_logger.end("initialization");
+  std::cout<<"After time logger end call"<< std::endl;
 
   time_logger.output("time_log.txt");
 
