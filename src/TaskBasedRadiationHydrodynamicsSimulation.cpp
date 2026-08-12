@@ -3580,19 +3580,20 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           time_logger.start("snapshot");
           double hydro_lastsnap_restart = hydro_lastsnap + _restart_iteration;
           writer->write(*grid_creator, hydro_lastsnap_restart, *params, current_time_restarted);
+          if (sourcedistribution != nullptr) {
+            sourcedistribution->write_snapshot_metadata(
+                writer->get_snapshot_filename(hydro_lastsnap), current_time_restarted);
+          }
           time_logger.end("snapshot");
         } else {
           time_logger.start("snapshot");
           writer->write(*grid_creator, hydro_lastsnap, *params, current_time);
+          if (sourcedistribution != nullptr) {
+            sourcedistribution->write_snapshot_metadata(
+                writer->get_snapshot_filename(hydro_lastsnap), current_time);
+          }
           time_logger.end("snapshot");
         }
-        time_logger.start("snapshot");
-        writer->write(*grid_creator, hydro_lastsnap, *params, current_time);
-        if (sourcedistribution != nullptr) {
-          sourcedistribution->write_snapshot_metadata(
-              writer->get_snapshot_filename(hydro_lastsnap), current_time);
-        }
-        time_logger.end("snapshot");
       }
       ++hydro_lastsnap;
     }
