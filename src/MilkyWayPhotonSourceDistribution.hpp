@@ -1224,7 +1224,7 @@ public:
     }
 
 // Stellar Sources
-    if (_total_time - _last_sf > _update_interval) {
+    if (_total_time - _last_sf >= _update_interval) {
 
       // form cumulative mass structure
       const double star_formation_interval = _total_time - _last_sf;

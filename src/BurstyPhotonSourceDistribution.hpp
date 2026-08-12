@@ -1282,6 +1282,8 @@ public:
       }
 
        std::cout << "SHOULD BE GENERATING " << mass_to_generate - _excess_mass<< std::endl;
+       std::cout << " star_formation_interval: " << star_formation_interval << ", SFR: " << _star_formation_rate << ", mass_to_generate: " << mass_to_generate << std::endl;
+
       double mass_generated = 0.0;
       while (mass_generated < mass_to_generate - _excess_mass){
         double m_cur = get_single_mass(_mass_range,_cum_imf,
