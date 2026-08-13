@@ -44,10 +44,6 @@ private:
   const double _shear_parameter;
   const double _radial_centre;
 
-  const double _shear_z_gradient;
-  const double _circular_velocity;
-  const bool _attenuate_shear;
-  const bool _attenuate_shear_boundaries;
 
   inline static int_fast32_t wrap_index(const int_fast32_t index,
                                         const int_fast32_t size) {
@@ -153,24 +149,6 @@ private:
   }
 
 
-
-  inline double attenuated_wrapped_shift(const Box<> &box, const double time, const double z) const {
-    const double y_size = box.get_sides().y();
-
-    const double shear_x_velocity = _shear_parameter * _omega * box.get_sides().x();
-
-    const double shear_velocity_gradient_z = calculate_vertical_shear(z);
-
-    const double effective_x_velocity_shear = std::max(0., shear_x_velocity - shear_velocity_gradient_z);
-
-    double shift = std::fmod(effective_x_velocity_shear * time, y_size);
-
-    if (shift < 0.) {
-      shift += y_size;
-    }
-    return shift;
-  }
-
   inline double wrapped_shift(const Box<> &box, const double time) const {
     const double y_size = box.get_sides().y();
     double shift =
@@ -181,15 +159,6 @@ private:
     }
     return shift;
   }
-
-  inline double calculate_vertical_shear(const double z) const {
-
-
-    const double velocity_falloff = _shear_z_gradient * std::abs(z); // 
-
-    return velocity_falloff;
-  }
-
 public:
   GalacticShearingBox(ParameterFile &params, Log *log = nullptr)
       : _enabled(params.get_value< bool >("GalacticShearingBox:enabled", false)),
@@ -204,17 +173,7 @@ public:
         _shear_parameter(params.get_value< double >(
             "GalacticShearingBox:shear parameter", 1.)),
         _radial_centre(params.get_physical_value< QUANTITY_LENGTH >(
-            "GalacticShearingBox:radial centre", "0. pc")),
-        _shear_z_gradient(params.get_physical_value< QUANTITY_VELOCITY >(
-            "GalacticShearingBox:vertical velocity decrease", "0. km s^-1") / // initialise as zero if not wanted 
-            params.get_physical_value< QUANTITY_LENGTH >(
-              "GalacticShearingBox:vertical scale distance", "1. kpc")), 
-        _circular_velocity(params.get_physical_value< QUANTITY_VELOCITY >(
-                "GalacticShearingBox:circular velocity", "232. km s^-1")), 
-        _attenuate_shear(params.get_value< bool >(
-                "GalacticShearingBox:attenuate shear", false)), 
-        _attenuate_shear_boundaries(params.get_value< bool >(
-                "GalacticShearingBox:attenuate shear boundaries", false)) {
+            "GalacticShearingBox:radial centre", "0. pc")) {
     if (_enabled && log) {
       log->write_status("Enabled local Galactic rotation with Omega = ", _omega,
                         " s^-1 and q = ", _shear_parameter, ".");
@@ -288,42 +247,28 @@ public:
   inline void add_boundary_gradients(
       DensitySubGridCreator< HydroDensitySubGrid > &grid_creator,
       const Hydro &hydro, const double time) const {
-    if (!shearing_periodic_boundaries()) {
-      return;
-    }
-    const CoordinateVector< int_fast32_t > layout =
-        grid_creator.get_subgrid_layout();
-    const CoordinateVector< int_fast32_t > subgrid_cells =
-        grid_creator.get_subgrid_cell_layout();
-    const int_fast32_t nx = layout.x() * subgrid_cells.x();
-    const int_fast32_t ny = layout.y() * subgrid_cells.y();
-    const int_fast32_t nz = layout.z() * subgrid_cells.z();
-    const Box<> box = grid_creator.get_box();
+      if (!shearing_periodic_boundaries()) {
+        return;
+      }
+      const CoordinateVector< int_fast32_t > layout =
+          grid_creator.get_subgrid_layout();
+      const CoordinateVector< int_fast32_t > subgrid_cells =
+          grid_creator.get_subgrid_cell_layout();
+      const int_fast32_t nx = layout.x() * subgrid_cells.x();
+      const int_fast32_t ny = layout.y() * subgrid_cells.y();
+      const int_fast32_t nz = layout.z() * subgrid_cells.z();
+      const Box<> box = grid_creator.get_box();
 
-    
 
-    if (_attenuate_shear_boundaries) {
-      const double dz = box.get_sides().z() / nz;
-      const double z_min = box.get_anchor()[2];
-      const double shear_x_velocity = _shear_parameter * _omega * box.get_sides().x();
+      const double velocity_jump = _shear_parameter * _omega * box.get_sides().x();
+      const double shift_rows = wrapped_shift(box, time) * ny / box.get_sides().y();
 
-      
       for (int_fast32_t iy = 0; iy < ny; ++iy) {
+        int_fast32_t low0, low1, high0, high1;
+        double low_weight1, high_weight1;
+        get_y_weights(iy - shift_rows, ny, low0, low1, low_weight1);
+        get_y_weights(iy + shift_rows, ny, high0, high1, high_weight1);
         for (int_fast32_t iz = 0; iz < nz; ++iz) {
-
-          const double z = z_min + (static_cast<double>(iz) + 0.5) * dz;
-          const double vertical_velocity_drop = calculate_vertical_shear(z);
-
-          const double effective_velocity_shear = std::max(0., shear_x_velocity - vertical_velocity_drop);
-          
-          const double shift_rows = attenuated_wrapped_shift(box, time, z) * ny / box.get_sides().y();
-          const double velocity_jump =  effective_velocity_shear;
-
-          int_fast32_t low0, low1, high0, high1;
-          double low_weight1, high_weight1;
-          get_y_weights(iy - shift_rows, ny, low0, low1, low_weight1);
-          get_y_weights(iy + shift_rows, ny, high0, high1, high_weight1);
-          
           auto high_cell = get_cell(grid_creator, nx - 1, iy, iz);
           const auto low_cell0 = get_cell(grid_creator, 0, low0, iz);
           const auto low_cell1 = get_cell(grid_creator, 0, low1, iz);
@@ -347,47 +292,9 @@ public:
               *grid_creator.get_subgrid(low_cell.get_cell_midpoint());
           low_grid.add_x_remapped_ghost_gradient(
               low_cell.get_index(), hydro, high_ghost, false);
-          
-        }
-      }
-
-    } else {
-        
-        const double velocity_jump = _shear_parameter * _omega * box.get_sides().x();
-        const double shift_rows = wrapped_shift(box, time) * ny / box.get_sides().y();
-
-        for (int_fast32_t iy = 0; iy < ny; ++iy) {
-          int_fast32_t low0, low1, high0, high1;
-          double low_weight1, high_weight1;
-          get_y_weights(iy - shift_rows, ny, low0, low1, low_weight1);
-          get_y_weights(iy + shift_rows, ny, high0, high1, high_weight1);
-          for (int_fast32_t iz = 0; iz < nz; ++iz) {
-            auto high_cell = get_cell(grid_creator, nx - 1, iy, iz);
-            const auto low_cell0 = get_cell(grid_creator, 0, low0, iz);
-            const auto low_cell1 = get_cell(grid_creator, 0, low1, iz);
-            HydroVariables low_ghost =
-                interpolate_hydro(low_cell0.get_hydro_variables(),
-                                  low_cell1.get_hydro_variables(), low_weight1);
-            shift_velocity_frame(low_ghost, velocity_jump);
-            HydroDensitySubGrid &high_grid =
-                *grid_creator.get_subgrid(high_cell.get_cell_midpoint());
-            high_grid.add_x_remapped_ghost_gradient(
-                high_cell.get_index(), hydro, low_ghost, true);
-
-            auto low_cell = get_cell(grid_creator, 0, iy, iz);
-            const auto high_cell0 = get_cell(grid_creator, nx - 1, high0, iz);
-            const auto high_cell1 = get_cell(grid_creator, nx - 1, high1, iz);
-            HydroVariables high_ghost =
-                interpolate_hydro(high_cell0.get_hydro_variables(),
-                                  high_cell1.get_hydro_variables(), high_weight1);
-            shift_velocity_frame(high_ghost, -velocity_jump);
-            HydroDensitySubGrid &low_grid =
-                *grid_creator.get_subgrid(low_cell.get_cell_midpoint());
-            low_grid.add_x_remapped_ghost_gradient(
-                low_cell.get_index(), hydro, high_ghost, false);
-        }
       }
     }
+    
   }
 
   /**
@@ -402,44 +309,33 @@ public:
       DensitySubGridCreator< HydroDensitySubGrid > &grid_creator,
       const Hydro &hydro, const double time, const double timestep,
       const bool advect_ionization) const {
-    if (!shearing_periodic_boundaries()) {
-      return;
-    }
-    const CoordinateVector< int_fast32_t > layout =
-        grid_creator.get_subgrid_layout();
-    const CoordinateVector< int_fast32_t > subgrid_cells =
-        grid_creator.get_subgrid_cell_layout();
-    const int_fast32_t nx = layout.x() * subgrid_cells.x();
-    const int_fast32_t ny = layout.y() * subgrid_cells.y();
-    const int_fast32_t nz = layout.z() * subgrid_cells.z();
-    const Box<> box = grid_creator.get_box();
-    const double dx = box.get_sides().x() / nx;
-    const double area =
-        (box.get_sides().y() / ny) * (box.get_sides().z() / nz);
+      if (!shearing_periodic_boundaries()) {
+        return;
+      }
+      const CoordinateVector< int_fast32_t > layout =
+          grid_creator.get_subgrid_layout();
+      const CoordinateVector< int_fast32_t > subgrid_cells =
+          grid_creator.get_subgrid_cell_layout();
+      const int_fast32_t nx = layout.x() * subgrid_cells.x();
+      const int_fast32_t ny = layout.y() * subgrid_cells.y();
+      const int_fast32_t nz = layout.z() * subgrid_cells.z();
+      const Box<> box = grid_creator.get_box();
+      const double dx = box.get_sides().x() / nx;
+      const double area =
+          (box.get_sides().y() / ny) * (box.get_sides().z() / nz);
 
 
-    if (_attenuate_shear_boundaries) {
-
-      const double dz = box.get_sides().z() / nz;
-      const double z_min = box.get_anchor()[2];
-
-      const double shear_velocity_x = _shear_parameter * _omega * box.get_sides().x();
+      const double shift_rows =
+          wrapped_shift(box, time) * ny / box.get_sides().y();
+      const double velocity_jump =
+          _shear_parameter * _omega * box.get_sides().x();
 
       for (int_fast32_t iy = 0; iy < ny; ++iy) {
+        int_fast32_t low0, low1;
+        double weight1;
+        get_y_weights(iy - shift_rows, ny, low0, low1, weight1);
+        const double weight0 = 1. - weight1;
         for (int_fast32_t iz = 0; iz < nz; ++iz) {
-
-          const double z = z_min + (static_cast<double>(iz) + 0.5) * dz;
-          const double vertical_velocity_drop = calculate_vertical_shear(z);
-          const double effective_velocity_shear = std::max(0., shear_velocity_x - vertical_velocity_drop);
-          const double shift_rows = attenuated_wrapped_shift(box, time, z) * ny / box.get_sides().y();
-          const double velocity_jump = effective_velocity_shear;
-
-        
-          int_fast32_t low0, low1;
-          double weight1;
-          get_y_weights(iy - shift_rows, ny, low0, low1, weight1);
-          const double weight0 = 1. - weight1;
-
           auto high_cell = get_cell(grid_creator, nx - 1, iy, iz);
           auto low_cell0 = get_cell(grid_creator, 0, low0, iz);
           auto low_cell1 = get_cell(grid_creator, 0, low1, iz);
@@ -477,14 +373,13 @@ public:
           }
 
           // Transform the receiving low-x flux out of the high-x frame.
-
           double low_delta[11];
           low_delta[0] = low_state.delta_conserved(0); // Density
           low_delta[1] = low_state.delta_conserved(1); // x-momentum
           low_delta[2] = low_state.delta_conserved(2) - velocity_jump * low_state.delta_conserved(0); // y-momentum
           low_delta[3] = low_state.delta_conserved(3); // z-momentum
           low_delta[4] = low_state.delta_conserved(4) - velocity_jump * low_state.delta_conserved(2) +
-                         0.5 * velocity_jump * velocity_jump * low_state.delta_conserved(0); // Total Energy
+                        0.5 * velocity_jump * velocity_jump * low_state.delta_conserved(0); // Total Energy
 
           for (uint_fast8_t i = 5; i < 11; ++i) {
             low_delta[i] = low_state.delta_conserved(i);
@@ -494,33 +389,7 @@ public:
             low_variables0.delta_conserved(i) += weight0 * low_delta[i];
             low_variables1.delta_conserved(i) += weight1 * low_delta[i];
           }
-
-          // Realign internal energy 
-            const double mass0   = low_variables0.conserved(0);
-            const double px0 = low_variables0.conserved(1);
-            const double py0 = low_variables0.conserved(2);
-            const double pz0 = low_variables0.conserved(3);
-            const double e_kin0 = 0.5 *(px0*px0 + py0*py0 + pz0*pz0) / mass0;
-            
-            const double e_int0 = low_variables0.conserved(4) - e_kin0;
-            
-            
-             if (std::abs(e_int0 - low_variables0.conserved(5)) > 1e-12 * low_variables0.conserved(5) || std::isnan(e_int0)) {
-              low_variables0.conserved(5) =  e_int0;
-            }
-          
-            const double mass1   = low_variables1.conserved(0);
-            const double px1 = low_variables1.conserved(1);
-            const double py1 = low_variables1.conserved(2);
-            const double pz1 = low_variables1.conserved(3);
-            const double e_kin1 = 0.5 * (px1*px1 + py1*py1 + pz1*pz1) / mass1;
-                        
-            const double e_int1 = low_variables1.conserved(4) - e_kin1;
-            
-             if (std::abs(e_int1 - low_variables1.conserved(5)) > 1e-12 * low_variables1.conserved(5) || std::isnan(e_int1)) {
-              low_variables1.conserved(5) =  e_int1;
-            }
-
+        
 
           if (advect_ionization) {
             for (int_fast32_t ion = 0; ion < NUMBER_OF_IONNAMES; ++ion) {
@@ -535,97 +404,10 @@ public:
                   .increase_delta_ionic_fraction(
                       ion, weight1 *
                               low_ionization.get_delta_ionic_fraction(ion));
-              }
             }
           }
         }
-    
-    } else {
-
-        const double shift_rows =
-            wrapped_shift(box, time) * ny / box.get_sides().y();
-        const double velocity_jump =
-            _shear_parameter * _omega * box.get_sides().x();
-
-        for (int_fast32_t iy = 0; iy < ny; ++iy) {
-          int_fast32_t low0, low1;
-          double weight1;
-          get_y_weights(iy - shift_rows, ny, low0, low1, weight1);
-          const double weight0 = 1. - weight1;
-          for (int_fast32_t iz = 0; iz < nz; ++iz) {
-            auto high_cell = get_cell(grid_creator, nx - 1, iy, iz);
-            auto low_cell0 = get_cell(grid_creator, 0, low0, iz);
-            auto low_cell1 = get_cell(grid_creator, 0, low1, iz);
-
-            HydroVariables high_state;
-            high_state.copy_all(high_cell.get_hydro_variables());
-            HydroVariables low_state =
-                interpolate_hydro(low_cell0.get_hydro_variables(),
-                                  low_cell1.get_hydro_variables(), weight1);
-            for (uint_fast8_t i = 0; i < 11; ++i) {
-              high_state.delta_conserved(i) = 0.;
-              low_state.delta_conserved(i) = 0.;
-            }
-            shift_velocity_frame(low_state, velocity_jump);
-
-            IonizationVariables high_ionization;
-            IonizationVariables low_ionization = interpolate_ionization(
-                low_cell0.get_ionization_variables(),
-                low_cell1.get_ionization_variables(), weight1);
-            for (int_fast32_t ion = 0; ion < NUMBER_OF_IONNAMES; ++ion) {
-              high_ionization.set_ionic_fraction(
-                  ion, high_cell.get_ionization_variables().get_ionic_fraction(
-                          ion));
-            }
-            hydro.do_flux_calculation(
-                0, high_state, high_ionization, low_state, low_ionization, dx,
-                area, timestep, advect_ionization);
-
-            HydroVariables &high_variables = high_cell.get_hydro_variables();
-            HydroVariables &low_variables0 = low_cell0.get_hydro_variables();
-            HydroVariables &low_variables1 = low_cell1.get_hydro_variables();
-            for (uint_fast8_t i = 0; i < 11; ++i) {
-              high_variables.delta_conserved(i) +=
-                  high_state.delta_conserved(i);
-            }
-
-            // Transform the receiving low-x flux out of the high-x frame.
-            double low_delta[11];
-            low_delta[0] = low_state.delta_conserved(0); // Density
-            low_delta[1] = low_state.delta_conserved(1); // x-momentum
-            low_delta[2] = low_state.delta_conserved(2) - velocity_jump * low_state.delta_conserved(0); // y-momentum
-            low_delta[3] = low_state.delta_conserved(3); // z-momentum
-            low_delta[4] = low_state.delta_conserved(4) - velocity_jump * low_state.delta_conserved(2) +
-                          0.5 * velocity_jump * velocity_jump * low_state.delta_conserved(0); // Total Energy
-
-            for (uint_fast8_t i = 5; i < 11; ++i) {
-              low_delta[i] = low_state.delta_conserved(i);
-            }
-            
-            for (uint_fast8_t i = 0; i < 11; ++i) {
-              low_variables0.delta_conserved(i) += weight0 * low_delta[i];
-              low_variables1.delta_conserved(i) += weight1 * low_delta[i];
-            }
-          
-
-            if (advect_ionization) {
-              for (int_fast32_t ion = 0; ion < NUMBER_OF_IONNAMES; ++ion) {
-                high_cell.get_ionization_variables()
-                    .increase_delta_ionic_fraction(
-                        ion, high_ionization.get_delta_ionic_fraction(ion));
-                low_cell0.get_ionization_variables()
-                    .increase_delta_ionic_fraction(
-                        ion, weight0 *
-                                low_ionization.get_delta_ionic_fraction(ion));
-                low_cell1.get_ionization_variables()
-                    .increase_delta_ionic_fraction(
-                        ion, weight1 *
-                                low_ionization.get_delta_ionic_fraction(ion));
-              }
-            }
-          }
-        }
-      
+ 
     }
   }
 
@@ -645,15 +427,8 @@ public:
     const double cosine = std::cos(angle);
     const double sine = std::sin(angle);
 
-    double equilibrium_y = 0.;
-    const double shear_x_velocity = _shear_parameter * _omega * (position.x() - _radial_centre);
-
-    if (_attenuate_shear) {
-      const double vertical_velocity_drop = calculate_vertical_shear(position.z());
-      equilibrium_y = std::max(0.0, shear_x_velocity - vertical_velocity_drop);
-    } else {
-      equilibrium_y = shear_x_velocity;
-    }
+    const double equilibrium_y = _shear_parameter * _omega * (position.x() - _radial_centre);
+    
     const double residual_y = velocity.y() - equilibrium_y;
 
     const double old_x = velocity.x();
@@ -677,16 +452,9 @@ public:
 
         const double shear_velocity_x = _shear_parameter * _omega * (cell.get_cell_midpoint().x() - _radial_centre);
 
-        if (_attenuate_shear) {
-          const double z = cell.get_cell_midpoint().z();
-          const double vertical_velocity_drop = calculate_vertical_shear(z);
-
-          const double effective_shear_velocity = std::max(0., shear_velocity_x - vertical_velocity_drop);
-          velocity[1] += effective_shear_velocity;
-
-        } else {
-          velocity[1] += shear_velocity_x;
-        }
+        
+        velocity[1] += shear_velocity_x;
+        
         cell.get_hydro_variables().set_primitives_velocity(velocity);
       }
     }
@@ -716,16 +484,7 @@ public:
       const CoordinateVector<> old_velocity =
           variables.get_conserved_momentum() / mass;
 
-      double equilibrium_y = 0.;
-      const double velocity_shear_x = _shear_parameter * _omega * (cell.get_cell_midpoint().x() - _radial_centre);
-
-      if (_attenuate_shear) {
-        const double z = cell.get_cell_midpoint().z();
-        const double vertical_velocity_drop = calculate_vertical_shear(z);
-        equilibrium_y = std::max(0., velocity_shear_x - vertical_velocity_drop);
-      } else {
-        equilibrium_y = velocity_shear_x;
-      }
+      const double equilibrium_y = _shear_parameter * _omega * (cell.get_cell_midpoint().x() - _radial_centre);      
 
       const double residual_y = old_velocity.y() - equilibrium_y;
 

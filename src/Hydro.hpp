@@ -72,9 +72,6 @@ private:
 
   const bool _revert_to_1d_hydro;
 
-  const bool _og_average_gradients; // mgb edit 04.08.2026
-
-  const bool _include_shear;
 
   const Abundances &_abundances;
 
@@ -178,11 +175,11 @@ public:
   inline Hydro(const double gamma, const double neutral_temperature,
                const double ionised_temperature, const double max_velocity,
                const bool trace_initial_neutral_flag,
-               const bool do_explicit_heating, const double mach_limit, const bool revert_to_1d_hydro, const bool og_average_gradients, const bool include_shear, const Abundances &abundances)
+               const bool do_explicit_heating, const double mach_limit, const bool revert_to_1d_hydro, const Abundances &abundances)
       : _gamma(gamma), _neutral_temperature(neutral_temperature),
         _ionised_temperature(ionised_temperature), _max_velocity(max_velocity),
         _trace_initial_neutral_flag(trace_initial_neutral_flag),
-        _do_explicit_heating(do_explicit_heating), _mach_limit(mach_limit), _revert_to_1d_hydro(revert_to_1d_hydro), _og_average_gradients(og_average_gradients), _include_shear(include_shear), _abundances(abundances),
+        _do_explicit_heating(do_explicit_heating), _mach_limit(mach_limit), _revert_to_1d_hydro(revert_to_1d_hydro), _abundances(abundances),
         _gamma_minus_one(_gamma - 1.),
         _one_over_gamma_minus_one(1. / _gamma_minus_one),
         _density_conversion_factor(PhysicalConstants::get_physical_constant(
@@ -232,8 +229,6 @@ public:
               params.get_value< bool >("Hydro:do explicit heating", false),
               params.get_value< double >("Hydro:mach limit", 3.0),
               params.get_value< bool >("Hydro:revert to 1d", false),
-              params.get_value< bool >("Hydro:og average gradients", false),
-              params.get_value< bool >("Hydro:include shear", false),
               abundances) {}
 
   /**
@@ -1053,7 +1048,6 @@ public:
                                       const double dxinv, double WLlim[22],
                                       double WRlim[22]) const {
 
-    if (_og_average_gradients){
       for (int_fast32_t j = 0; j < 11; ++j) {
         cmac_assert_message(left_state.primitives(j) == left_state.primitives(j),
                             "j: %" PRIiFAST32, j);
@@ -1078,34 +1072,8 @@ public:
         WLlim[2 * j + 1] = std::max(WLlim[2 * j + 1], right_state.primitives(j));
         WRlim[2 * j] = std::min(WRlim[2 * j], left_state.primitives(j));
         WRlim[2 * j + 1] = std::max(WRlim[2 * j + 1], left_state.primitives(j));
-      }
-    } else {
-        for (int_fast32_t j = 0; j < 11; ++j) {
-          cmac_assert_message(left_state.primitives(j) == left_state.primitives(j),
-                              "j: %" PRIiFAST32, j);
-          cmac_assert_message(right_state.primitives(j) ==
-                                  right_state.primitives(j),
-                              "j: %" PRIiFAST32, j);
-
-        // this is not a gradient? it is average of left and right / dx
-        //  const double dwdx =
-            //  0.5 * (left_state.primitives(j) + right_state.primitives(j)) * dxinv; 
-
-          const double dwdx = 0.5 * (right_state.primitives(j) - left_state.primitives(j)) * dxinv;
-
-          cmac_assert_message(
-              dwdx == dwdx, "j: %" PRIiFAST32 ", left: %g, right: %g, dxinv: %g", j,
-              left_state.primitives(j), right_state.primitives(j), dxinv);
-
-          left_state.primitive_gradients(j)[i] += dwdx;
-          right_state.primitive_gradients(j)[i] -= dwdx; // changed - to +
-
-          WLlim[2 * j] = std::min(WLlim[2 * j], right_state.primitives(j));
-          WLlim[2 * j + 1] = std::max(WLlim[2 * j + 1], right_state.primitives(j));
-          WRlim[2 * j] = std::min(WRlim[2 * j], left_state.primitives(j));
-          WRlim[2 * j + 1] = std::max(WRlim[2 * j + 1], left_state.primitives(j));
-        }
-    }
+      
+        } 
   }
 
   /**
