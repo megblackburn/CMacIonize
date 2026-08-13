@@ -806,7 +806,7 @@ auto calculate_E2_fast = [](const double tau) -> double {
 
 inline static void get_thermal_gain_loss(double &gain, double &loss,
                               IonizationVariables &ionization_variables,
-                              const double inverse_volume, const double surface_density_top, const double surface_density_bottom, const double surface_density_midplane, const double FUV_radiation_field, const bool _do_FUV_heating, const bool _attenuate_FUV_heating,
+                              const double inverse_volume, const double surface_density_midplane, const double FUV_radiation_field, const bool _do_FUV_heating, const bool _attenuate_FUV_heating,
                               LineCoolingData &line_cooling_data,
                               double abund[LINECOOLINGDATA_NUMELEMENTS], double AHe,
                               DeRijckeRadiativeCooling* radiative_cooling, bool use_cooling_tables, double &fuv_cell_heating){
@@ -867,14 +867,14 @@ if (_do_FUV_heating) {
 
       const double kappa_FUV = 1000. // cm^-2 g^-1, UV optical depth in plane-parallel approx.
                                 * 0.1; // m^-2 kg^-1
-      const double tau_top = kappa_FUV * surface_density_top;
-      const double tau_bottom = kappa_FUV * surface_density_bottom;
+    //  const double tau_top = kappa_FUV * surface_density_top;
+    //  const double tau_bottom = kappa_FUV * surface_density_bottom;
       const double tau_midplane = kappa_FUV * surface_density_midplane;
 
-      const double metagalactic_attenuation = 0.5 * (gsl_sf_expint_En(2, tau_top) + gsl_sf_expint_En(2, tau_bottom));
-      const double midplane_stellar_attenuation = gsl_sf_expint_En(2, tau_midplane);
+     // const double metagalactic_attenuation = 0.5 * (gsl_sf_expint_En(2, tau_top) + gsl_sf_expint_En(2, tau_bottom));
+      const double midplane_stellar_attenuation = gsl_sf_expint_En(2, tau_midplane); // 1 - gsl_sf_expint_En(2, tau_midplane/2.)/tau_midplane;
 
-      const double metagalactic_heating_rate = 0.0024 * metagalactic_attenuation;
+      const double metagalactic_heating_rate = 0.0024; //* metagalactic_attenuation;
       const double stellar_heating_rate = (FUV_radiation_field / FUV_interstellar_radiation_field) * midplane_stellar_attenuation;
      // std::cout<<"after attenuation"<<std::endl;
 
@@ -952,7 +952,7 @@ if (_do_FUV_heating) {
 
 inline static void do_explicit_heat_cool(IonizationVariables &ionization_variables,
                               HydroVariables &hydro_variables,
-                              const double inverse_volume, const double nH2V, const double surface_density_top, const double surface_density_bottom, const double surface_density_midplane, const double FUV_radiation_field,
+                              const double inverse_volume, const double nH2V, const double surface_density_midplane, const double FUV_radiation_field,
                               const double total_dt,
                               DeRijckeRadiativeCooling* radiative_cooling,
                               Hydro &hydro, double _cooling_temp_floor,
@@ -1083,7 +1083,7 @@ while (clock < total_dt) {
 
   time_left = total_dt - clock;
 
-  get_thermal_gain_loss(gain, loss, ionization_variables, inverse_volume, surface_density_top, surface_density_bottom, surface_density_midplane, FUV_radiation_field, _do_FUV_heating, _attenuate_FUV_heating,
+  get_thermal_gain_loss(gain, loss, ionization_variables, inverse_volume, surface_density_midplane, FUV_radiation_field, _do_FUV_heating, _attenuate_FUV_heating,
                               line_cooling_data, abund, AHe, radiative_cooling, use_cooling_tables, fuv_cell_heating);
 
   
@@ -1135,7 +1135,7 @@ while (clock < total_dt) {
     
     //ionization_variables.set_temperature(temp_from_eint);
   //}
-  get_thermal_gain_loss(gain, loss, ionization_variables, inverse_volume, surface_density_top, surface_density_bottom, surface_density_midplane, FUV_radiation_field, _do_FUV_heating, _attenuate_FUV_heating,
+  get_thermal_gain_loss(gain, loss, ionization_variables, inverse_volume, surface_density_midplane, FUV_radiation_field, _do_FUV_heating, _attenuate_FUV_heating,
                               line_cooling_data, abund, AHe, radiative_cooling, use_cooling_tables, fuv_cell_heating); // mgb comment 21.05.2026 - no temperature set
 
   
@@ -3328,9 +3328,9 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         }
     }
 
-      // metagalactic FUV shielding - incoming from z boundaries
+     /* // metagalactic FUV shielding - incoming from z boundaries
       std::vector<double> column_from_top(max_seen_id + 1, 0.0); 
-      std::vector<double> column_from_bottom(max_seen_id + 1, 0.0);
+      std::vector<double> column_from_bottom(max_seen_id + 1, 0.0);*/
       // FUV coming from midplane sources 
       std::vector<double> column_from_midplane(max_seen_id + 1, 0.0); 
 
@@ -3342,7 +3342,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
               return a.z_pos < b.z_pos;
           });
 
-          // metagalactic FUV from lower boundary
+          /*// metagalactic FUV from lower boundary
           double running_sigma_lower = 0.0;
           for (size_t i = 0; i < cells.size(); ++i) {
               column_from_bottom[cells[i].index_id] = running_sigma_lower;
@@ -3355,8 +3355,9 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
               size_t idx = i - 1;
               column_from_top[cells[idx].index_id] = running_sigma_upper;
               running_sigma_upper += cells[idx].contribution;
-          }
+          }*/
 
+          
           size_t mid_idx = 0;
           double min_dist = std::numeric_limits<double>::max();
           for (size_t i=0;i<cells.size();++i){
@@ -3386,8 +3387,8 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
       }
       
 
-      double* raw_column_from_top = column_from_top.data(); 
-      double* raw_column_from_bottom = column_from_bottom.data();
+   //   double* raw_column_from_top = column_from_top.data(); 
+    //  double* raw_column_from_bottom = column_from_bottom.data();
       double* raw_column_from_midplane = column_from_midplane.data();
 
       if (sourcedistribution != nullptr){
@@ -3435,8 +3436,8 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
             
 
             size_t cell_index_id = cellit.get_index();
-            const double surface_density_top = raw_column_from_top[cell_index_id]; 
-            const double surface_density_bottom = raw_column_from_bottom[cell_index_id]; 
+          ///  const double surface_density_top = raw_column_from_top[cell_index_id]; 
+          //  const double surface_density_bottom = raw_column_from_bottom[cell_index_id]; 
             const double surface_density_midplane = raw_column_from_midplane[cell_index_id];
           //  std::cout<<"Assigned surface densities for heating"<<std::endl;
             
@@ -3461,7 +3462,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
             //       _cooling_temp_floor);
             // }
               do_explicit_heat_cool(ionization_variables, hydro_variables,  // mgb comment 26.05.2026: this is then where the new temperature is used within the temp calculations but internal energies can be significantly out of sync with supernova present
-                        1. / cellit.get_volume(), nH2 * cellit.get_volume(), surface_density_top, surface_density_bottom, surface_density_midplane, FUV_radiation_field,
+                        1. / cellit.get_volume(), nH2 * cellit.get_volume(), surface_density_midplane, FUV_radiation_field,
                         actual_timestep, radiative_cooling, hydro,
                           _cooling_temp_floor,_gamma-1.,line_cooling_data, abundances,
                           use_cool_tables, _do_FUV_heating, _attenuate_FUV_heating, fuv_cell_heating);
