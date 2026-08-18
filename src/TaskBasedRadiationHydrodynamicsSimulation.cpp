@@ -829,6 +829,8 @@ double sqrtT = std::pow(temp,0.5);
 const double n = ionization_variables.get_number_density();
 const double h0 = ionization_variables.get_ionic_fraction(ION_H_n);
 
+double total_neutral_fraction = h0;
+
 #ifdef HAS_HELIUM
    //calculate heating due to helium photoionization
     const double T4 = 1.e-4*temp;
@@ -846,6 +848,8 @@ const double h0 = ionization_variables.get_ionic_fraction(ION_H_n);
     const double ne = n * (1. - h0 + AHe * hep + 2*AHe*(1. - hep - he0));
     const double nenhep = ne * hep * n * AHe;
     gain += pHots * 1.21765423e-18 * alpha_e_2sP * nenhep/inverse_volume;
+
+    total_neutral_fraction = (h0 * 4.0 * AHe * he0) / (1.0 + 4.0 * AHe);
 #else
     const double ne = n*(1-h0);
     const double nenhep = 0.0;
@@ -872,15 +876,15 @@ if (_do_FUV_heating) {
       const double tau_midplane = kappa_FUV * surface_density_midplane;
 
      // const double metagalactic_attenuation = 0.5 * (gsl_sf_expint_En(2, tau_top) + gsl_sf_expint_En(2, tau_bottom));
-      const double midplane_stellar_attenuation = gsl_sf_expint_En(2, tau_midplane); // 1 - gsl_sf_expint_En(2, tau_midplane/2.)/tau_midplane;
+      const double midplane_stellar_attenuation = (1. - gsl_sf_expint_En(2, tau_midplane/2.0)) / tau_midplane; // 1 - gsl_sf_expint_En(2, tau_midplane/2.)/tau_midplane;
 
       const double metagalactic_heating_rate = 0.0024; //* metagalactic_attenuation;
       const double stellar_heating_rate = (FUV_radiation_field / FUV_interstellar_radiation_field) * midplane_stellar_attenuation;
      // std::cout<<"after attenuation"<<std::endl;
 
-       FUV_heating_rate = FUV_solar_neighbourhood_heating_rate * h0 * (metagalactic_heating_rate + stellar_heating_rate); // J s^-1 per H atom
+       FUV_heating_rate = FUV_solar_neighbourhood_heating_rate * total_neutral_fraction * (metagalactic_heating_rate + stellar_heating_rate); // J s^-1 per H atom
     } else {
-       FUV_heating_rate = FUV_solar_neighbourhood_heating_rate * h0 * (0.0024 + (FUV_radiation_field / FUV_interstellar_radiation_field)); // J s^-1 per H atom
+       FUV_heating_rate = FUV_solar_neighbourhood_heating_rate * total_neutral_fraction * (0.0024 + (FUV_radiation_field / FUV_interstellar_radiation_field)); // J s^-1 per H atom
     }
 
     const double volumetric_fuv_heating = FUV_heating_rate * n; // J s^-1 m^-3
@@ -3279,117 +3283,27 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
       }
 
       /* mgb edit 24.07.2026: Calculate perpendicular stratified column densities */
-
-       struct CellZData {
-          size_t index_id;
-          double z_pos;
-          double contribution;
-      };
-
       const double box_dim_z = grid_creator->get_box().get_sides()[2];
-      const double box_dim_y = grid_creator->get_box().get_sides()[1];
-      const double box_dim_x = grid_creator->get_box().get_sides()[0];
-      
-      const int num_cols_x = number_of_cells.x(); 
-      const int num_cols_y = number_of_cells.y(); 
-
-      const double min_box_x = grid_creator->get_box().get_anchor()[0];
-      const double min_box_y = grid_creator->get_box().get_anchor()[1];
       const double min_box_z = grid_creator->get_box().get_anchor()[2];
-
       const double z_midplane = min_box_z + (box_dim_z*0.5);
-      
-      const double static_dx = box_dim_x / static_cast<double>(num_cols_x);
-      const double static_dy = box_dim_y / static_cast<double>(num_cols_y);
 
-      std::vector<std::vector<CellZData>> flat_column_grid(num_cols_x * num_cols_y);
-      size_t max_seen_id = 0;
+      // track mass and volume to find global density - only necessary if AMR used, if cells are equal volume this just reduces to sum(density)
+      double total_box_mass = 0.;
+      double total_box_volume = 0.; 
 
       for (size_t g = 0; g < grid_creator->number_of_original_subgrids(); ++g) {
         auto gridit = grid_creator->get_subgrid(g);
         for (auto cellit = (*gridit).hydro_begin(); cellit != (*gridit).hydro_end(); ++cellit) {
-            double cell_density = cellit.get_hydro_variables().get_primitives_density();
-            double cell_dz = std::pow(cellit.get_volume(), 1./3.); 
+          double cell_density = cellit.get_hydro_variables().get_primitives_density();
+          double cell_volume = cellit.get_volume();
 
-            size_t current_id = cellit.get_index();
-            if (current_id > max_seen_id) max_seen_id = current_id;
-
-            // Shift coordinates by min_box edge so values fed to floor() are strictly positive
-            int ix = static_cast<int>(std::floor((cellit.get_cell_midpoint()[0] - min_box_x) / static_dx));
-            int iy = static_cast<int>(std::floor((cellit.get_cell_midpoint()[1] - min_box_y) / static_dy));
-            
-            ix = std::max(0, std::min(num_cols_x - 1, ix));
-            iy = std::max(0, std::min(num_cols_y - 1, iy));
-
-            size_t flat_column_idx = ix + iy * num_cols_x;
-
-            CellZData data = {current_id, cellit.get_cell_midpoint()[2], cell_density * cell_dz};
-            flat_column_grid[flat_column_idx].push_back(data);
+          total_box_mass += cell_density * cell_volume;
+          total_box_volume += cell_volume;
         }
-    }
-
-     /* // metagalactic FUV shielding - incoming from z boundaries
-      std::vector<double> column_from_top(max_seen_id + 1, 0.0); 
-      std::vector<double> column_from_bottom(max_seen_id + 1, 0.0);*/
-      // FUV coming from midplane sources 
-      std::vector<double> column_from_midplane(max_seen_id + 1, 0.0); 
-
-      for (auto& cells : flat_column_grid) {
-          if (cells.empty()) continue;
-
-          // sort cells along z-axis
-          std::sort(cells.begin(), cells.end(), [](const auto& a, const auto& b) {
-              return a.z_pos < b.z_pos;
-          });
-
-          /*// metagalactic FUV from lower boundary
-          double running_sigma_lower = 0.0;
-          for (size_t i = 0; i < cells.size(); ++i) {
-              column_from_bottom[cells[i].index_id] = running_sigma_lower;
-              running_sigma_lower += cells[i].contribution;
-          }
-
-          // metagalactic FUV from upper boundary
-          double running_sigma_upper = 0.0;
-          for (size_t i = cells.size(); i > 0; --i) {
-              size_t idx = i - 1;
-              column_from_top[cells[idx].index_id] = running_sigma_upper;
-              running_sigma_upper += cells[idx].contribution;
-          }*/
-
-          
-          size_t mid_idx = 0;
-          double min_dist = std::numeric_limits<double>::max();
-          for (size_t i=0;i<cells.size();++i){
-            double dist = std::abs(cells[i].z_pos - z_midplane);
-            if (dist < min_dist) {
-              min_dist = dist;
-              mid_idx = i;
-            }
-          }
-
-          if (mid_idx < cells.size()) {
-              // Stellar FUV sweeping upward from midplane
-              double running_sigma_midplane_upper = 0.0; 
-              for (size_t i = mid_idx; i < cells.size(); ++i) {
-                  column_from_midplane[cells[i].index_id] = running_sigma_midplane_upper; 
-                  running_sigma_midplane_upper += cells[i].contribution;
-              }
-
-              // Stellar FUV sweeping downward from midplane
-              double running_sigma_midplane_lower = 0.0; 
-              for (size_t i = mid_idx; i > 0; --i) {
-                  size_t idx = i - 1;
-                  column_from_midplane[cells[idx].index_id] = running_sigma_midplane_lower;
-                  running_sigma_midplane_lower += cells[idx].contribution;
-              }
-          }
       }
-      
 
-   //   double* raw_column_from_top = column_from_top.data(); 
-    //  double* raw_column_from_bottom = column_from_bottom.data();
-      double* raw_column_from_midplane = column_from_midplane.data();
+      const double global_average_density = total_box_mass/total_box_volume;
+
 
       if (sourcedistribution != nullptr){
         FUV_radiation_field = sourcedistribution->get_FUV_field_strength(grid_creator);
@@ -3435,11 +3349,14 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
             }
             
 
-            size_t cell_index_id = cellit.get_index();
+            
+            double cell_z = cellit.get_cell_midpoint()[2];
+            double delta_z = std::abs(cell_z - z_midplane);
+
+            const double surface_density_from_midplane = global_average_density * delta_z;
           ///  const double surface_density_top = raw_column_from_top[cell_index_id]; 
-          //  const double surface_density_bottom = raw_column_from_bottom[cell_index_id]; 
-            const double surface_density_midplane = raw_column_from_midplane[cell_index_id];
-          //  std::cout<<"Assigned surface densities for heating"<<std::endl;
+          //  const double surface_density_bottom = raw_column_from_bottom[cell_index_id];           //
+          //   std::cout<<"Assigned surface densities for heating"<<std::endl;
             
             const double nH = ionization_variables.get_number_density();
             const double nH2 = nH * nH;
@@ -3462,7 +3379,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
             //       _cooling_temp_floor);
             // }
               do_explicit_heat_cool(ionization_variables, hydro_variables,  // mgb comment 26.05.2026: this is then where the new temperature is used within the temp calculations but internal energies can be significantly out of sync with supernova present
-                        1. / cellit.get_volume(), nH2 * cellit.get_volume(), surface_density_midplane, FUV_radiation_field,
+                        1. / cellit.get_volume(), nH2 * cellit.get_volume(), surface_density_from_midplane, FUV_radiation_field,
                         actual_timestep, radiative_cooling, hydro,
                           _cooling_temp_floor,_gamma-1.,line_cooling_data, abundances,
                           use_cool_tables, _do_FUV_heating, _attenuate_FUV_heating, fuv_cell_heating);
