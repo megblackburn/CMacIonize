@@ -543,6 +543,7 @@ public:
       std::cout<< "total time: " << _total_time << " | restart time: " << _restart_time
        << std::endl;
       _total_time += _restart_time;
+      _last_sf = _total_time;
     }
 
     std::ifstream test_file(_source_filename);

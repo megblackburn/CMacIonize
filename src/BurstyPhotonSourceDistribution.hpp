@@ -515,7 +515,8 @@ public:
 
     if (_restart_flag == true) {
       _total_time += _restart_time;
-      std::cout<< "total time: " << _total_time << " | restart time: " << _restart_time << " | restart time: " << restart_time
+      _last_sf = _total_time;
+      std::cout<< "total time: " << _total_time << " | restart time: " << _restart_time 
        << std::endl;
     }
 
