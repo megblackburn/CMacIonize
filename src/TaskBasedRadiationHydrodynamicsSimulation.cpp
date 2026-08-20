@@ -3500,7 +3500,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           writer->write(*grid_creator, hydro_lastsnap_restart, *params, current_time_restarted);
           if (sourcedistribution != nullptr) {
             sourcedistribution->write_snapshot_metadata(
-                writer->get_snapshot_filename(hydro_lastsnap), current_time_restarted);
+                writer->get_snapshot_filename(hydro_lastsnap_restart), current_time_restarted);
           }
           time_logger.end("snapshot");
         } else {
