@@ -226,6 +226,7 @@ private:
   double _time;
 
   int type1done = 0;
+  double fractional_type1_balance;
 
 
   double _total_time = 0.;
@@ -539,6 +540,8 @@ public:
     // Update total time if simulation has been restarted - mgb edit 20.07.2026
 
     if (_restart_flag == true) {
+      std::cout<< "total time: " << _total_time << " | restart time: " << _restart_time
+       << std::endl;
       _total_time += _restart_time;
     }
 
@@ -1084,16 +1087,23 @@ public:
     std::cout<<"Area = " << area_kpc << std::endl;
 
 
-    int should_have_done = 0; // mgb edit 20.07.2026 
-    if (_total_time >= _start_type1a_sne){
-     
-      double time_from_type1_initialised = _total_time - _start_type1a_sne - _restart_time;
-      
-      should_have_done = int(4*area_kpc*time_from_type1_initialised/unit_Myr);
-    }
-   // int should_have_done = int(4*area_kpc*_total_time/unit_Myr); //3.15576e13); // taken out *0 mgb 09.10.2025 
 
-    int do_type1 = should_have_done-type1done;
+    int do_type1 = 0;
+
+    if (_total_time >= _start_type1a_sne) {
+      double effective_dt = actual_timestep;
+
+      if (_total_time - actual_timestep < _start_type1a_sne){
+        effective_dt = _total_time - _start_type1a_sne;
+      }
+
+      double sne_required = (4.0 * area_kpc * effective_dt) / unit_Myr;
+      fractional_type1_balance += sne_required;
+
+      do_type1 = int(fractional_type1_balance);
+
+      fractional_type1_balance -= do_type1;
+    }
 
     if (_type1_flag == true) {
     //get simulation box limits

@@ -945,8 +945,11 @@ public:
       double birth_time_s = _fuv_source_birth_time[i]; // seconds
 
       double source_age = _total_time - birth_time_s; // seconds
+      if (source_age > 100. * unit_Myr) {
+          continue;
+      } 
       double LtoMratio = fuvlumtomass->get_l_fuv_per_mass_at_time(source_age); // L_sol/Msol
-
+      
       total_fuv_luminosity_Lsol += (mass_Msol * LtoMratio); // L_sol
       if (i <= 10 && debug == true) {
         std::cout<< "mass_Msol = " << mass_Msol << std::endl;

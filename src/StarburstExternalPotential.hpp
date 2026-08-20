@@ -32,67 +32,63 @@
 #include <stdexcept>
 
 /**
- * @brief Starburst External Potential based on CGOLS (Even E. Schnieder and S. Alwin Mao 2024).
- * 
- * Supports both full 3D global galaxy tracking and local stratified tall-box patch configurations
- * via a runtime execution flag parameter.
+ * @brief Starburst External Potential matched perfectly to CGOLS V profiles.
  */
 class StarburstExternalPotential : public ExternalPotential {
 public:
-    /**
-     * @brief Runtime operational flags determining the geometric coordinate mapping system.
-     */
     enum PotentialMode {
-        POTENTIAL_GLOBAL = 0, // (0,0,0) is galactic center; calculates complete 3D vectors (ax, ay, az).
-        POTENTIAL_PATCH  = 1  // (0,0) is box center; locks radial radius to R_patch, returns vertical (0, 0, az).
+        POTENTIAL_GLOBAL = 0, // (0,0,0) is galactic center; complete 3D vectors
+        POTENTIAL_PATCH  = 1  // (0,0) is box center; vertical gravity (0, 0, az) only
     };
 
 private:
     double _G;
-    PotentialMode _mode;  // Runtime structural toggle switch
-    double _R_patch;      // Localised orbital distance from galaxy center (m) [Used only in PATCH mode]
+    PotentialMode _mode;  
+    double _R_patch;      
     
     // --- Miyamoto-Nagai Disk Parameters ---
-    double _M_disk;   // Total Mass of the Stellar Disk (kg)
-    double _a_disk;   // Radial Scale Length of Disk (m)
-    double _b_disk;   // Vertical Scale Thickness of Disk (m)
+    double _M_disk;   
+    double _a_disk;   
+    double _b_disk;   
 
-    // --- Hernquist Bulge Parameters ---
-    double _M_bulge;  // Total Mass of Central Bulge Core (kg)
-    double _c_bulge;  // Scale Radius of Bulge Core (m)
+    // --- Hernquist Bulge Parameters (Set to 0 for CGOLS V) ---
+    double _M_bulge;  
+    double _c_bulge;  
 
     // --- NFW Dark Matter Halo Parameters ---
-    double _M_halo;   // Scale Characteristic Mass of Dark Matter Halo (kg)
-    double _r_s;      // Core Scale Radius of Halo Profile (m)
+    double _M_halo;   
+    double _r_s;      
+    double _c_nfw;
 
 public:
     /**
-     * @brief Explicit C++ parameter constructor.
+     * @brief Explicit constructor matched exactly to your CGOLS V / M82 parameters.
      */
     inline StarburstExternalPotential(
-        const PotentialMode mode = POTENTIAL_PATCH,
+        const PotentialMode mode = POTENTIAL_GLOBAL,
         const double patch_radius_kpc = 1.5,
-        const double M_disk  = 6.0e9  * 1.989e30, 
-        const double a_disk  = 1100.  * 3.086e16, 
-        const double b_disk  = 150.   * 3.086e16, 
-        const double M_bulge = 5.0e8  * 1.989e30, 
-        const double c_bulge = 180.   * 3.086e16, 
-        const double M_halo  = 5.0e10 * 1.989e30, 
-        const double r_s     = 9000.  * 3.086e16  
+        const double M_disk  = 1.0e10 * 1.98847e30, // 10^10 Msun
+        const double a_disk  = 800.0  * 3.08568e16, // 0.8 kpc
+        const double b_disk  = 150.0  * 3.08568e16, // 0.15 kpc
+        const double M_bulge = 0.0    * 1.98847e30, // Removed for CGOLS V
+        const double c_bulge = 0.0    * 3.08568e16,
+        const double M_halo  = 5.0e10 * 1.98847e30, // 5x10^10 Msun
+        const double r_s     = 5300.0 * 3.08568e16, // 5.3 kpc
+        const double c_nfw   = 10.0
     ) : _mode(mode), _M_disk(M_disk), _a_disk(a_disk), _b_disk(b_disk),
-        _M_bulge(M_bulge), _c_bulge(c_bulge), _M_halo(M_halo), _r_s(r_s) 
+        _M_bulge(M_bulge), _c_bulge(c_bulge), _M_halo(M_halo), _r_s(r_s), _c_nfw(c_nfw) 
     {
         _G = PhysicalConstants::get_physical_constant(PHYSICALCONSTANT_NEWTON_CONSTANT);
-        _R_patch = patch_radius_kpc * 3.086e16; 
+        _R_patch = patch_radius_kpc * 3.08568e19; // Corrected to 1e19 for kpc conversion scale
     }
 
     /**
-     * @brief ParameterFile configuration runtime parsing constructor.
+     * @brief ParameterFile constructor reading directly from runtime script.
      */
     inline StarburstExternalPotential(ParameterFile &params) {
         _G = PhysicalConstants::get_physical_constant(PHYSICALCONSTANT_NEWTON_CONSTANT);
         
-        std::string mode_str = params.get_value<std::string>("ExternalPotential:mode", "patch");
+        std::string mode_str = params.get_value<std::string>("ExternalPotential:mode", "global");
         if (mode_str == "global") {
             _mode = POTENTIAL_GLOBAL;
         } else if (mode_str == "patch") {
@@ -101,20 +97,21 @@ public:
             throw std::runtime_error("StarburstExternalPotential: Invalid mode string! Use 'global' or 'patch'.");
         }
 
+        // Dynamically parsed from parameter script - completely eliminating hardcoding
         _R_patch = params.get_physical_value< QUANTITY_LENGTH >("ExternalPotential:patch radius", "1.5 kpc");
-        _M_disk  = params.get_physical_value< QUANTITY_MASS >("ExternalPotential:disk mass", "6.0e9 Msol");
-        _a_disk  = params.get_physical_value< QUANTITY_LENGTH >("ExternalPotential:disk scale length", "1100. pc");
+        _M_disk  = params.get_physical_value< QUANTITY_MASS >("ExternalPotential:disk mass", "1.0e10 Msol");
+        _a_disk  = params.get_physical_value< QUANTITY_LENGTH >("ExternalPotential:disk scale length", "800. pc");
         _b_disk  = params.get_physical_value< QUANTITY_LENGTH >("ExternalPotential:disk scale height", "150. pc");
-        _M_bulge = params.get_physical_value< QUANTITY_MASS >("ExternalPotential:bulge mass", "5.0e8 Msol");
-        _c_bulge = params.get_physical_value< QUANTITY_LENGTH >("ExternalPotential:bulge scale radius", "180. pc");
+        _M_bulge = params.get_physical_value< QUANTITY_MASS >("ExternalPotential:bulge mass", "0.0 Msol");
+        _c_bulge = params.get_physical_value< QUANTITY_LENGTH >("ExternalPotential:bulge scale radius", "0.0 pc");
         _M_halo  = params.get_physical_value< QUANTITY_MASS >("ExternalPotential:halo mass", "5.0e10 Msol");
-        _r_s     = params.get_physical_value< QUANTITY_LENGTH >("ExternalPotential:halo scale radius", "9000. pc");
+        _r_s     = params.get_physical_value< QUANTITY_LENGTH >("ExternalPotential:halo scale radius", "5300. pc");
+        _c_nfw   = params.get_value< double >("ExternalPotential:concentration", 10.0);
     }
 
     virtual ~StarburstExternalPotential() {}
-
     /**
-     * @brief Evaluates spatial parameters and calculates combined multi-component gravity.
+     * @brief Computes combined 3D fluid acceleration vectors.
      */
     virtual CoordinateVector<> get_acceleration(const CoordinateVector<> position) const override {
         const double x = position.x();
@@ -149,22 +146,24 @@ public:
         az += disk_factor * z * (disk_denom_inner / z_param);
 
         // ====================================================================
-        // B. HERNQUIST CENTRAL BULGE ACCELERATION COMPONENT
+        // B. HERNQUIST CENTRAL BULGE COMPONENT (Automatically skips if mass is 0)
         // ====================================================================
-        const double bulge_factor = -_G * _M_bulge / (r * (r + _c_bulge) * (r + _c_bulge));
-        
-        if (_mode == POTENTIAL_GLOBAL) {
-            ax += bulge_factor * x;
-            ay += bulge_factor * y;
+        if (_M_bulge > 0.0) {
+            const double bulge_factor = -_G * _M_bulge / (r * (r + _c_bulge) * (r + _c_bulge));
+            if (_mode == POTENTIAL_GLOBAL) {
+                ax += bulge_factor * x;
+                ay += bulge_factor * y;
+            }
+            az += bulge_factor * z;
         }
-        az += bulge_factor * z;
 
         // ====================================================================
-        // C. NFW DARK MATTER HALO ACCELERATION COMPONENT
+        // C. NAVARRO-FRENK-WHITE (NFW) DARK MATTER HALO COMPONENT
         // ====================================================================
         const double x_halo = r / _r_s;
+        const double nfw_norm = std::log(1.0 + _c_nfw) - (_c_nfw / (1.0 + _c_nfw));
         const double g_x = std::log(1.0 + x_halo) - (x_halo / (1.0 + x_halo));
-        const double halo_factor = -_G * _M_halo * g_x / (r * r * r);
+        const double halo_factor = -_G * _M_halo * g_x / (r * r * r * nfw_norm);
 
         if (_mode == POTENTIAL_GLOBAL) {
             ax += halo_factor * x;

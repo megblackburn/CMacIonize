@@ -36,15 +36,11 @@
 #include <string>
 #include <stdexcept>
 
-/**
- * @brief Starburst Galaxy Density Function.
- * matches CGOLS for full M82 like simulation or can simulate a patch of a starburst galaxy
- */
 class StarburstDensityFunction : public DensityFunction {
 public:
   enum ProfileMode {
-      MODE_GLOBAL = 0, // Uses fully dynamic 3D coordinate wells from center (0,0,0)
-      MODE_PATCH  = 1  //  stratified local tall-box patch radius
+      MODE_GLOBAL = 0,
+      MODE_PATCH  = 1
   };
 
 private:
@@ -52,162 +48,159 @@ private:
   double _patch_radius_kpc;
 
   const double _disc_z;
-  const double _b_inv;
-  const double _exponent;
   const double _density_norm;
-
   const double _temperature;
   const bool _trace_initial_neutral_flag;
   const double _temperature_to_trace;
   const double _neutral_fraction;
   const double _velocity_dispersion;
 
+  // --- Dynamic Settable Parameters Parsed From ParameterFile ---
+  double _M_disk_stars;
+  double _a_disk_stars;
+  double _b_disk_stars;
+  double _M_halo;
+  double _r_s_halo;
+  double _c_nfw;
+  double _R_disk_gas;
+  double _n_peak_disk;
+  double _n_halo_floor;
+  double _T_halo_floor;
+
   mutable RandomGenerator _random_generator;
 
   static inline double get_mean_particle_mass(const double neutral_fraction) {
-    return 0.5 *
-           PhysicalConstants::get_physical_constant(PHYSICALCONSTANT_PROTON_MASS) *
-           (1. + neutral_fraction);
-  }
-
-  static inline double get_turbulent_gas_disc_scale_height(const double surface_density,
-                                                          const double velocity_dispersion) {
-    return (velocity_dispersion * velocity_dispersion / (M_PI *
-            PhysicalConstants::get_physical_constant(PHYSICALCONSTANT_NEWTON_CONSTANT) *
-            surface_density));
-  }
-
-  static inline double get_mass_fraction_factor(const double exponent) {
-    const double x = std::log10(-0.5 * exponent);
-    const double x2 = x * x;
-    const double y = 0.01499337 * x2 * x - 0.08454788 * x2 + 0.63503798 * x - 0.01018254;
-    return std::pow(10., y);
+    return 0.5 * PhysicalConstants::get_physical_constant(PHYSICALCONSTANT_PROTON_MASS) * (1. + neutral_fraction);
   }
 
 public:
   /**
-   * @brief construct
-   */
-  inline StarburstDensityFunction(const ProfileMode mode,
-                                  const double patch_radius_kpc,
-                                  const double disc_z,
-                                  const double surface_density,
-                                  const double scale_height,
-                                  const double gas_fraction,
-                                  const double temperature,
-                                  const double velocity_dispersion,
-                                  const bool trace_initial_neutral_flag,
-                                  const double temperature_to_trace,
-                                  const double neutral_fraction)
-      : _mode(mode),
-        _patch_radius_kpc(patch_radius_kpc),
-        _disc_z(disc_z), _b_inv(1. / scale_height),
-        _exponent(-2. * scale_height / get_turbulent_gas_disc_scale_height(surface_density, velocity_dispersion)),
-        _density_norm(0.5 * gas_fraction * surface_density *
-                      get_mass_fraction_factor(_exponent) * _b_inv /
-                      PhysicalConstants::get_physical_constant(PHYSICALCONSTANT_PROTON_MASS)),
-        _temperature(temperature),
-        _trace_initial_neutral_flag(trace_initial_neutral_flag),
-        _temperature_to_trace(temperature_to_trace),
-        _neutral_fraction(neutral_fraction),
-        _velocity_dispersion(velocity_dispersion),
-        _random_generator() {}
-
-  /**
-   * @brief Read parameters
+   * @brief ParameterFile configuration runtime parsing constructor.
    */
   inline StarburstDensityFunction(ParameterFile &params)
       : _disc_z(params.get_physical_value< QUANTITY_LENGTH >("DensityFunction:disc z", "0. m")),
-        _b_inv(1. / params.get_physical_value< QUANTITY_LENGTH >("DensityFunction:scale height", "200. pc")),
-        _exponent(-2. * params.get_physical_value< QUANTITY_LENGTH >("DensityFunction:scale height", "200. pc") /
-                  get_turbulent_gas_disc_scale_height(
-                      params.get_physical_value< QUANTITY_SURFACE_DENSITY >("DensityFunction:surface density", "30. Msol pc^-2"),
-                      params.get_physical_value< QUANTITY_VELOCITY >("InitialConditions:velocity_dispersion", "10. km s^-1"))),
-        _density_norm(0.5 * params.get_value< double >("DensityFunction:gas fraction", 0.1) *
-                      params.get_physical_value< QUANTITY_SURFACE_DENSITY >("DensityFunction:surface density", "30. Msol pc^-2") *
-                      get_mass_fraction_factor(_exponent) * _b_inv /
-                      PhysicalConstants::get_physical_constant(PHYSICALCONSTANT_PROTON_MASS)),
+        _density_norm(1.0), // Redundant placeholder for base structure mapping
         _temperature(params.get_physical_value< QUANTITY_TEMPERATURE >("DensityFunction:temperature", "1.e4 K")),
         _trace_initial_neutral_flag(params.get_value< bool >("DensityFunction:trace initial neutral flag", false)),
         _temperature_to_trace(params.get_physical_value< QUANTITY_TEMPERATURE >("DensityFunction:temperature to trace", "500. K")),
         _neutral_fraction(params.get_value< double >("DensityFunction:neutral fraction", 1.0)),
-        _velocity_dispersion(params.get_physical_value< QUANTITY_VELOCITY >("InitialConditions:velocity_dispersion", "10. km s^-1")),
+        _velocity_dispersion(params.get_physical_value< QUANTITY_VELOCITY >("InitialConditions:velocity_dispersion", "0. km s^-1")),
         _random_generator() 
   {
-      std::string mode_str = params.get_value<std::string>("ExternalPotential:mode", "patch");
-      if (mode_str == "global") {
-          _mode = MODE_GLOBAL;
-      } else if (mode_str == "patch") {
-          _mode = MODE_PATCH;
-      } else {
-          throw std::runtime_error("StarburstDensityFunction: Invalid parameter mode! Use 'global' or 'patch'.");
-      }
+      // 1. Parse Simulation Runtime Operational Mode
+      std::string mode_str = params.get_value<std::string>("ExternalPotential:mode", "global");
+      if (mode_str == "global") _mode = MODE_GLOBAL;
+      else if (mode_str == "patch") _mode = MODE_PATCH;
+      else throw std::runtime_error("StarburstDensityFunction: Invalid mode! Use 'global' or 'patch'.");
 
       double r_m = params.get_physical_value< QUANTITY_LENGTH >("ExternalPotential:patch radius", "1.5 kpc");
-      _patch_radius_kpc = r_m / 3.086e16; 
+      _patch_radius_kpc = r_m / 3.08568e19; 
+
+      // 2. Fetch ALL Gravitational Potential Parameters directly from the Param File (No Hardcoding)
+      _M_disk_stars = params.get_physical_value< QUANTITY_MASS >("ExternalPotential:disk mass", "1.0e10 Msol");
+      _a_disk_stars = params.get_physical_value< QUANTITY_LENGTH >("ExternalPotential:disk scale length", "800. pc");
+      _b_disk_stars = params.get_physical_value< QUANTITY_LENGTH >("ExternalPotential:disk scale height", "150. pc");
+      
+      _M_halo       = params.get_physical_value< QUANTITY_MASS >("ExternalPotential:halo mass", "5.0e10 Msol");
+      _r_s_halo     = params.get_physical_value< QUANTITY_LENGTH >("ExternalPotential:halo scale radius", "5300. pc");
+      _c_nfw        = params.get_value< double >("ExternalPotential:concentration", 10.0);
+
+      // 3. Fetch Gas Disk & Hot Halo initial state parameters
+      _R_disk_gas   = params.get_physical_value< QUANTITY_LENGTH >("InitialConditions:gas_scale_radius", "1.6 kpc");
+      _n_peak_disk  = params.get_value< double >("InitialConditions:peak_midplane_density", 200.0) * 1.0e6; // cm^-3 to m^-3
+      _n_halo_floor = params.get_value< double >("InitialConditions:halo_density_floor", 1.0e-3) * 1.0e6;   // cm^-3 to m^-3
+      _T_halo_floor = params.get_physical_value< QUANTITY_TEMPERATURE >("InitialConditions:halo_temperature_floor", "2.0e6 K");
   }
 
-  virtual ~StarburstDensityFunction() {}
-
+  /**
+   * @brief Computes CGOLS V potential dynamically using parameter class fields.
+   */
   double get_cgols_potential_value(const double x, const double y, const double z) const {
     const double G = PhysicalConstants::get_physical_constant(PHYSICALCONSTANT_NEWTON_CONSTANT);
     
-    const double M_disk  = 6.0e9  * 1.989e30; 
-    const double a_disk  = 1100.  * 3.086e16; 
-    const double b_disk  = 150.   * 3.086e16; 
-    const double M_bulge = 5.0e8  * 1.989e30; 
-    const double c_bulge = 180.   * 3.086e16; 
-    const double M_halo  = 5.0e10 * 1.989e30; 
-    const double r_s     = 9000.  * 3.086e16;
-
     const double R2 = x*x + y*y;
     const double r  = std::sqrt(R2 + z*z + 1e-20);
 
-    const double z_param = std::sqrt(z*z + b_disk*b_disk);
-    const double disk_term = a_disk + z_param;
-    const double phi_disk = -G * M_disk / std::sqrt(R2 + disk_term * disk_term);
+    // Miyamoto-Nagai Stellar Disk Profile
+    const double z_param = std::sqrt(z*z + _b_disk_stars*_b_disk_stars);
+    const double disk_term = _a_disk_stars + z_param;
+    const double phi_disk = -G * _M_disk_stars / std::sqrt(R2 + disk_term * disk_term);
 
-    const double phi_bulge = -G * M_bulge / (r + c_bulge);
+    // NFW Dark Matter Halo Profile
+    const double x_halo = r / _r_s_halo;
+    const double nfw_norm = std::log(1.0 + _c_nfw) - (_c_nfw / (1.0 + _c_nfw)); 
+    const double phi_halo = (-G * _M_halo / (r * nfw_norm)) * std::log(1.0 + x_halo);
 
-    const double x_halo = r / r_s;
-    const double nfw_norm = std::log(1.0 + (90000.0/9000.0)) - (10.0 / 11.0); 
-    const double phi_halo = (-G * M_halo / (r * nfw_norm)) * std::log(1.0 + x_halo);
-
-    return phi_disk + phi_bulge + phi_halo;
+    return phi_disk + phi_halo;
   }
+
+  /**
+   * @brief Calculates rotation curve velocities derived from class fields.
+   */
+  double get_circular_velocity(const double R) const {
+    if (R < 1.0) return 0.0;
+    const double G = PhysicalConstants::get_physical_constant(PHYSICALCONSTANT_NEWTON_CONSTANT);
+    
+    const double disk_term = _a_disk_stars + _b_disk_stars;
+    const double disk_accel = (G * _M_disk_stars * R) / std::pow(R*R + disk_term*disk_term, 1.5);
+
+    const double nfw_norm = std::log(1.0 + _c_nfw) - (_c_nfw / (1.0 + _c_nfw));
+    const double x_halo = R / _r_s_halo;
+    const double halo_accel = (G * _M_halo / (R*R * nfw_norm)) * (std::log(1.0 + x_halo) - (x_halo / (1.0 + x_halo)));
+
+    return std::sqrt(R * (disk_accel + halo_accel));
+  }
+
   /**
    * @brief Set initial fields
+   */
+    /**
+   * @brief Initialises cellular conditions.
    */
   virtual DensityValues operator()(const Cell &cell) override {
     double x = cell.get_cell_midpoint().x();
     double y = cell.get_cell_midpoint().y();
     const double z = cell.get_cell_midpoint().z() - _disc_z;
 
+    double R = std::sqrt(x*x + y*y);
+
     if (_mode == MODE_PATCH) {
-        const double R_fixed = _patch_radius_kpc * 3.086e16;
+        const double R_fixed = _patch_radius_kpc * 3.08568e19; // Safe 1 kpc conversion scale
         x = R_fixed;
         y = 0.0;
+        R = R_fixed;
     }
 
-    // hydrostatic equilibrium
+    const double k_B = PhysicalConstants::get_physical_constant(PHYSICALCONSTANT_BOLTZMANN);
+
+    // A. Evaluate Exponential Gas Disk Hydrostatic Equilibrium Component
     const double phi_midplane = get_cgols_potential_value(x, y, 0.0);
     const double phi_local    = get_cgols_potential_value(x, y, z);
     const double delta_phi    = phi_local - phi_midplane;
 
-    const double thermal_cs2 = (PhysicalConstants::get_physical_constant(PHYSICALCONSTANT_BOLTZMANN) * _temperature) /
-                               get_mean_particle_mass(_neutral_fraction);
-    
-    const double total_support_sigma2 = thermal_cs2 + (_velocity_dispersion * _velocity_dispersion);
-    const double equilibrium_exponent = -delta_phi / total_support_sigma2;
-    
-    double number_density;
-    if (equilibrium_exponent < -50.0) {
-        number_density = 1.0e-10 * 1.e6; 
-    } else {
-        number_density = _density_norm * std::exp(equilibrium_exponent);
+    const double thermal_cs2 = (k_B * _temperature) / get_mean_particle_mass(_neutral_fraction);
+    const double scale_exponent = -delta_phi / thermal_cs2;
+
+    double n_disk = 0.0;
+    if (scale_exponent >= -50.0) {
+        // Core tracking: Midplane normalization scales exponentially with radius R
+        double n_midplane_R = _n_peak_disk * std::exp(-R / _R_disk_gas);
+        n_disk = n_midplane_R * std::exp(scale_exponent);
     }
 
-    // Gaussian turbulent velocity vectors (Box-Muller)
+    double final_density = 0.0;
+    double final_temperature = _temperature;
+
+    // Superimpose gas disk inside the background hot adiabatic halo envelope
+    if (n_disk >= _n_halo_floor) {
+        final_density = n_disk;
+        final_temperature = _temperature; // Cool gas disk layer (1.0e4 K)
+    } else {
+        final_density = _n_halo_floor;
+        final_temperature = _T_halo_floor; // Hot Halo envelope (2.0e6 K)
+    }
+
+    // C. Isotropic Micro-Turbulent Velocity Dispersion Component (Box-Muller)
     double u1 = _random_generator.get_uniform_random_double();
     double u2 = _random_generator.get_uniform_random_double();
     double u3 = _random_generator.get_uniform_random_double();
@@ -221,9 +214,22 @@ public:
     double vy = g2 * _velocity_dispersion;
     double vz = g3 * _velocity_dispersion;
 
+    // D. Compute Large-Scale Galactic Rotation Component in GLOBAL mode
+    if (_mode == MODE_GLOBAL && R > 1.0 && final_temperature == _temperature) {
+        double v_phi = get_circular_velocity(R); // Dynamically matches CGOLS centrifugal curve (~130 km/s)
+        double pure_x = (std::abs(x) < 1.0e-5) ? 0.0 : x;
+        double pure_y = (std::abs(y) < 1.0e-5) ? 0.0 : y;
+
+        // Correct Cartesian projection for counter-clockwise rotation:
+        // v_x = -v_phi * sin(theta) = -v_phi * (y / R)
+        // v_y =  v_phi * cos(theta) =  v_phi * (x / R)
+        vx += -v_phi * (pure_y / R);
+        vy +=  v_phi * (pure_x / R);
+    }
+
     DensityValues values;
-    values.set_number_density(number_density);
-    values.set_temperature(_temperature);
+    values.set_number_density(final_density);
+    values.set_temperature(final_temperature); 
     values.set_ionic_fraction(ION_H_n, _neutral_fraction);
     values.set_velocity(CoordinateVector<>(vx, vy, vz));
 

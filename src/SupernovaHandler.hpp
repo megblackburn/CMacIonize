@@ -50,6 +50,7 @@ private:
   static constexpr double resolved_mass_fraction() { return 0.1; }
   static constexpr double thermal_energy_fraction() { return 0.72; }
   static constexpr double kinetic_energy_fraction() { return 0.28; }
+  static constexpr double density_threshold_for_thermal_injection() { return 0.001; }
 
   inline double get_feedback_mass(const double r_inj,
                                   const double nbar) const {
@@ -78,6 +79,10 @@ private:
     if (!_use_tigress_like_injection) {
       return r_st < 4. * dx;
     }
+
+    if (nbar < density_threshold_for_thermal_injection()) {
+      return true;
+    }
     const double feedback_mass = get_feedback_mass(r_inj, nbar);
     const double shell_formation_mass = get_shell_formation_mass(nbar);
     return feedback_mass >=
@@ -97,6 +102,7 @@ private:
     const double shell_formation_mass = get_shell_formation_mass(nbar);
     const bool use_momentum =
         use_momentum_injection(r_inj, r_st, dx, nbar);
+    const bool use_density_override = _use_tigress_like_injection && (nbar < 0.005);
     std::cout << "SN_INJECTION_MODE mode="
               << (use_momentum ? "momentum" : "thermal")
               << " scheme="
@@ -119,6 +125,7 @@ private:
               << (_use_tigress_like_injection ? kinetic_energy_fraction() : 0.)
               << " mass_return_msun=0"
               << " nbar_cm^-3=" << nbar << " cells=" << num_cells
+              << " threshold met=" << use_density_override 
               << std::endl;
   }
 

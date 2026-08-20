@@ -200,6 +200,7 @@ public:
     uint_fast64_t end_time;
     cpucycle_tick(end_time);
     if (label.compare(_log[_active_entry].get_label()) != 0) {
+      std::cout<<_log[_active_entry].get_label()<<std::endl;
       cmac_error("Trying to end time log entry that was not opened or that was "
                  "opened before the last entry was opened (label: \"%s\")!",
                  label.c_str());

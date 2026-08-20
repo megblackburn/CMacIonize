@@ -1066,7 +1066,7 @@ public:
             left_state.primitives(j), right_state.primitives(j), dxinv);
 
         left_state.primitive_gradients(j)[i] += dwdx;
-        right_state.primitive_gradients(j)[i] -= dwdx; // changed - to +
+        right_state.primitive_gradients(j)[i] -= dwdx; 
 
         WLlim[2 * j] = std::min(WLlim[2 * j], right_state.primitives(j));
         WLlim[2 * j + 1] = std::max(WLlim[2 * j + 1], right_state.primitives(j));
