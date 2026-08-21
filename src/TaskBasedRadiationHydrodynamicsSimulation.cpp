@@ -1743,6 +1743,11 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     "TaskBasedRadiationHydrodynamicsSimulation:attenuate FUV heating", false
   );
 
+  const bool _attenuate_global = params->get_value< bool >( // mgb edit 21.08.2026
+    "TaskBasedRadiationHydrodynamicsSimulation:attenuate global FUV", true
+  );
+
+
   const CoordinateVector< int_fast32_t> number_of_cells = params->get_value< CoordinateVector< int_fast32_t > >(
                 "DensityGrid:number of cells", CoordinateVector< int_fast32_t >(64));
 
@@ -2200,6 +2205,10 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     time_logger.start("snapshot");
     if (_restart_flag == true) { // mgb edit 14.11.2025
       writer->write(*grid_creator, _restart_iteration, *params, _restart_time);
+      if (sourcedistribution != nullptr) {
+        sourcedistribution->write_snapshot_metadata(
+                writer->get_snapshot_filename(_restart_iteration), _restart_time);
+          }
     } else {
       writer->write(*grid_creator, 0, *params, 0.);
     if (sourcedistribution != nullptr) {
@@ -3192,12 +3201,16 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
       /* mgb edit 24.07.2026: Calculate perpendicular stratified column densities */
 
       
-       AtomicValue< size_t > igrid(0);
+      AtomicValue< size_t > igrid(0);
       const bool run_fuv = _do_FUV_heating && ( current_time - cooling_update_time >= _update_interval);
-      double global_average_density = 0.0;
       double base_heating_rate = 0.0;
       double z_midplane = 0.0;
       double kappa_FUV = 0.0;
+
+      const size_t n_z_bins = 256; 
+      double z_min = 0.0;
+      double dz_bin = 0.0;
+      std::vector<double> bin_surface_density(n_z_bins, 0.0); 
 
       if (run_fuv) {
         const double FUV_interstellar_radiation_field = 2.1e-4 * 1e-7 * 1e4; 
@@ -3217,23 +3230,85 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           auto box_anchor = grid_creator->get_box().get_anchor();
           z_midplane = box_anchor[2] + (box_sides[2] * 0.5);
 
-          double total_box_mass = 0.0;
-          double total_box_volume = 0.0; 
+          z_min = box_anchor[2];
+          dz_bin = box_sides[2] / static_cast<double>(n_z_bins);
+
+          std::vector<double> bin_mass(n_z_bins, 0.0);
+          std::vector<double> bin_volume(n_z_bins, 0.0);
 
     #ifdef HAVE_OPENMP
-    #pragma omp parallel for reduction(+:total_box_mass, total_box_volume) default(shared)
+    #pragma omp parallel default(shared)
     #endif
-          for (size_t g = 0; g < grid_creator->number_of_original_subgrids(); ++g) {
-            auto gridit = grid_creator->get_subgrid(g);
-            for (auto cellit = (*gridit).hydro_begin(); cellit != (*gridit).hydro_end(); ++cellit) {
-              double cell_volume = cellit.get_volume();
-              total_box_mass += cellit.get_hydro_variables().get_primitives_density() * cell_volume;
-              total_box_volume += cell_volume;
+          {
+            std::vector<double> local_mass(n_z_bins, 0.0);
+            std::vector<double> local_volume(n_z_bins, 0.0);
+
+    #ifdef HAVE_OPENMP
+    #pragma omp for nowait
+    #endif
+            for (size_t g = 0; g < grid_creator->number_of_original_subgrids(); ++g) {
+              auto gridit = grid_creator->get_subgrid(g);
+              for (auto cellit = (*gridit).hydro_begin(); cellit != (*gridit).hydro_end(); ++cellit) {
+                double cell_z = cellit.get_cell_midpoint()[2];
+                
+                int bin_idx = static_cast<int>((cell_z - z_min) / dz_bin);
+                if (bin_idx >= 0 && bin_idx < static_cast<int>(n_z_bins)) {
+                  double cell_volume = cellit.get_volume();
+                  local_mass[bin_idx] += cellit.get_hydro_variables().get_primitives_density() * cell_volume;
+                  local_volume[bin_idx] += cell_volume;
+                }
+              }
             }
+
+    #ifdef HAVE_OPENMP
+    #pragma omp critical
+    #endif
+            {
+              for (size_t b = 0; b < n_z_bins; ++b) {
+                bin_mass[b] += local_mass[b];
+                bin_volume[b] += local_volume[b];
+              }
+            }
+          } 
+
+          std::vector<double> bin_density(n_z_bins, 0.0);
+          for (size_t b = 0; b < n_z_bins; ++b) {
+            bin_density[b] = (bin_volume[b] > 0.0) ? (bin_mass[b] / bin_volume[b]) : 0.0;
           }
 
-          global_average_density = (total_box_volume > 0.0) ? (total_box_mass / total_box_volume) : 0.0;
+          double total_disk_surface_density = 0.0;
+          for (size_t b = 0; b < n_z_bins; ++b) {
+            total_disk_surface_density += bin_density[b] * dz_bin;
+          }
+
+          const double tau_global = kappa_FUV * total_disk_surface_density;
+          const double global_slab_attenuation = (tau_global > 1e-9) ? 
+              ((1.0 - gsl_sf_expint_En(2, tau_global / 2.0)) / tau_global) : 1.0;
+
+          int midplane_bin = static_cast<int>((z_midplane - z_min) / dz_bin);
+          midplane_bin = std::max(0, std::min(midplane_bin, static_cast<int>(n_z_bins - 1)));
+
+          for (size_t b = 0; b < n_z_bins; ++b) {
+            double shielding_column = 0.0;
+            int start_idx = std::min(midplane_bin, static_cast<int>(b));
+            int end_idx = std::max(midplane_bin, static_cast<int>(b));
+            
+            for (int i = start_idx; i <= end_idx; ++i) {
+              shielding_column += bin_density[i] * dz_bin;
+            }
+            
+            bin_surface_density[b] = total_disk_surface_density - shielding_column;
+          }
+
+          base_heating_rate = FUV_radiation_field / FUV_interstellar_radiation_field;
+          
+          if (_attenuate_global) {
+            base_heating_rate *= global_slab_attenuation;
+          }
+        } else {
+          base_heating_rate = FUV_radiation_field / FUV_interstellar_radiation_field;
         }
+
       }
 
 
@@ -3275,18 +3350,25 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
             if (run_fuv) {
               if (_attenuate_FUV_heating) {
-                // Get z position and calculate local attenuation completely on the fly
-                const double cell_z = cellit.get_cell_midpoint()[2];
-                const double delta_z = std::abs(cell_z - z_midplane);
+                if (_attenuate_global) {
+                  // Option 1: Uniform slab heating across the domain (matches TIGRESS-classic)
+                  fuv_cell_heating_rate = base_heating_rate;
+                } else {
+                  // Option 2: localized z-dependent shielding
+                  const double cell_z = cellit.get_cell_midpoint()[2];
 
-                const double surface_density_from_midplane = global_average_density * delta_z;
-                const double tau_midplane = kappa_FUV * surface_density_from_midplane;
+                  int bin_idx = static_cast<int>((cell_z - z_min) / dz_bin);
+                  bin_idx = std::max(0, std::min(bin_idx, static_cast<int>(n_z_bins - 1)));
+                  
+                  const double surface_density_shielding = bin_surface_density[bin_idx];
+                  const double tau_local = kappa_FUV * surface_density_shielding;
 
-                const double midplane_stellar_attenuation = (tau_midplane > 1e-9) ? 
-                    ((1.0 - gsl_sf_expint_En(2, tau_midplane / 2.0)) / tau_midplane) : 1.0;
+                  const double midplane_stellar_attenuation = gsl_sf_expint_En(2, tau_local);
 
-                fuv_cell_heating_rate = base_heating_rate * midplane_stellar_attenuation;
+                  fuv_cell_heating_rate = base_heating_rate * midplane_stellar_attenuation;
+                }
               } else {
+                // Option 3: No attenuation
                 fuv_cell_heating_rate = base_heating_rate;
               }
             }
@@ -3736,6 +3818,10 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         time_logger.start("snapshot");
         double hydro_lastsnap_restart = hydro_lastsnap + _restart_iteration;
         writer->write(*grid_creator, hydro_lastsnap_restart, *params, current_time_restarted); // mgb edit 10.11.2025
+        if (sourcedistribution != nullptr) {
+            sourcedistribution->write_snapshot_metadata(
+                writer->get_snapshot_filename(hydro_lastsnap_restart), current_time_restarted);
+          }
         time_logger.end("snapshot");
       } else {
           time_logger.start("snapshot");
