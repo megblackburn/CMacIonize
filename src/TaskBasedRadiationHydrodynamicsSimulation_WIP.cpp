@@ -25,7 +25,6 @@
  */
 
 #include "TaskBasedRadiationHydrodynamicsSimulation.hpp"
-#include "TaskBasedRadiationRestart.hpp"
 #include "AlveliusTurbulenceForcing.hpp"
 #include "BarnesHutTree.hpp"
 #include "ChargeTransferRates.hpp"
@@ -40,10 +39,8 @@
 #include "DistributedPhotonSource.hpp"
 #include "ExternalPotentialFactory.hpp"
 #include "HydroBoundaryManager.hpp"
-#include "GalacticShearingBox.hpp"
 #include "HydroDensitySubGrid.hpp"
 #include "HydroMaskFactory.hpp"
-#include "InitialTurbulence.hpp"
 #include "LineCoolingData.hpp"
 #include "LiveOutputManager.hpp"
 #include "MemoryLogger.hpp"
@@ -659,9 +656,7 @@ inline void
 execute_task(const size_t itask,
              DensitySubGridCreator< HydroDensitySubGrid > &grid_creator,
              ThreadSafeVector< Task > &tasks, const double timestep,
-             const Hydro &hydro, const HydroBoundaryManager &boundary_manager,
-             const GalacticShearingBox &galactic_shearing_box,
-             const bool advect_ionization = false) {
+             const Hydro &hydro, const HydroBoundaryManager &boundary_manager) {
 
   const Task &task = tasks[itask];
   HydroDensitySubGrid &subgrid = *grid_creator.get_subgrid(task.get_subgrid());
@@ -670,12 +665,8 @@ execute_task(const size_t itask,
     subgrid.inner_gradient_sweep(hydro);
     break;
   case TASKTYPE_GRADIENTSWEEP_EXTERNAL_NEIGHBOUR:
-    if (!galactic_shearing_box.replaces_task(
-            task.get_subgrid(), task.get_interaction_direction(),
-            grid_creator)) {
-      subgrid.outer_gradient_sweep(task.get_interaction_direction(), hydro,
-                                   *grid_creator.get_subgrid(task.get_buffer()));
-    }
+    subgrid.outer_gradient_sweep(task.get_interaction_direction(), hydro,
+                                 *grid_creator.get_subgrid(task.get_buffer()));
     break;
   case TASKTYPE_GRADIENTSWEEP_EXTERNAL_BOUNDARY:
     subgrid.outer_ghost_gradient_sweep(task.get_interaction_direction(), hydro,
@@ -689,25 +680,21 @@ execute_task(const size_t itask,
     subgrid.predict_primitive_variables(hydro, 0.5 * timestep);
     break;
   case TASKTYPE_FLUXSWEEP_INTERNAL:
-    subgrid.inner_flux_sweep(hydro, timestep, advect_ionization);
+    subgrid.inner_flux_sweep(hydro, timestep);
     break;
   case TASKTYPE_FLUXSWEEP_EXTERNAL_NEIGHBOUR:
-    if (!galactic_shearing_box.replaces_task(
-            task.get_subgrid(), task.get_interaction_direction(),
-            grid_creator)) {
-      subgrid.outer_flux_sweep(task.get_interaction_direction(), hydro,
-                               *grid_creator.get_subgrid(task.get_buffer()),
-                               timestep, advect_ionization);
-    }
+    subgrid.outer_flux_sweep(task.get_interaction_direction(), hydro,
+                             *grid_creator.get_subgrid(task.get_buffer()),
+                             timestep);
     break;
   case TASKTYPE_FLUXSWEEP_EXTERNAL_BOUNDARY:
     subgrid.outer_ghost_flux_sweep(task.get_interaction_direction(), hydro,
                                    boundary_manager.get_boundary_condition(
                                        task.get_interaction_direction()),
-                                   timestep, advect_ionization);
+                                   timestep);
     break;
   case TASKTYPE_UPDATE_CONSERVED:
-    subgrid.update_conserved_variables(timestep, advect_ionization);
+    subgrid.update_conserved_variables(timestep);
     break;
   case TASKTYPE_UPDATE_PRIMITIVES:
     subgrid.update_primitive_variables(hydro);
@@ -715,12 +702,6 @@ execute_task(const size_t itask,
   default:
     cmac_error("Unknown hydro task: %" PRIiFAST32, task.get_type());
   }
-}
-
-inline bool is_hydro_flux_task(const int_fast8_t type) {
-  return type == TASKTYPE_FLUXSWEEP_INTERNAL ||
-         type == TASKTYPE_FLUXSWEEP_EXTERNAL_NEIGHBOUR ||
-         type == TASKTYPE_FLUXSWEEP_EXTERNAL_BOUNDARY;
 }
 
 /**
@@ -737,8 +718,6 @@ inline bool is_hydro_flux_task(const int_fast8_t type) {
  *  - number-of-steps (no abbreviation, optional, integer argument): number of
  *    time steps to execute before halting the code (negative values mean no
  *    limit on the number of time steps, default: -1).
- *  - rhd-number-of-buffers (no abbreviation, optional, integer argument):
- *    override the photon buffer count from the parameter file or restart dump.
  *
  * @param parser CommandLineParser that has not yet parsed the command line
  * options.
@@ -758,26 +737,7 @@ void TaskBasedRadiationHydrodynamicsSimulation::add_command_line_parameters(
   parser.add_option("number-of-steps", 0,
                     "Number of time steps to execute before halting the code.",
                     COMMANDLINEOPTION_INTARGUMENT, "-1");
-  parser.add_option(
-      "rhd-number-of-buffers", 0,
-      "Override the task-based RHD photon buffer count. This also updates the "
-      "value stored in subsequent restart files.",
-      COMMANDLINEOPTION_INTARGUMENT, "-1");
 }
-
-
-auto calculate_E2_fast = [](const double tau) -> double {
-    if (tau <= 1.0) {
-
-        return 1.0 + tau * (std::log(tau) + 0.57721566 - 1.0) 
-               - 0.5 * (tau * tau) + (tau * tau * tau) / 6.0;
-    } else {
- 
-        double numerator = tau * (tau + 2.334733) + 0.250621;
-        double denominator = tau * (tau + 3.330657) + 1.681534;
-        return (std::exp(-tau) / tau) * (numerator / denominator);
-    }
-};
 
 /**
  * @brief Apply the cooling to the given cell over the given time step.
@@ -804,12 +764,13 @@ auto calculate_E2_fast = [](const double tau) -> double {
  * @param hydro Hydro instance to use.
  */
 
+
 inline static void get_thermal_gain_loss(double &gain, double &loss,
                               IonizationVariables &ionization_variables,
                               const double inverse_volume, const bool _do_FUV_heating, const bool _attenuate_FUV_heating, const double fuv_cell_heating_rate,
                               LineCoolingData &line_cooling_data,
                               double abund[LINECOOLINGDATA_NUMELEMENTS], double AHe,
-                              DeRijckeRadiativeCooling* radiative_cooling, bool use_cooling_tables, double &fuv_cell_heating){
+                              DeRijckeRadiativeCooling* radiative_cooling, bool use_cooling_tables){
 
 
 double temp = ionization_variables.get_temperature();
@@ -863,7 +824,7 @@ if (_do_FUV_heating) {
     const double FUV_heating_rate = FUV_solar_neighbourhood_heating_rate * total_neutral_fraction * (metagalactic_heating_rate + fuv_cell_heating_rate); // J s^-1 per H atom
     const double volumetric_fuv_heating = FUV_heating_rate * n; // J s^-1 m^-3
 
-    fuv_cell_heating = volumetric_fuv_heating / inverse_volume;
+    const double fuv_cell_heating = volumetric_fuv_heating / inverse_volume;
 
     gain += fuv_cell_heating;
    // std::cout<< "Calculated gain from FUV heating!" << std::endl;
@@ -929,6 +890,7 @@ if (_do_FUV_heating) {
 
 }
 
+
 inline static void do_explicit_heat_cool(IonizationVariables &ionization_variables,
                               HydroVariables &hydro_variables,
                               const double inverse_volume, const double nH2V,
@@ -937,7 +899,7 @@ inline static void do_explicit_heat_cool(IonizationVariables &ionization_variabl
                               Hydro &hydro, double _cooling_temp_floor,
                               double gamma_minus_one,
                               LineCoolingData &line_cooling_data,
-                              Abundances &abundances, bool use_cooling_tables, const bool _do_FUV_heating, const bool _attenuate_FUV_heating, const double fuv_cell_heating_rate, double &fuv_cell_heating) {
+                              Abundances &abundances, bool use_cooling_tables, const bool _do_FUV_heating, const bool _attenuate_FUV_heating, const double fuv_cell_heating_rate) {
 
 
   double rho = hydro_variables.get_primitives_density();
@@ -1063,7 +1025,7 @@ while (clock < total_dt) {
   time_left = total_dt - clock;
 
   get_thermal_gain_loss(gain, loss, ionization_variables, inverse_volume, _do_FUV_heating, _attenuate_FUV_heating, fuv_cell_heating_rate,
-                              line_cooling_data, abund, AHe, radiative_cooling, use_cooling_tables, fuv_cell_heating);
+                              line_cooling_data, abund, AHe, radiative_cooling, use_cooling_tables);
 
   
   if (!std::isfinite(gain) || !std::isfinite(loss)){
@@ -1422,15 +1384,9 @@ inline static void do_cooling(IonizationVariables &ionization_variables,
  *  - use mask: Use a mask to disable hydrodynamics and radiation in part of
  *    the box? (default: no)
  *  - turbulent forcing: Enable turbulent forcing? (default: no)
- *  - initial turbulence: Add one initial Alvelius turbulent velocity field?
- *    (default: no)
  *  - first snapshot: Index of the first snapshot to write out (default: 0)
  *  - do radiation: Enable radiation? (default: yes)
  *  - do radiative cooling: Enable radiative cooling? (default: no)
- *  - neutral gas heating: Enable uniform heating per neutral hydrogen atom?
- *    (default: no)
- *  - neutral gas heating rate: Heating rate per neutral hydrogen atom
- *    (default: 2.e-26 erg s^-1)
  *  - do stellar feedback: Enable stellar feedback? (default: no)
  *
  * @param parser CommandLineParser that contains the parsed command line
@@ -1476,7 +1432,6 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
   TimeLogger time_logger;
 
   time_logger.start("initialization");
-  std::cout<<"Started initialization has been called"<<std::endl;
 
   time_logger.start("parameter reading");
 
@@ -1525,7 +1480,6 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
   // initialize the simulation box
   const SimulationBox simulation_box(*params);
-  const GalacticShearingBox galactic_shearing_box(*params, log);
 
   ExternalPotential *external_potential = nullptr;
   if (params->get_value< bool >(
@@ -1595,6 +1549,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
   const bool _throttle_ion_state = params->get_value< bool >(
      "TaskBasedRadiationHydrodynamicsSimulation:throttle ion state", false);
     
+  double maximum_neutral_fraction;
 
   const bool _moving_sources_flag = params->get_value< bool >( // mgb edit 10.11.2025
     "PhotonSourceDistribution:moving sources flag", false
@@ -1604,17 +1559,14 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     "TaskBasedRadiationHydrodynamicsSimulation:restart flag", false
   );
 
-  const double _restart_time = params->get_physical_value< QUANTITY_TIME >( // mgb edit 10.11.2025
-    "TaskBasedRadiationHydrodynamicsSimulation:restart time", "0. Myr"
+  const double _restart_time = params->get_value< double >( // mgb edit 10.11.2025
+    "TaskBasedRadiationHydrodynamicsSimulation:restart time", 0.0
   );
-
-
 
   const double _restart_iteration = params->get_value< double >( // mgb edit 10.11.2025
     "TaskBasedRadiationHydrodynamicsSimulation:restart iteration", 0.0
   );
 
-  
   const bool _trace_initial_neutral_flag = params->get_value< bool >("DensityFunction:trace initial neutral flag", "false");
 
   const double _temperature_to_trace = params->get_physical_value< QUANTITY_TEMPERATURE >("DensityFunction:temperature to trace", "500. K");
@@ -1622,9 +1574,6 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
   const bool _time_dependent_ionization = params->get_value<bool> ( 
     "TaskBasedRadiationHydrodynamicsSimulation:time dependent ionization", false);
-
-  const bool _advect_ionization = params->get_value< bool >(
-    "TaskBasedRadiationHydrodynamicsSimulation:advect ionization", false);
 #ifndef HAVE_GSL
  // if (_time_dependent_ionization) {
   //  cmac_error("Cant do full time dependent ionization without GSL.")
@@ -1632,29 +1581,18 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 #endif
 
 
-  const double maximum_neutral_fraction = params->get_value< double >(
+  if (_throttle_ion_state || _time_dependent_ionization) {
+    maximum_neutral_fraction = 1.e-3;
+  } else {
+      maximum_neutral_fraction = params->get_value< double >(
       "TaskBasedRadiationHydrodynamicsSimulation:maximum neutral fraction",
       -1.);
+  }
   
 
 
-  const std::string number_of_buffers_key =
-      "TaskBasedRadiationHydrodynamicsSimulation:number of buffers";
-  if (parser.was_found("rhd-number-of-buffers")) {
-    const int_fast32_t number_of_buffers_override =
-        parser.get_value< int_fast32_t >("rhd-number-of-buffers");
-    if (number_of_buffers_override <= 0) {
-      cmac_error("--rhd-number-of-buffers must be greater than zero.");
-    }
-    params->add_value(number_of_buffers_key,
-                      std::to_string(number_of_buffers_override));
-    if (log) {
-      log->write_status("Overriding task-based RHD photon buffer count to ",
-                        number_of_buffers_override, ".");
-    }
-  }
-  const size_t number_of_buffers =
-      params->get_value< size_t >(number_of_buffers_key, 50000);
+  const size_t number_of_buffers = params->get_value< size_t >(
+      "TaskBasedRadiationHydrodynamicsSimulation:number of buffers", 50000);
   const size_t queue_size_per_thread = params->get_value< size_t >(
       "TaskBasedRadiationHydrodynamicsSimulation:queue size per thread", 10000);
   const size_t shared_queue_size = params->get_value< size_t >(
@@ -1665,17 +1603,6 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
       "TaskBasedRadiationHydrodynamicsSimulation:random seed", 42);
   if (restart_reader != nullptr) {
     random_seed = restart_reader->read< int_fast32_t >();
-  }
-  const bool initial_turbulence = params->get_value< bool >(
-      "TaskBasedRadiationHydrodynamicsSimulation:initial turbulence", false);
-  double initial_turbulence_rms = 0.;
-  int_fast32_t initial_turbulence_seed = 42;
-  if (initial_turbulence) {
-    initial_turbulence_rms =
-        params->get_physical_value< QUANTITY_VELOCITY >(
-            "InitialTurbulence:target 3D rms velocity", "8.5 km s^-1");
-    initial_turbulence_seed = params->get_value< int_fast32_t >(
-        "InitialTurbulence:random seed", 42);
   }
   time_logger.start("density grid creation");
   DensitySubGridCreator< HydroDensitySubGrid > *grid_creator = nullptr;
@@ -1707,6 +1634,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
   DeRijckeRadiativeCooling *radiative_cooling = nullptr;
   std::ofstream *_cooling_file = nullptr;
   std::ofstream * _fuv_heating_file = nullptr; // mgb edit 24.07.2026
+ // double total_fuv_heating_counter = 0.0;
   double FUV_radiation_field = 0.0;
   double cooling_update_time = 0.0;
 
@@ -1748,7 +1676,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
   }
   if (_do_FUV_heating) { // mgb edit 24.07.2026
     _fuv_heating_file = new std::ofstream("FUVHeatingProgression.txt", std::ios_base::out | std::ios_base::app); // mgb edit 24.07.2026 - if file exists, it is appended to
-    *_fuv_heating_file << "#time (s)\tFUV heating rate (J s^-1)\tFUV radiation field (W m^-2)\n";
+    *_fuv_heating_file << "#time (s)\tFUV Global Heating Term\tFUV radiation field (W m^-2)\n";
     _fuv_heating_file->flush();
   }
 
@@ -1766,10 +1694,8 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     sourcedistribution =
         PhotonSourceDistributionFactory::generate(*params, log);
   } else {
-    sourcedistribution = PhotonSourceDistributionFactory::restart(
-        *restart_reader, log,
-        params->get_value< bool >(
-            "SupernovaHandler:TIGRESS like injection", true));
+    sourcedistribution =
+        PhotonSourceDistributionFactory::restart(*restart_reader, log);
   }
   PhotonSourceSpectrum *spectrum = PhotonSourceSpectrumFactory::generate(
       "PhotonSourceSpectrum", *params, log);
@@ -1924,9 +1850,6 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     time_logger.end("grid initialization");
   }
 
-  galactic_shearing_box.validate_boundaries(
-      simulation_box.get_periodicity(), *grid_creator);
-
   memory_logger.add_entry("pretasks");
 
   time_logger.start("task initialization");
@@ -1982,21 +1905,11 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
   time_logger.start("initial time step");
   double requested_timestep = DBL_MAX;
   if (restart_reader == nullptr) {
-    galactic_shearing_box.initialize(*grid_creator);
     for (auto cellit = grid_creator->begin();
          cellit != grid_creator->original_end(); ++cellit) {
       requested_timestep =
           std::min(requested_timestep,
                    (*cellit).initialize_hydrodynamic_variables(hydro, true));
-    }
-    if (initial_turbulence) {
-      time_logger.start("initial turbulence");
-    }
-    InitialTurbulence::initialize(
-        initial_turbulence, *grid_creator, hydro, initial_turbulence_rms,
-        initial_turbulence_seed, log);
-    if (initial_turbulence) {
-      time_logger.end("initial turbulence");
     }
   }
   time_logger.end("initial time step");
@@ -2165,13 +2078,9 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
       writer->write(*grid_creator, _restart_iteration, *params, _restart_time);
     } else {
       writer->write(*grid_creator, 0, *params, 0.);
-    if (sourcedistribution != nullptr) {
-      sourcedistribution->write_snapshot_metadata(
-          writer->get_snapshot_filename(0), 0.);
     }
-  }
     time_logger.end("snapshot");
-}
+  }
 
   double maximum_timestep = hydro_maximum_timestep;
   if (hydro_radtime > 0.) {
@@ -2236,12 +2145,6 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
            ++isource) {
         const CoordinateVector<> position =
             sourcedistribution->get_position(isource);
-        if (!simulation_box.get_box().inside(position)) {
-          if (log) {
-            log->write_warning("Ignoring photon source outside the simulation box.");
-          }
-          continue;
-        }
         DensitySubGridCreator< HydroDensitySubGrid >::iterator gridit =
             grid_creator->get_subgrid(position);
         levels[gridit.get_index()] = source_copy_level;
@@ -2303,26 +2206,13 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     has_next_step = restart_reader->read< bool >();
     actual_timestep = restart_reader->read< double >();
     current_time = restart_reader->read< double >();
-    lastrad_time = TaskBasedRadiationRestart::read_last_radiation_time( // taken out to fix restart bug
-        *restart_reader, current_time, actual_timestep, hydro_lastrad,
-        hydro_radtime);
-    if (log) {
-      log->write_status(
-          "Restored last radiation time to ",
-          UnitConverter::to_unit_string< QUANTITY_TIME >(lastrad_time,
-                                                         output_time_unit),
-          ".");
-    }
     delete restart_reader;
     restart_reader = nullptr;
   }
-  std::cout<<"After initialisation but before time logger end"<<std::endl;
 
-  double current_time_restarted = current_time + _restart_time; //current_time + _restart_time; // mgb edit 10.11.2025
+ // double current_time_restarted = current_time + _restart_time; //current_time + _restart_time; // mgb edit 10.11.2025
 
-  std::cout<<"Just before time logger end call"<< std::endl;
   time_logger.end("initialization");
-  std::cout<<"After time logger end call"<< std::endl;
 
   time_logger.output("time_log.txt");
 
@@ -2358,12 +2248,13 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
 
     // decide whether or not to do the radiation step
-    if (do_radiation &&
+            // decide whether or not to do the radiation step
+         if (do_radiation &&
         (hydro_radtime < 0. ||
          (current_time-actual_timestep) >= hydro_lastrad * hydro_radtime)) {
 
         if (_cooling_file != nullptr) {
-          *_cooling_file << current_time_restarted << "\t" << total_thermal_lost<< "\n";
+          *_cooling_file << current_time << "\t" << total_thermal_lost<< "\n";
            _cooling_file->flush();
           }
 
@@ -2378,16 +2269,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     if(sourcedistribution != nullptr) {
    //   log->write_status("Getting Total Luminosity: ", sourcedistribution->get_total_luminosity());
 
-    bool has_active_source = false;
-    for (photonsourcenumber_t isource = 0;
-         isource < sourcedistribution->get_number_of_sources(); ++isource) {
-      if (simulation_box.get_box().inside(
-              sourcedistribution->get_position(isource))) {
-        has_active_source = true;
-        break;
-      }
-    }
-    if (sourcedistribution->get_total_luminosity() > 0. && has_active_source) {
+      if (sourcedistribution->get_total_luminosity() > 0.) {
         time_logger.start("radiation transfer");
 
         {
@@ -2511,7 +2393,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           cmac_assert(number_of_photons_done == numphoton);
 
           bool global_run_flag = true;
-          AtomicValue< uint_fast64_t > num_photon_done(0);
+          AtomicValue< uint_fast32_t > num_photon_done(0);
 
 
           // create task contexts
@@ -2985,12 +2867,6 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
       time_logger.end("turbulence");
     }
 
-    // The radial remap contributes the missing x-neighbour to the gradients.
-    // Its ordinary same-y periodic task is left in the graph as a no-op so the
-    // existing task dependencies remain unchanged.
-    galactic_shearing_box.add_boundary_gradients(
-        *grid_creator, hydro, current_time - actual_timestep);
-
     // reset the hydro tasks and add them to the queue
     AtomicValue< uint_fast32_t > number_of_tasks;
     for (auto cellit = grid_creator->begin();
@@ -3007,97 +2883,51 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     }
 
     start_parallel_timing_block();
-    bool defer_flux_tasks =
-        galactic_shearing_box.shearing_periodic_boundaries();
-    bool hydro_tasks_finished = false;
-    while (!hydro_tasks_finished) {
 #ifdef HAVE_OPENMP
 #pragma omp parallel default(shared)
 #endif
-      {
-        const int_fast32_t thread_id = get_thread_index();
-        while (number_of_tasks.value() > 0) {
-          size_t current_task = queues[thread_id]->get_task(*tasks);
-          if (current_task == NO_TASK) {
-            current_task = steal_task(thread_id, num_thread, queues, *tasks,
-                                      *grid_creator);
-          }
-          if (current_task != NO_TASK) {
-            (*tasks)[current_task].start(thread_id);
+    {
+      const int_fast32_t thread_id = get_thread_index();
+      while (number_of_tasks.value() > 0) {
+        size_t current_task = queues[thread_id]->get_task(*tasks);
+        if (current_task == NO_TASK) {
+          current_task =
+              steal_task(thread_id, num_thread, queues, *tasks, *grid_creator);
+        }
+        if (current_task != NO_TASK) {
+          (*tasks)[current_task].start(thread_id);
 
-            uint_fast64_t task_start, task_stop;
-            cpucycle_tick(task_start);
+          uint_fast64_t task_start, task_stop;
+          cpucycle_tick(task_start);
 
-            execute_task(current_task, *grid_creator, *tasks, actual_timestep,
-                         hydro, hydro_boundary_manager, galactic_shearing_box,
-                         _advect_ionization);
-            (*tasks)[current_task].stop();
+          execute_task(current_task, *grid_creator, *tasks, actual_timestep,
+                       hydro, hydro_boundary_manager); // mgb comment 26.05.2026: this will calculate all gradients etc. ionization temperature should not be used here so energies are only updated based on solver fluxes and gravitaional energy
+          (*tasks)[current_task].stop();
 
-            cpucycle_tick(task_stop);
-            active_time[thread_id] += task_stop - task_start;
+          cpucycle_tick(task_stop);
+          active_time[thread_id] += task_stop - task_start;
 
-            (*tasks)[current_task].unlock_dependency();
-            const unsigned char numchild =
-                (*tasks)[current_task].get_number_of_children();
-            for (uint_fast8_t i = 0; i < numchild; ++i) {
-              const size_t ichild = (*tasks)[current_task].get_child(i);
-              if ((*tasks)[ichild].decrement_number_of_unfinished_parents() ==
-                      0 &&
-                  !(defer_flux_tasks &&
-                    is_hydro_flux_task((*tasks)[ichild].get_type()))) {
-                queues[(*grid_creator->get_subgrid(
-                            (*tasks)[ichild].get_subgrid()))
-                           .get_owning_thread()]
-                    ->add_task(ichild);
-                number_of_tasks.pre_increment();
-              }
+          (*tasks)[current_task].unlock_dependency();
+          const unsigned char numchild =
+              (*tasks)[current_task].get_number_of_children();
+          for (uint_fast8_t i = 0; i < numchild; ++i) {
+            const size_t ichild = (*tasks)[current_task].get_child(i);
+            if ((*tasks)[ichild].decrement_number_of_unfinished_parents() ==
+                0) {
+              queues[(*grid_creator->get_subgrid(
+                          (*tasks)[ichild].get_subgrid()))
+                         .get_owning_thread()]
+                  ->add_task(ichild);
+              number_of_tasks.pre_increment();
             }
-            number_of_tasks.pre_decrement();
           }
+          number_of_tasks.pre_decrement();
         }
-      }
-
-      if (defer_flux_tasks) {
-        // All states have now been slope-limited and predicted to half time.
-        // Compute the conservative remapped face flux before releasing the
-        // normal flux/update half of the task graph.
-        galactic_shearing_box.add_boundary_fluxes(
-            *grid_creator, hydro, current_time - 0.5 * actual_timestep,
-            actual_timestep, _advect_ionization);
-        defer_flux_tasks = false;
-        for (size_t itask = 0; itask < radiation_task_offset; ++itask) {
-          if (is_hydro_flux_task((*tasks)[itask].get_type()) &&
-              (*tasks)[itask].get_number_of_unfinished_parents() == 0) {
-            queues[(*grid_creator->get_subgrid(
-                        (*tasks)[itask].get_subgrid()))
-                       .get_owning_thread()]
-                ->add_task(itask);
-            number_of_tasks.pre_increment();
-          }
-        }
-      } else {
-        hydro_tasks_finished = true;
       }
     }
 
+  
     stop_parallel_timing_block();
-
-    // Apply the local Galactic Coriolis and tidal terms after the conservative
-    // hydro update. Keeping this separate from gravity avoids adding spurious
-    // work for the velocity-dependent Coriolis acceleration.
-    if (galactic_shearing_box.enabled()) {
-      AtomicValue< size_t > igrid(0);
-#ifdef HAVE_OPENMP
-#pragma omp parallel default(shared)
-#endif
-      while (igrid.value() < grid_creator->number_of_original_subgrids()) {
-        const size_t this_igrid = igrid.post_increment();
-        if (this_igrid < grid_creator->number_of_original_subgrids()) {
-          galactic_shearing_box.apply(
-              *grid_creator->get_subgrid(this_igrid), hydro, actual_timestep);
-        }
-      }
-    }
 
     // apply the mask (if applicable)
     if (hydro_mask != nullptr) {
@@ -3120,10 +2950,14 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     }
 
     if (sourcedistribution != nullptr) {
-      sourcedistribution->float_sources(grid_creator, actual_timestep,
-                                        external_potential,
-                                        &galactic_shearing_box,
-                                        simulation_box.get_periodicity());
+
+     // if (_moving_sources_flag == true) { // mgb edit
+     // sourcedistribution->set_initial_velocity(grid_creator,actual_timestep);
+    //  sourcedistribution->float_sources(grid_creator,actual_timestep);
+   //   log->write_status("Source positions have been updated in float_sources");
+     // }
+     //sourcedistribution->float_sources(grid_creator,actual_timestep); # taken out and replaced with if flag mgb 16.10.2025
+
       sourcedistribution->accrete_gas(grid_creator,hydro);
     }
 
@@ -3152,10 +2986,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         log->write_status("Starting cooling step.");
       }
 
-      /* mgb edit 24.07.2026: Calculate perpendicular stratified column densities */
-
-      
-       AtomicValue< size_t > igrid(0);
+      AtomicValue< size_t > igrid(0);
       const bool run_fuv = _do_FUV_heating && ( current_time - cooling_update_time >= _update_interval);
       double global_average_density = 0.0;
       double base_heating_rate = 0.0;
@@ -3200,6 +3031,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
       }
 
 
+     // double global_fuv_heating_term = 0;
      
       start_parallel_timing_block();
 #ifdef HAVE_OPENMP
@@ -3234,7 +3066,6 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
             const double nH2 = nH * nH;
             const double temperature_before_calculation = cellit.get_ionization_variables().get_temperature();
 
-            double fuv_cell_heating = 0.0;  
             double fuv_cell_heating_rate = 0.0; // Default to 0 when FUV is off or interval is not met
 
             if (run_fuv) {
@@ -3273,9 +3104,9 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                         1. / cellit.get_volume(), nH2 * cellit.get_volume(),
                         actual_timestep, radiative_cooling, hydro,
                           _cooling_temp_floor,_gamma-1.,line_cooling_data, abundances,
-                          use_cool_tables, _do_FUV_heating, _attenuate_FUV_heating, fuv_cell_heating_rate, fuv_cell_heating);
+                          use_cool_tables, _do_FUV_heating, _attenuate_FUV_heating, fuv_cell_heating_rate);
 
-
+             
             }
             cellit.get_ionization_variables().set_temperature(
                 ionization_variables.get_temperature());
@@ -3362,9 +3193,10 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         *_fuv_heating_file << current_time+_restart_time << 0. << "\t" << FUV_radiation_field << "\n";
         _fuv_heating_file->flush();   
         cooling_update_time = current_time;
+       // global_fuv_heating_term = 0.0;
       }
+    //  total_fuv_heating_counter = 0.0;
       
-
 
       stop_parallel_timing_block();
       time_logger.end("cooling");
@@ -3373,9 +3205,11 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
        // log->write_status("Current time restart ", current_time_restarted);
       }
     }
-  //  double current_time_restarted = current_time + _restart_time; //current_time + _restart_time; // mgb edit 10.11.2025
+    double current_time_restarted = current_time + _restart_time; //current_time + _restart_time; // mgb edit 10.11.2025
 
-
+//    if (_restart_flag == true) {
+  //    cmac_warning("Current time restarted = %g, restart time = %g, current time = %g, iteration = %g", current_time_restarted, _restart_time, current_time, _restart_iteration+hydro_lastsnap);
+   // }
     // write snapshot
     // we don't write if this is the last snapshot, because then it is written
     // outside the integration loop
@@ -3386,18 +3220,10 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           time_logger.start("snapshot");
           double hydro_lastsnap_restart = hydro_lastsnap + _restart_iteration;
           writer->write(*grid_creator, hydro_lastsnap_restart, *params, current_time_restarted);
-          if (sourcedistribution != nullptr) {
-            sourcedistribution->write_snapshot_metadata(
-                writer->get_snapshot_filename(hydro_lastsnap_restart), current_time_restarted);
-          }
           time_logger.end("snapshot");
         } else {
           time_logger.start("snapshot");
           writer->write(*grid_creator, hydro_lastsnap, *params, current_time);
-          if (sourcedistribution != nullptr) {
-            sourcedistribution->write_snapshot_metadata(
-                writer->get_snapshot_filename(hydro_lastsnap), current_time);
-          }
           time_logger.end("snapshot");
         }
       }
@@ -3457,8 +3283,6 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
         time_logger.start("source update");
 
-        sourcedistribution->update_fuv_background_sources(grid_creator);
-
         temperature_calculator->update_luminosity(
             sourcedistribution->get_total_luminosity());
 
@@ -3486,13 +3310,6 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                ++isource) {
             const CoordinateVector<> position =
                 sourcedistribution->get_position(isource);
-            if (!simulation_box.get_box().inside(position)) {
-              if (log) {
-                log->write_warning(
-                    "Ignoring photon source outside the simulation box.");
-              }
-              continue;
-            }
             DensitySubGridCreator< HydroDensitySubGrid >::iterator gridit =
                 grid_creator->get_subgrid(position);
             levels[gridit.get_index()] = source_copy_level;
@@ -3673,8 +3490,6 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
       restart_writer->write(has_next_step);
       restart_writer->write(actual_timestep);
       restart_writer->write(current_time);
-      TaskBasedRadiationRestart::write_last_radiation_time(*restart_writer,
-                                                           lastrad_time);
 
       delete restart_writer;
       time_logger.end("restart file");
@@ -3684,7 +3499,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     time_logger.output("time_log.txt", true);
   }
 
- // double current_time_restarted = current_time + _restart_time; //current_time + _restart_time; // mgb edit 10.11.2025
+  double current_time_restarted = current_time + _restart_time; //current_time + _restart_time; // mgb edit 10.11.2025
 
   if (stop_simulation) {
     if (log) {
@@ -3703,13 +3518,9 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
       } else {
           time_logger.start("snapshot");
           writer->write(*grid_creator, hydro_lastsnap, *params, current_time);
-          if (sourcedistribution != nullptr) {
-            sourcedistribution->write_snapshot_metadata(
-                writer->get_snapshot_filename(hydro_lastsnap), current_time);
-          }
           time_logger.end("snapshot");
       }
-    } 
+    }
   }
 
   cpucycle_tick(program_end);
@@ -3797,4 +3608,3 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
   return 0;
 }
-

@@ -185,11 +185,10 @@ public:
       if (advect_ionization) {
         const double new_mass = _hydro_variables[i].get_conserved_mass();
         if (new_mass > 0.) {
-          const double inv_new_mass = 1.0 / new_mass;
           for (int_fast32_t j = 0; j < NUMBER_OF_IONNAMES; ++j) {
             const double old_fraction = _ionization_variables[i].get_ionic_fraction(j);
             const double delta_fraction = _ionization_variables[i].get_delta_ionic_fraction(j);
-            double new_fraction = (old_mass * old_fraction + delta_fraction * timestep) * inv_new_mass;
+            double new_fraction = (old_mass * old_fraction + delta_fraction * timestep) / new_mass;
             if (new_fraction < 0.) {
               new_fraction = 0.;
             } else if (new_fraction > 1.) {

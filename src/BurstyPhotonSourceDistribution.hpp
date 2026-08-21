@@ -134,6 +134,10 @@ private:
 
   std::vector< double > _fuv_source_birth_time;
   std::vector< double > _fuv_source_masses;
+  std::vector<double> _fuv_source_luminosity_cache;
+  std::vector<double> _fuv_source_age_cache;
+  double _fuv_field_cache_time = -1.0;
+  double _fuv_field_cache_value = 0.0;
 
   std::vector<int> _to_delete;
 
@@ -520,7 +524,6 @@ public:
        << std::endl;
     }
 
-    fuvlumtomass = new ReadFUVLumToMass(_fuv_LtoM_filename);
 
     std::ifstream test_file(_source_filename);
     bool source_file_existed_at_start = test_file.good();

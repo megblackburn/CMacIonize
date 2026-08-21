@@ -205,15 +205,15 @@ public:
       cmac_assert_message(result >= 0 && result < TRAVELDIRECTION_NUMBER,
                           "fail");
 
-      const bool distance_limited =
-          _max_photon_distance > 0. &&
-          photon.get_distance_travelled() >= _max_photon_distance;
+     // const bool distance_limited =
+       //   _max_photon_distance > 0. &&
+       //   photon.get_distance_travelled() >= _max_photon_distance;
       const bool stored = traversal_thread_context.store_photon(
           result, photon, _max_photon_distance);
       if (!stored) {
-        if (distance_limited) {
+       /* if (distance_limited) {
           report_distance_limited_photon(photon);
-        }
+        }*/
         if (_statistics != nullptr) {
           if (result == 0) {
             _statistics->absorb_photon(photon);
