@@ -1484,7 +1484,6 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
   TimeLogger time_logger;
 
   time_logger.start("initialization");
-  std::cout<<"Started initialization has been called"<<std::endl;
 
   time_logger.start("parameter reading");
 
@@ -1616,7 +1615,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
 
 
-  const double _restart_iteration = params->get_value<  >( // mgb edit 10.11.2025
+  const double _restart_iteration = params->get_value< uint_fast32_t  >( // mgb edit 10.11.2025
     "TaskBasedRadiationHydrodynamicsSimulation:restart iteration", 0.0
   );
 
@@ -2203,10 +2202,10 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     time_logger.start("snapshot");
     if (_restart_flag == true) { // mgb edit 14.11.2025
       writer->write(*grid_creator, _restart_iteration, *params, _restart_time);
-      /*if (sourcedistribution != nullptr) {
+      if (sourcedistribution != nullptr) {
         sourcedistribution->write_snapshot_metadata(
                 writer->get_snapshot_filename(_restart_iteration), _restart_time);
-          }*/
+          }
     } else {
       writer->write(*grid_creator, 0, *params, 0.);
     if (sourcedistribution != nullptr) {
@@ -2360,13 +2359,10 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     delete restart_reader;
     restart_reader = nullptr;
   }
-  std::cout<<"After initialisation but before time logger end"<<std::endl;
 
   double current_time_restarted = current_time + _restart_time; //current_time + _restart_time; // mgb edit 10.11.2025
 
-  std::cout<<"Just before time logger end call"<< std::endl;
   time_logger.end("initialization");
-  std::cout<<"After time logger end call"<< std::endl;
 
   time_logger.output("time_log.txt");
 
@@ -2874,7 +2870,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     } 
 
       {
-  if (!do_explicit_temp_calc) { =
+  if (!do_explicit_temp_calc) { 
         time_logger.start("ionizing energy update");
         AtomicValue< size_t > igrid(0);
         start_parallel_timing_block();
@@ -3513,14 +3509,14 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           
           time_logger.start("snapshot");
           uint_fast32_t hydro_lastsnap_restart = hydro_lastsnap + _restart_iteration;
-          std::cout<<"Written file: "<< hydro_lastsnap_restart << std::endl;
+          std::cout<<"Writing file: "<< hydro_lastsnap_restart << std::endl;
           writer->write(*grid_creator, hydro_lastsnap_restart, *params, current_time_restarted);
+          std::cout<<"Written file: "<< hydro_lastsnap_restart << std::endl;
           std::cout<<"Writing photon source meta data: " << hydro_lastsnap_restart << std::endl;
-          /*if (sourcedistribution != nullptr) {
+          if (sourcedistribution != nullptr) {
             sourcedistribution->write_snapshot_metadata(
                 writer->get_snapshot_filename(hydro_lastsnap_restart), current_time_restarted);
-          }*/
-          std::cout<<"Written photon source meta data"<<std::endl;
+          }
           time_logger.end("snapshot");
         } else {
           time_logger.start("snapshot");
