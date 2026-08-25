@@ -1604,9 +1604,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
      "TaskBasedRadiationHydrodynamicsSimulation:throttle ion state", false);
     
 
-  const bool _moving_sources_flag = params->get_value< bool >( // mgb edit 10.11.2025
-    "PhotonSourceDistribution:moving sources flag", false
-  );
+
 
   const bool _restart_flag = params->get_value< bool >( // mgb edit 10.11.2025
     "TaskBasedRadiationHydrodynamicsSimulation:restart flag", false
@@ -1618,7 +1616,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
 
 
-  const double _restart_iteration = params->get_value< double >( // mgb edit 10.11.2025
+  const double _restart_iteration = params->get_value<  >( // mgb edit 10.11.2025
     "TaskBasedRadiationHydrodynamicsSimulation:restart iteration", 0.0
   );
 
@@ -2205,10 +2203,10 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     time_logger.start("snapshot");
     if (_restart_flag == true) { // mgb edit 14.11.2025
       writer->write(*grid_creator, _restart_iteration, *params, _restart_time);
-      if (sourcedistribution != nullptr) {
+      /*if (sourcedistribution != nullptr) {
         sourcedistribution->write_snapshot_metadata(
                 writer->get_snapshot_filename(_restart_iteration), _restart_time);
-          }
+          }*/
     } else {
       writer->write(*grid_creator, 0, *params, 0.);
     if (sourcedistribution != nullptr) {
@@ -2458,13 +2456,13 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                     
                 }
               subgrid.update_ionization_variables(hydro,
-                                                  maximum_neutral_fraction); // mgb comment 26.05.2026: updates number density
+                                                  maximum_neutral_fraction); 
             }
           }
           stop_parallel_timing_block();
         }
 
-        DistributedPhotonSource<HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> > photon_source( // mgb edit 24.04.2026 DistributedPhotonSource<HydroDensitySubGrid> photon_source()
+        DistributedPhotonSource<HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> > photon_source( 
             numphoton, *sourcedistribution, *grid_creator);
         {
           AtomicValue< size_t > igrid(0);
@@ -2718,7 +2716,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                                    abundances.get_abundance(ELEMENT_He));
 #endif
             }
-                if (_time_dependent_ionization) { // mgb comment 26.05.2026: This updates the temperature and heating term but not energy
+                if (_time_dependent_ionization) { 
                   if (iloop == nloop -1) {
                     temperature_calculator->calculate_temperature(
                       iloop, numphoton, *gridit, current_time - lastrad_time, true, true);
@@ -2748,7 +2746,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           worktimer.stop();
         }
 
-        time_logger.end("radiation transfer"); // mgb comment 26.05.2026: radiation finished - no energy updates 
+        time_logger.end("radiation transfer"); 
 
       } else {
 
@@ -2783,7 +2781,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
               }
               if (_time_dependent_ionization) {
                   
-               temperature_calculator->calculate_temperature( // mgb comment 26.05.2026: updates temperature with collosional rates as no photoionising sources present but no energy update
+               temperature_calculator->calculate_temperature( 
                       0, 0, *gridit, current_time - lastrad_time, true, true);
 
               } else {
@@ -2797,7 +2795,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         }
 
       }
-    } else { // mgb comment 26.05.2026: no source distribution
+    } else { 
 
       //  if (log) {
         //  log->write_status("No source distribution!");
@@ -2829,7 +2827,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
               } 
               if (_time_dependent_ionization) {
               
-                  temperature_calculator->calculate_temperature( // mgb comment 26.05.2026: another temperature update but no energy
+                  temperature_calculator->calculate_temperature( 
                     0, 0, *gridit, current_time - lastrad_time, true, true);
     
               } else{
@@ -2873,10 +2871,10 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
       lastrad_time = current_time;
 
       time_logger.end("radiation");
-    } // mgb comment 26.05.2026: final end of radiation steps
+    } 
 
       {
-  if (!do_explicit_temp_calc) { // mgb comment 26.05.2026: this will only happen if NOT doing explicit temp calc/heating & cooling
+  if (!do_explicit_temp_calc) { =
         time_logger.start("ionizing energy update");
         AtomicValue< size_t > igrid(0);
         start_parallel_timing_block();
@@ -2887,7 +2885,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           const size_t this_igrid = igrid.post_increment();
           if (this_igrid < grid_creator->number_of_original_subgrids()) {
             auto gridit = grid_creator->get_subgrid(this_igrid);
-            (*gridit).add_ionization_energy(hydro, actual_timestep); // mgb comment 26.05.2026: this will update the energies but is not called when explicit temp calc is true
+            (*gridit).add_ionization_energy(hydro, actual_timestep); 
           }
         }
         stop_parallel_timing_block();
@@ -2898,7 +2896,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
 
 
-    time_logger.start("hydro"); // mgb comment 26.05.2026: beginning of hydro step - no energy updates following radiation this far
+    time_logger.start("hydro"); 
 
     if (log) {
       log->write_status("Starting hydro step...");
@@ -3034,9 +3032,12 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     // The radial remap contributes the missing x-neighbour to the gradients.
     // Its ordinary same-y periodic task is left in the graph as a no-op so the
     // existing task dependencies remain unchanged.
-    galactic_shearing_box.add_boundary_gradients(
+    if (_restart_flag) {
+      galactic_shearing_box.add_boundary_gradients(*grid_creator, hydro, current_time_restarted - actual_timestep);
+    } else {
+      galactic_shearing_box.add_boundary_gradients(
         *grid_creator, hydro, current_time - actual_timestep);
-
+    }
     // reset the hydro tasks and add them to the queue
     AtomicValue< uint_fast32_t > number_of_tasks;
     for (auto cellit = grid_creator->begin();
@@ -3107,9 +3108,15 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         // All states have now been slope-limited and predicted to half time.
         // Compute the conservative remapped face flux before releasing the
         // normal flux/update half of the task graph.
-        galactic_shearing_box.add_boundary_fluxes(
-            *grid_creator, hydro, current_time - 0.5 * actual_timestep,
+        if (_restart_flag) {
+          galactic_shearing_box.add_boundary_fluxes(
+            *grid_creator, hydro, current_time_restarted - 0.5 * actual_timestep, 
             actual_timestep, _advect_ionization);
+        } else {
+          galactic_shearing_box.add_boundary_fluxes(
+              *grid_creator, hydro, current_time - 0.5 * actual_timestep,
+              actual_timestep, _advect_ionization);
+        }
         defer_flux_tasks = false;
         for (size_t itask = 0; itask < radiation_task_offset; ++itask) {
           if (is_hydro_flux_task((*tasks)[itask].get_type()) &&
@@ -3139,6 +3146,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
       while (igrid.value() < grid_creator->number_of_original_subgrids()) {
         const size_t this_igrid = igrid.post_increment();
         if (this_igrid < grid_creator->number_of_original_subgrids()) {
+
           galactic_shearing_box.apply(
               *grid_creator->get_subgrid(this_igrid), hydro, actual_timestep);
         }
@@ -3179,7 +3187,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
       log->write_status("Done with hydro step.");
     }
 
-    time_logger.end("hydro"); // mgb comment 26.05.2026: end of hydro: no energy update w.r.t new radiation temperature
+    time_logger.end("hydro"); 
 
     if (log && false) {
       const uint_fast64_t total_interval = iteration_end - iteration_start;
@@ -3191,14 +3199,14 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
       }
     }
 
-    if (do_rad_cool || do_explicit_temp_calc) { // mgb comment 26.05.2026: beginning of temperature calculations
+    if (do_rad_cool || do_explicit_temp_calc) { 
       time_logger.start("cooling");
 
       if (log) {
         log->write_status("Starting cooling step.");
       }
 
-      /* mgb edit 24.07.2026: Calculate perpendicular stratified column densities */
+      /* mgb edit 24.07.2026: Calculate perpendicular column densities */
 
       
       AtomicValue< size_t > igrid(0);
@@ -3219,7 +3227,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         if (sourcedistribution != nullptr){
           
           FUV_radiation_field = sourcedistribution->get_FUV_field_strength(grid_creator);
-          std::cout<<"FUV Radiation Field: "<< FUV_radiation_field << std::endl;
+        //  std::cout<<"FUV Radiation Field: "<< FUV_radiation_field << std::endl;
         }
 
         base_heating_rate = FUV_radiation_field / FUV_interstellar_radiation_field;
@@ -3326,8 +3334,8 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           for (auto cellit = (*gridit).hydro_begin();
                cellit != (*gridit).hydro_end(); ++cellit) {
            // hydro.set_primitive_variables(cellit.get_hydro_variables(), cellit.get_ionization_variables(), cellit.get_volume())
-            hydro.hydro_to_ionization(cellit.get_hydro_variables(), cellit.get_ionization_variables()); // mgb comment 26.05.2026:  this only updates the ionization cell density from the hydro updated density
-            //hydro.align_temp_to_p(cellit.get_hydro_variables(), cellit.get_ionization_variables()); // mgb edit 27.05.2026: uncommented
+            hydro.hydro_to_ionization(cellit.get_hydro_variables(), cellit.get_ionization_variables()); 
+            //hydro.align_temp_to_p(cellit.get_hydro_variables(), cellit.get_ionization_variables()); 
 
           //  hydro.align_temp_to_p(cellit.get_hydro_variables(), cellit.get_ionization_variables());
             IonizationVariables ionization_variables =
@@ -3387,7 +3395,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
             //       cellit.get_hydro_variables(), cellit.get_volume(),
             //       _cooling_temp_floor);
             // }
-              do_explicit_heat_cool(ionization_variables, hydro_variables,  // mgb comment 26.05.2026: this is then where the new temperature is used within the temp calculations but internal energies can be significantly out of sync with supernova present
+              do_explicit_heat_cool(ionization_variables, hydro_variables,  
                         1. / cellit.get_volume(), nH2 * cellit.get_volume(),
                         actual_timestep, radiative_cooling, hydro,
                           _cooling_temp_floor,_gamma-1.,line_cooling_data,
@@ -3403,7 +3411,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
             cellit.get_hydro_variables().set_conserved_total_energy(
                 hydro_variables.get_conserved_total_energy());
 
-            if (ionization_variables.get_temperature() <  // mgb comment 26.05.2026: This will then set the temperature to cooling floor if it goes to zero in the energy updates from do_explicit_heat_cool
+            if (ionization_variables.get_temperature() <  
                 _cooling_temp_floor) {
               hydro.set_temperature(
                   cellit.get_ionization_variables(),
@@ -3411,7 +3419,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                   _cooling_temp_floor);
             }
 
-            hydro.set_conserved_variables(cellit.get_hydro_variables(), cellit.get_volume());  // mgb comment 26.05.2026: cell variables then all updated but by this point T can be 100 due to limit, when pressure and internal energy are now both 0 - this could cause issue but temperature isnt explicitly solved for?
+            hydro.set_conserved_variables(cellit.get_hydro_variables(), cellit.get_volume());  
 
             // mgb edit 12.06.2026: implementation of tracer fields for cold gas
             
@@ -3502,13 +3510,17 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         has_next_step) {
       if (hydro_firstsnap <= hydro_lastsnap) {
         if (_restart_flag == true) { // mgb edit 10.11.2025
+          
           time_logger.start("snapshot");
-          double hydro_lastsnap_restart = hydro_lastsnap + _restart_iteration;
+          uint_fast32_t hydro_lastsnap_restart = hydro_lastsnap + _restart_iteration;
+          std::cout<<"Written file: "<< hydro_lastsnap_restart << std::endl;
           writer->write(*grid_creator, hydro_lastsnap_restart, *params, current_time_restarted);
-          if (sourcedistribution != nullptr) {
+          std::cout<<"Writing photon source meta data: " << hydro_lastsnap_restart << std::endl;
+          /*if (sourcedistribution != nullptr) {
             sourcedistribution->write_snapshot_metadata(
                 writer->get_snapshot_filename(hydro_lastsnap_restart), current_time_restarted);
-          }
+          }*/
+          std::cout<<"Written photon source meta data"<<std::endl;
           time_logger.end("snapshot");
         } else {
           time_logger.start("snapshot");
@@ -3566,11 +3578,6 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
       if (sourcedistribution != nullptr) {
 
-        if (_moving_sources_flag == true) { // mgb edit 09.03.2026
-     // sourcedistribution->set_initial_velocity(grid_creator,actual_timestep);
-          sourcedistribution->float_sources(grid_creator,actual_timestep);
-          log->write_status("Source positions have been updated in float_sources");
-         }
 
       if (sourcedistribution->update(grid_creator,actual_timestep)) {
 
@@ -3816,7 +3823,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     if (write_output) {
       if (_restart_flag == true) {
         time_logger.start("snapshot");
-        double hydro_lastsnap_restart = hydro_lastsnap + _restart_iteration;
+        uint_fast32_t hydro_lastsnap_restart = hydro_lastsnap + _restart_iteration;
         writer->write(*grid_creator, hydro_lastsnap_restart, *params, current_time_restarted); // mgb edit 10.11.2025
         if (sourcedistribution != nullptr) {
             sourcedistribution->write_snapshot_metadata(
