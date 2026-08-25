@@ -2988,9 +2988,13 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     // The radial remap contributes the missing x-neighbour to the gradients.
     // Its ordinary same-y periodic task is left in the graph as a no-op so the
     // existing task dependencies remain unchanged.
-    galactic_shearing_box.add_boundary_gradients(
-        *grid_creator, hydro, current_time - actual_timestep);
-
+    if (_restart_flag) {
+      galactic_shearing_box.add_boundary_gradients(
+        *grid_creator, hydro, current_time_restarted - actual_timestep);
+    } else {
+      galactic_shearing_box.add_boundary_gradients(
+          *grid_creator, hydro, current_time - actual_timestep);
+    }
     // reset the hydro tasks and add them to the queue
     AtomicValue< uint_fast32_t > number_of_tasks;
     for (auto cellit = grid_creator->begin();
@@ -3061,9 +3065,15 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         // All states have now been slope-limited and predicted to half time.
         // Compute the conservative remapped face flux before releasing the
         // normal flux/update half of the task graph.
-        galactic_shearing_box.add_boundary_fluxes(
+        if (_restart_flag) {
+          galactic_shearing_box.add_boundary_fluxes(
             *grid_creator, hydro, current_time - 0.5 * actual_timestep,
             actual_timestep, _advect_ionization);
+        } else {
+          galactic_shearing_box.add_boundary_fluxes(
+              *grid_creator, hydro, current_time - 0.5 * actual_timestep,
+              actual_timestep, _advect_ionization);
+        }
         defer_flux_tasks = false;
         for (size_t itask = 0; itask < radiation_task_offset; ++itask) {
           if (is_hydro_flux_task((*tasks)[itask].get_type()) &&
