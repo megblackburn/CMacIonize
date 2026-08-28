@@ -3482,7 +3482,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         }
       }
       if (_do_FUV_heating && sourcedistribution != nullptr && current_time - cooling_update_time >= _update_interval) {
-        *_fuv_heating_file << current_time+_restart_time << 0. << "\t" << FUV_radiation_field << "\n";
+        *_fuv_heating_file << current_time+_restart_time << "\t" << 0. << "\t" << FUV_radiation_field << "\n";
         _fuv_heating_file->flush();   
         cooling_update_time = current_time;
       }
