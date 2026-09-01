@@ -129,6 +129,7 @@ private:
   /*! @brief Supernovae that occurred since the preceding HDF5 snapshot. */
   std::vector< CoordinateVector<> > _snapshot_supernova_positions;
   std::vector< double > _snapshot_supernova_times;
+  std::vector< double > _snapshot_supernova_types;
 
   /*! @brief Arrays to store the FUV source information */
 
@@ -544,7 +545,7 @@ public:
 
       _output_file2 = new std::ofstream(_total_luminosity_filename, std::ios_base::out | std::ios_base::app);
       if (_output_file2->tellp() == 0) {
-        *_output_file2 << "simulation time (s)\ttotal time (s)\tlum (s^-1)\tnumsne\tSFR_base (Msol Myr-1)\tSFR_KS (Msol Myr^-1 kpc^-2)\tSFR_KS (kg s^-1 kpc^-2)\tM_init (kg)\tM (kg)\n";
+        *_output_file2 << "simulation time (s)\ttotal time (s)\tlum (s^-1)\tnumsne\tSFR_base (Msol Myr-1)\tSFR_KS (Msol Myr^-1 kpc^-2)\tSFR_KS (kg s^-1 kpc^-2)\tM_gen (Msol)\tM (kg)\n";
       }
       _output_file2->flush();
 
@@ -876,6 +877,8 @@ public:
           supernovae, "Coordinates", _snapshot_supernova_positions);
       HDF5Tools::write_dataset< double >(
           supernovae, "Time", _snapshot_supernova_times);
+      HDF5Tools::write_dataset< double >(
+          supernovae, "EventType", _snapshot_supernova_types);
     }
     HDF5Tools::close_group(supernovae);
     HDF5Tools::close_file(file);
@@ -883,6 +886,7 @@ public:
     // Only clear after the HDF5 file was closed successfully.
     _snapshot_supernova_positions.clear();
     _snapshot_supernova_times.clear();
+    _snapshot_supernova_types.clear();
 #else
     (void)filename;
     (void)simulation_time;
@@ -1061,6 +1065,7 @@ public:
         _source_velocities.erase(_source_velocities.begin() + i);
         _snapshot_supernova_positions.push_back(_source_positions[i]);
         _snapshot_supernova_times.push_back(_total_time);
+        _snapshot_supernova_types.push_back(2); 
 
         _num_sne = _num_sne + 1;
         updated = true;
@@ -1112,6 +1117,7 @@ public:
               _to_do_feedback.push_back(position);
               _snapshot_supernova_positions.push_back(position);
               _snapshot_supernova_times.push_back(_total_time);
+              _snapshot_supernova_types.push_back(1);
           }
           if (_output_file != nullptr) {
           *_output_file << _total_time << "\t" << x<< "\t" << y
@@ -1283,7 +1289,7 @@ public:
 
       if (_output_file2 != nullptr) {                                                                                                                                                                                            
         double totallum = get_total_luminosity();
-        *_output_file2 << _total_time << "\t" << _total_time_for_sfr_burst << "\t" << totallum << "\t" << _num_sne << "\t" << ((_bursty_star_formation_rate*unit_Myr)/(unit_Msol)) << "\t" << ((_bursty_star_formation_rate*unit_Myr)/(area_kpc*unit_Msol))*std::pow(running_mass/init_running_mass, _kennicutt_schmidt_index) << "\t" <<  ((_bursty_star_formation_rate/area_kpc)*std::pow(running_mass/init_running_mass, _kennicutt_schmidt_index)) << "\t" << init_running_mass << "\t" << running_mass << "\n"; // output the SFR in Msol Myr^-1 kpc^-2 and in kg s^-1 kpc^-2
+        *_output_file2 << _total_time << "\t" << _total_time_for_sfr_burst << "\t" << totallum << "\t" << _num_sne << "\t" << ((_bursty_star_formation_rate*unit_Myr)/(unit_Msol)) << "\t" << ((_bursty_star_formation_rate*unit_Myr)/(area_kpc*unit_Msol))*std::pow(running_mass/init_running_mass, _kennicutt_schmidt_index) << "\t" <<  ((_bursty_star_formation_rate/area_kpc)*std::pow(running_mass/init_running_mass, _kennicutt_schmidt_index)) << "\t" << mass_to_generate << "\t" << running_mass << "\n"; // output the SFR in Msol Myr^-1 kpc^-2 and in kg s^-1 kpc^-2
         _output_file2->flush();
 
       }
@@ -1577,6 +1583,10 @@ public:
            _snapshot_supernova_positions) {
         position.write_restart_file(restart_writer);
       }
+      for (const double type :
+           _snapshot_supernova_types) {
+        restart_writer.write(type);
+      }
       for (const double time : _snapshot_supernova_times) {
         restart_writer.write(time);
       }
@@ -1698,11 +1708,15 @@ public:
               .read< std::vector< CoordinateVector<> >::size_type >();
       _snapshot_supernova_positions.resize(number_of_supernovae);
       _snapshot_supernova_times.resize(number_of_supernovae);
+      _snapshot_supernova_types.resize(number_of_supernovae);
       for (CoordinateVector<> &position : _snapshot_supernova_positions) {
         position = CoordinateVector<>(restart_reader);
       }
       for (double &time : _snapshot_supernova_times) {
         time = restart_reader.read< double >();
+      }
+      for (double &type : _snapshot_supernova_types) {
+        type = restart_reader.read< double >();
       }
     } else {
       _source_masses.reserve(_source_luminosities.size());

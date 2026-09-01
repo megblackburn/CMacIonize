@@ -1787,7 +1787,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
   }
   if (_do_FUV_heating) { // mgb edit 24.07.2026
     _fuv_heating_file = new std::ofstream("FUVHeatingProgression.txt", std::ios_base::out | std::ios_base::app); // mgb edit 24.07.2026 - if file exists, it is appended to
-    *_fuv_heating_file << "#time (s)\tFUV heating rate (J s^-1)\tFUV radiation field (W m^-2)\n";
+    *_fuv_heating_file << "#time (s)\tFUV Heating Ratio\tFUV radiation field (W m^-2)\n";
     _fuv_heating_file->flush();
   }
 
@@ -3482,7 +3482,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         }
       }
       if (_do_FUV_heating && sourcedistribution != nullptr && current_time - cooling_update_time >= _update_interval) {
-        *_fuv_heating_file << current_time+_restart_time << "\t" << 0. << "\t" << FUV_radiation_field << "\n";
+        *_fuv_heating_file << current_time+_restart_time << "\t" << base_heating_rate << "\t" << FUV_radiation_field << "\n";
         _fuv_heating_file->flush();   
         cooling_update_time = current_time;
       }
