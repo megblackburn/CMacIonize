@@ -41,6 +41,9 @@
  */
 VernerRecombinationRates::VernerRecombinationRates(const bool apply_diffuse_field) : _apply_diffuse_field(apply_diffuse_field) {
   std::ifstream file(VERNERRECOMBINATIONRATESDATALOCATION);
+  std::cout << "Setting up recombination rates from Verner" << std::endl;
+  std::cout << "Diffuse field reemission is " << (_apply_diffuse_field ? "enabled" : "disabled") << ", resorting to " << (_apply_diffuse_field ? "case A" : "case B") << std::endl;
+  std::cout << "HAS " << NUMBER_OF_IONNAMES << " different ions." << std::endl;
 
   std::string line;
   // skip comment line
