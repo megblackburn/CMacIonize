@@ -99,7 +99,7 @@ public:
 
   // Wood, Mathis & Ercolano (2004), sections 3.3 and 7
   // equation (24)
-  virtual double get_hydrogen_ground_state_recombination_rate(const double temperature) const {
+  double get_hydrogen_ground_state_recombination_rate(const double temperature) const {
     const double T4 = temperature * 1.e-4;
     const double alpha_1_H = 1.58e-13 * std::pow(T4, -0.53);
     return alpha_1_H;
@@ -107,7 +107,7 @@ public:
 
   // Wood, Mathis & Ercolano (2004), sections 3.3 and 7
   // equation (25)
-  virtual double get_helium_ground_state_recombination_rate(const double temperature) const {
+  double get_helium_ground_state_recombination_rate(const double temperature) const {
     const double T4 = temperature * 1.e-4;
     const double alpha_1_He = 1.54e-13 * std::pow(T4, -0.486);
     return alpha_1_He;
