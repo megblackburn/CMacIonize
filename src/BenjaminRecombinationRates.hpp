@@ -28,6 +28,7 @@
 #define BENJAMINRECOMBINATIONRATES_HPP
 
 #include "RecombinationRates.hpp"
+#include "ParameterFile.hpp"
 #include <vector>
 
 /**
@@ -37,9 +38,15 @@
  */
 class BenjaminRecombinationRates : public RecombinationRates {
 private:
+
+  /*! @brief flag to indicate the inclusion or exclusion of the diffuse field reemission*/
+  const bool _apply_diffuse_field;
+
+
   /*! @brief Temperature values (in K). */
   std::vector<double> _temperatures;
 
+  
   /*! @brief Collisional rate values (in m^-3 s^-1). */
   //double _collisional_rates[NUMBER_OF_IONNAMES][250];
 
@@ -56,12 +63,18 @@ private:
   RecombinationRates* _verner;
 
 public:
-  BenjaminRecombinationRates();
+  BenjaminRecombinationRates(const bool apply_diffuse_field);
 
   double get_recombination_rate_benjamin(const int ion, const double temperature) const;
 
   virtual double get_recombination_rate(const int_fast32_t ion,
                                         const double temperature) const;
+
+  BenjaminRecombinationRates(ParameterFile &params) : BenjaminRecombinationRates(
+      params.get_value< bool >(
+        "TaskBasedRadiationHydrodynamicsSimulation:diffuse field", true)
+  ) {}
+  
 };
 
 #endif // BENJAMINRECOMBINATIONRATES_HPP

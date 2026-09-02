@@ -28,6 +28,7 @@
 #define VERNERRECOMBINATIONRATES_HPP
 
 #include "RecombinationRates.hpp"
+#include "ParameterFile.hpp"
 
 /**
  * @brief RecombinationRates implementation with Verner's recombination rates.
@@ -82,8 +83,11 @@ private:
   /*! @brief fe array from Verner's script. */
   double _fe[3][13];
 
+  /*! @brief flag to indicate the inclusion or exclusion of the diffuse field reemission*/
+  const bool _apply_diffuse_field;
+
 public:
-  VernerRecombinationRates();
+  VernerRecombinationRates(const bool apply_diffuse_field);
 
   double get_recombination_rate_verner(const uint_fast8_t iz,
                                        const uint_fast8_t in,
@@ -91,6 +95,35 @@ public:
 
   virtual double get_recombination_rate(const int_fast32_t ion,
                                         const double temperature) const;
+
+
+  // Wood, Mathis & Ercolano (2004), sections 3.3 and 7
+  // equation (24)
+  virtual double get_hydrogen_ground_state_recombination_rate(const double temperature) const {
+    const double T4 = temperature * 1.e-4;
+    const double alpha_1_H = 1.58e-13 * std::pow(T4, -0.53);
+    return alpha_1_H;
+  }
+
+  // Wood, Mathis & Ercolano (2004), sections 3.3 and 7
+  // equation (25)
+  virtual double get_helium_ground_state_recombination_rate(const double temperature) const {
+    const double T4 = temperature * 1.e-4;
+    const double alpha_1_He = 1.54e-13 * std::pow(T4, -0.486);
+    return alpha_1_He;
+  } 
+
+  /**
+   * @brief ParameterFile constructor.
+   *
+   * @param params ParameterFile to read from.
+   */
+   VernerRecombinationRates(ParameterFile &params) :
+      VernerRecombinationRates(
+        params.get_value< bool >(
+          "TaskBasedRadiationHydrodynamicsSimulation:diffuse field", true)
+      ) {}
 };
+
 
 #endif // VERNERRECOMBINATIONRATES_HPP

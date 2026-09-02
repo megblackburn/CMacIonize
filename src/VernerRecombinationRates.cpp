@@ -39,7 +39,7 @@
  *
  * Reads in the data file.
  */
-VernerRecombinationRates::VernerRecombinationRates() {
+VernerRecombinationRates::VernerRecombinationRates(const bool apply_diffuse_field) : _apply_diffuse_field(apply_diffuse_field) {
   std::ifstream file(VERNERRECOMBINATIONRATESDATALOCATION);
 
   std::string line;
@@ -168,6 +168,12 @@ double VernerRecombinationRates::get_recombination_rate(
     const double T2 = temperature / 7.036e5;
     rate = 7.982e-11 / (std::sqrt(T1) * std::pow(1. + std::sqrt(T1), 0.252) *
                         std::pow(1. + std::sqrt(T2), 1.748));
+
+    if (!_apply_diffuse_field) {
+      // in the absence of diffuse field emission need to revert to case B recombination rate -> alpha_A - alpha_1_H
+      const double alpha_1_H = get_hydrogen_ground_state_recombination_rate(temperature);
+      rate -= alpha_1_H;
+    }
     break;
   }
 

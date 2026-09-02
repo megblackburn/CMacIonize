@@ -41,7 +41,7 @@
  *
  * Reads in the data file.
  */
-ChiantiRecombinationRates::ChiantiRecombinationRates() {
+ChiantiRecombinationRates::ChiantiRecombinationRates(const bool apply_diffuse_field) : _apply_diffuse_field(apply_diffuse_field) {
   std::cout << "Setting up recombination rates from CHIANTI" << std::endl;
   std::cout << "HAS " << NUMBER_OF_IONNAMES << " different ions." << std::endl;
 
@@ -183,8 +183,6 @@ double ChiantiRecombinationRates::get_recombination_rate_chianti(const int ion, 
 
 
 
-
-
       return std::max(rate, 0.);
 
 
@@ -207,6 +205,13 @@ double ChiantiRecombinationRates::get_recombination_rate(
 
   case ION_H_n: {
     rate = get_recombination_rate_chianti(ion,temperature);
+
+    if (!_apply_diffuse_field) {
+      // in the presence of no diffuse field, we must resort to the case B recombination rate -> alpha_A - alpha_1_H
+      std::cout<<"RECOMBINATION RATES: Reverting to case B recombination rate" << std::endl;
+      double alpha_1_H = get_hydrogen_ground_state_recombination_rate(temperature);
+      rate -= alpha_1_H;
+    }
     break;
   }
 

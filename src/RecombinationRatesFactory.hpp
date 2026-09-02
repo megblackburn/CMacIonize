@@ -56,7 +56,7 @@ public:
    * Memory management for the pointer needs to be done by the calling routine.
    */
   static RecombinationRates *generate(ParameterFile &params,
-                                      Log *log = nullptr) {
+                                      Log *log = nullptr, const bool _apply_diffuse_field = true) {
 
     std::string type =
         params.get_value< std::string >("RecombinationRates:type", "Verner");
@@ -68,11 +68,11 @@ public:
     if (type == "FixedValue") {
       return new FixedValueRecombinationRates(params);
     } else if (type == "Verner") {
-      return new VernerRecombinationRates();
+      return new VernerRecombinationRates(params);
     } else if (type == "Benjamin") {
-      return new BenjaminRecombinationRates();
+      return new BenjaminRecombinationRates(params);
     } else if (type == "Chianti") {
-      return new ChiantiRecombinationRates();
+      return new ChiantiRecombinationRates(params);
     } else {
       cmac_error("Unknown RecombinationRates type: \"%s\"!", type.c_str());
       return nullptr;

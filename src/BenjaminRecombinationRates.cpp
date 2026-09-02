@@ -41,7 +41,7 @@
  *
  * Reads in the data file.
  */
-BenjaminRecombinationRates::BenjaminRecombinationRates() {
+BenjaminRecombinationRates::BenjaminRecombinationRates(const bool apply_diffuse_field) : _apply_diffuse_field(apply_diffuse_field) {
   std::cout << "HAS " << NUMBER_OF_IONNAMES << " different ions." << std::endl;
 
     _recomb_rates.resize(NUMBER_OF_IONNAMES);
@@ -93,7 +93,7 @@ BenjaminRecombinationRates::BenjaminRecombinationRates() {
          _min_logT);
 
 
-  _verner = new VernerRecombinationRates();
+  _verner = new VernerRecombinationRates(_apply_diffuse_field);
 
 
 }
