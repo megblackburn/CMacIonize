@@ -553,7 +553,7 @@ public:
 
       _output_file_lum = new std::ofstream(_total_luminosity_filename, std::ios_base::out | std::ios_base::app);
       if (_output_file_lum->tellp() == 0) {
-        *_output_file_lum << "#simulation time (s)\ttotal time (s)\tlum (s^-1)\tnumsne\tSFR_base (Msol Myr-1)\tSFR_KS (Msol Myr^-1 kpc^-2)\tSFR_KS (kg s^-1 kpc^-2)\tM_gen (Msol)\tM (kg)\n";
+        *_output_file_lum << "#simulation time (s)\ttotal time (s)\tlum (s^-1)\tnumsne\tSFR_base (Msol Myr-1)\tSFR_KS (Msol Myr^-1 kpc^-2)\tSFR_KS (kg s^-1 kpc^-2)\tM_gen (Msol)\tM_over (Msol)\tM_gas (kg)\n";
       }
       _output_file_lum->flush();
 
@@ -1339,7 +1339,7 @@ public:
 
       if (_output_file_lum != nullptr) {                                                                                                                                                                                            
         double totallum = get_total_luminosity();
-        *_output_file_lum << _total_time << "\t" << _total_time_for_sfr_burst << "\t" << totallum << "\t" << _num_sne << "\t" << ((_bursty_star_formation_rate*unit_Myr)/(unit_Msol)) << "\t" << ((_bursty_star_formation_rate*unit_Myr)/(area_kpc*unit_Msol))*std::pow(running_mass/init_running_mass, _kennicutt_schmidt_index) << "\t" <<  ((_bursty_star_formation_rate/area_kpc)*std::pow(running_mass/init_running_mass, _kennicutt_schmidt_index)) << "\t" << mass_to_generate << "\t" << running_mass << "\n"; // output the SFR in Msol Myr^-1 kpc^-2 and in kg s^-1 kpc^-2
+        *_output_file_lum << _total_time << "\t" << _total_time_for_sfr_burst << "\t" << totallum << "\t" << _num_sne << "\t" << ((_bursty_star_formation_rate*unit_Myr)/(unit_Msol)) << "\t" << ((_bursty_star_formation_rate*unit_Myr)/(area_kpc*unit_Msol))*std::pow(running_mass/init_running_mass, _kennicutt_schmidt_index) << "\t" <<  ((_bursty_star_formation_rate/area_kpc)*std::pow(running_mass/init_running_mass, _kennicutt_schmidt_index)) << "\t" << mass_to_generate << "\t" << _excess_mass<< "\t" << running_mass << "\n"; // output the SFR in Msol Myr^-1 kpc^-2 and in kg s^-1 kpc^-2
         _output_file_lum->flush();
 
       }
