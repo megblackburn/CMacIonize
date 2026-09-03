@@ -1614,7 +1614,6 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
   );
 
 
-
   const double _restart_iteration = params->get_value< uint_fast32_t  >( // mgb edit 10.11.2025
     "TaskBasedRadiationHydrodynamicsSimulation:restart iteration", 0.0
   );
@@ -3211,7 +3210,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
       double z_midplane = 0.0;
       double kappa_FUV = 0.0;
 
-      const size_t n_z_bins = 256; 
+      const size_t n_z_bins = number_of_cells.z(); 
       double z_min = 0.0;
       double dz_bin = 0.0;
       std::vector<double> bin_surface_density(n_z_bins, 0.0); 
