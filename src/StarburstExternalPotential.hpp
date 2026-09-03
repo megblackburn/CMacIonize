@@ -43,71 +43,61 @@ public:
 
 private:
     double _G;
+    std::string _mode_str;
     PotentialMode _mode;  
-    double _R_patch;      
+    const double _patch_radius;      
     
     // --- Miyamoto-Nagai Disk Parameters ---
-    double _M_disk;   
-    double _a_disk;   
-    double _b_disk;   
-
-    // --- Hernquist Bulge Parameters (Set to 0 for CGOLS V) ---
-    double _M_bulge;  
-    double _c_bulge;  
+    const double _M_stars;   
+    const double _R_stars;   
+    const double _z_stars;   
 
     // --- NFW Dark Matter Halo Parameters ---
-    double _M_halo;   
-    double _r_s;      
-    double _c_nfw;
+    const double _M_halo;  
+    const double _R_halo;
+    const double _concentration;  
+
 
 public:
     /**
      * @brief Explicit constructor matched exactly to your CGOLS V / M82 parameters.
      */
     inline StarburstExternalPotential(
-        const PotentialMode mode = POTENTIAL_GLOBAL,
-        const double patch_radius_kpc = 1.5,
-        const double M_disk  = 1.0e10 * 1.98847e30, // 10^10 Msun
-        const double a_disk  = 800.0  * 3.08568e16, // 0.8 kpc
-        const double b_disk  = 150.0  * 3.08568e16, // 0.15 kpc
-        const double M_bulge = 0.0    * 1.98847e30, // Removed for CGOLS V
-        const double c_bulge = 0.0    * 3.08568e16,
-        const double M_halo  = 5.0e10 * 1.98847e30, // 5x10^10 Msun
-        const double r_s     = 5300.0 * 3.08568e16, // 5.3 kpc
-        const double c_nfw   = 10.0
-    ) : _mode(mode), _M_disk(M_disk), _a_disk(a_disk), _b_disk(b_disk),
-        _M_bulge(M_bulge), _c_bulge(c_bulge), _M_halo(M_halo), _r_s(r_s), _c_nfw(c_nfw) 
+        const std::string mode,
+        const double patch_radius,
+        const double M_stars, 
+        const double R_stars, 
+        const double z_stars,
+        const double M_halo, 
+        const double R_halo, 
+        const double concentration
+    ) : _mode_str(mode), _patch_radius(patch_radius), _M_stars(M_stars), _R_stars(R_stars), _z_stars(z_stars), _M_halo(M_halo), _R_halo(R_halo), _concentration(concentration)
     {
         _G = PhysicalConstants::get_physical_constant(PHYSICALCONSTANT_NEWTON_CONSTANT);
-        _R_patch = patch_radius_kpc * 3.08568e19; // Corrected to 1e19 for kpc conversion scale
+
+        if (_mode_str == "global") {
+            _mode = POTENTIAL_GLOBAL;
+        } else if (_mode_str == "patch") {
+            _mode = POTENTIAL_PATCH;
+        } else {
+            throw std::runtime_error("StarburstExternalPotential: Invalid mode string! Use 'global' or 'patch'.");
+        }   
+           
     }
 
     /**
      * @brief ParameterFile constructor reading directly from runtime script.
      */
-    inline StarburstExternalPotential(ParameterFile &params) {
-        _G = PhysicalConstants::get_physical_constant(PHYSICALCONSTANT_NEWTON_CONSTANT);
-        
-        std::string mode_str = params.get_value<std::string>("ExternalPotential:mode", "global");
-        if (mode_str == "global") {
-            _mode = POTENTIAL_GLOBAL;
-        } else if (mode_str == "patch") {
-            _mode = POTENTIAL_PATCH;
-        } else {
-            throw std::runtime_error("StarburstExternalPotential: Invalid mode string! Use 'global' or 'patch'.");
-        }
-
-        // Dynamically parsed from parameter script - completely eliminating hardcoding
-        _R_patch = params.get_physical_value< QUANTITY_LENGTH >("ExternalPotential:patch radius", "1.5 kpc");
-        _M_disk  = params.get_physical_value< QUANTITY_MASS >("ExternalPotential:disk mass", "1.0e10 Msol");
-        _a_disk  = params.get_physical_value< QUANTITY_LENGTH >("ExternalPotential:disk scale length", "800. pc");
-        _b_disk  = params.get_physical_value< QUANTITY_LENGTH >("ExternalPotential:disk scale height", "150. pc");
-        _M_bulge = params.get_physical_value< QUANTITY_MASS >("ExternalPotential:bulge mass", "0.0 Msol");
-        _c_bulge = params.get_physical_value< QUANTITY_LENGTH >("ExternalPotential:bulge scale radius", "0.0 pc");
-        _M_halo  = params.get_physical_value< QUANTITY_MASS >("ExternalPotential:halo mass", "5.0e10 Msol");
-        _r_s     = params.get_physical_value< QUANTITY_LENGTH >("ExternalPotential:halo scale radius", "5300. pc");
-        _c_nfw   = params.get_value< double >("ExternalPotential:concentration", 10.0);
-    }
+    StarburstExternalPotential(ParameterFile &params) : StarburstExternalPotential(
+       params.get_value<std::string>("ExternalPotential:mode", "global"),
+        params.get_physical_value< QUANTITY_LENGTH >("ExternalPotential:patch radius", "1.5 kpc"),
+        params.get_physical_value< QUANTITY_MASS >("ExternalPotential:stellar mass", "1.e10 Msol"),
+        params.get_physical_value< QUANTITY_LENGTH >("ExternalPotential:stellar scale radius", "800. pc"),
+        params.get_physical_value< QUANTITY_LENGTH >("ExternalPotential:stellar scale height", "150. pc"),
+        params.get_physical_value< QUANTITY_MASS >("ExternalPotential:halo mass", "5.e10 Msol"),
+        params.get_physical_value< QUANTITY_LENGTH >("ExternalPotential:halo scale radius", "5300. pc"),
+        params.get_value< double >("ExternalPotential:halo concentration", 10.0)
+    ) {  }
 
     virtual ~StarburstExternalPotential() {}
     /**
@@ -118,15 +108,15 @@ public:
         const double y = position.y();
         const double z = position.z();
 
-        double R2 = 0.0;
-        double r  = 0.0;
+        double r_cyl_2 = 0.0;
+        double r_sphere = 0.0;
 
         if (_mode == POTENTIAL_GLOBAL) {
-            R2 = x * x + y * y;
-            r  = std::sqrt(R2 + z * z + 1e-20);
+            r_cyl_2 = x * x + y * y; // cylindrical radius
+            r_sphere = std::sqrt(x * x + y * y + z * z); // spherical radius
         } else { // POTENTIAL_PATCH
-            R2 = _R_patch * _R_patch;
-            r  = std::sqrt(R2 + z * z + 1e-20);
+            r_cyl_2 = _patch_radius * _patch_radius;
+            r_sphere = std::sqrt(_patch_radius * _patch_radius + z * z);
         }
 
         double ax = 0.0; double ay = 0.0; double az = 0.0;
@@ -134,42 +124,36 @@ public:
         // ====================================================================
         // A. MIYAMOTO-NAGAI DISK ACCELERATION COMPONENT
         // ====================================================================
-        const double z_param = std::sqrt(z*z + _b_disk*_b_disk);
-        const double disk_denom_inner = _a_disk + z_param;
-        const double disk_denom = std::sqrt(R2 + disk_denom_inner*disk_denom_inner);
-        const double disk_factor = -_G * _M_disk / (disk_denom * disk_denom * disk_denom);
+        const double z_par = std::sqrt(z * z + _z_stars * _z_stars);
+        const double stellar_disk_denominator = std::sqrt(r_cyl_2 + std::pow(_R_stars + z_par, 2.));
+        const double stellar_disk_numerator =  _G * _M_stars;
 
         if (_mode == POTENTIAL_GLOBAL) {
-            ax += disk_factor * x;
-            ay += disk_factor * y;
+            ax -= stellar_disk_numerator * x / std::pow(stellar_disk_denominator, 3.);
+            ay -= stellar_disk_numerator * y / std::pow(stellar_disk_denominator, 3.);
         }
-        az += disk_factor * z * (disk_denom_inner / z_param);
+        az -=  stellar_disk_numerator * z * (_R_stars + z_par) / (z_par * std::pow(stellar_disk_denominator, 3.));
 
-        // ====================================================================
-        // B. HERNQUIST CENTRAL BULGE COMPONENT (Automatically skips if mass is 0)
-        // ====================================================================
-        if (_M_bulge > 0.0) {
-            const double bulge_factor = -_G * _M_bulge / (r * (r + _c_bulge) * (r + _c_bulge));
-            if (_mode == POTENTIAL_GLOBAL) {
-                ax += bulge_factor * x;
-                ay += bulge_factor * y;
-            }
-            az += bulge_factor * z;
-        }
 
         // ====================================================================
         // C. NAVARRO-FRENK-WHITE (NFW) DARK MATTER HALO COMPONENT
         // ====================================================================
-        const double x_halo = r / _r_s;
-        const double nfw_norm = std::log(1.0 + _c_nfw) - (_c_nfw / (1.0 + _c_nfw));
-        const double g_x = std::log(1.0 + x_halo) - (x_halo / (1.0 + x_halo));
-        const double halo_factor = -_G * _M_halo * g_x / (r * r * r * nfw_norm);
+
+        const double rRhalo = r_sphere / _R_halo;
+        const double nfw_concentration = std::log(1.0 + _concentration) - (_concentration / (1.0 + _concentration));
+        const double nfw_r_factor = std::log(1.0 + rRhalo);
+
+        const double nfw_acceleration_num = _G * _M_halo * (nfw_r_factor * _R_halo * (1.0 + rRhalo) - r_sphere);
+        const double nfw_acceleration_den = std::pow(r_sphere, 3.) * _R_halo * nfw_concentration * (1.0 + rRhalo);
+
+        const double nfw_acceleration_factor = nfw_acceleration_num / nfw_acceleration_den;
 
         if (_mode == POTENTIAL_GLOBAL) {
-            ax += halo_factor * x;
-            ay += halo_factor * y;
+            ax -= x * nfw_acceleration_factor;
+            ay -= y * nfw_acceleration_factor;
         }
-        az += halo_factor * z;
+
+        az -= z * nfw_acceleration_factor;
 
         if (_mode == POTENTIAL_PATCH) {
             return CoordinateVector<>(0.0, 0.0, az);
