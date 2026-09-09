@@ -156,6 +156,8 @@ private:
 
   std::ofstream *_output_file_fuv;
 
+  std::ofstream *_read_file_fuv;
+
   /*! @brief Number of updates since the start of the simulation. */
   uint_fast32_t _number_of_updates;
 
@@ -210,10 +212,11 @@ private:
 
 
   bool _read_file;
-  std::string _filename;
+  std::string _read_filename;
   std::string _source_filename;
   std::string _total_luminosity_filename;
   std::string _fuv_filename;
+  std::string _read_fuv_filename;
   std::string _fuv_LtoM_filename = "Kroupa_IMF_L_FUV_per_mass.csv";
   double _time;
 
@@ -478,10 +481,11 @@ public:
       const double holmes_lum=5e46,
       const uint_fast32_t number_of_holmes=200,
       const bool read_file=false,
-      const std::string filename="sources.txt",
+      const std::string read_filename="sources.txt",
       const std::string source_filename="Bursty_source_positions.txt",
       const std::string total_luminosity_filename="TotalLuminosity.txt",
       const std::string fuv_filename="FUV_sources.txt",
+      const std::string read_fuv_filename="FUV_sources.txt",
       const std::string fuv_LtoM_filename="Kroupa_IMF_L_FUV_per_mass.csv",
       const double time=100.,
       Log *log=nullptr)
@@ -495,7 +499,7 @@ public:
         _sne_energy(sne_energy), _lum_adjust(lum_adjust), _scale_height(scale_height),
         _peak_fraction(peak_fraction),_holmes_time(holmes_time),
         _holmes_sh(holmes_sh),_holmes_lum(holmes_lum),_number_of_holmes(number_of_holmes),
-        _read_file(read_file), _filename(filename), _source_filename(source_filename), _total_luminosity_filename(total_luminosity_filename), _fuv_filename(fuv_filename), _fuv_LtoM_filename(fuv_LtoM_filename), _time(time),
+        _read_file(read_file), _read_filename(read_filename), _source_filename(source_filename), _total_luminosity_filename(total_luminosity_filename), _fuv_filename(fuv_filename), _read_fuv_filename(read_fuv_filename), _fuv_LtoM_filename(fuv_LtoM_filename), _time(time),
         _random_generator(seed), _log(log){
 
     novahandler = new SupernovaHandler(_sne_energy);
@@ -565,24 +569,61 @@ public:
 
       if (_output_file_source!= nullptr && source_file_existed_at_start) {
                 *_output_file_source<< "# Restarted Simulation \n";
+                _output_file_source->flush();
               }
       if (_output_file_lum != nullptr && luminosity_file_existed_at_start) {
                 *_output_file_lum << "# Restarted Simulation \n";
+                _output_file_lum->flush();
               }
+      std::cout<<"FUV file: " <<_fuv_filename << "\t" << _output_file_fuv << "\t" << fuv_file_existed_at_start << std::endl;
       if (_output_file_fuv != nullptr && fuv_file_existed_at_start) {
                 *_output_file_fuv << "# Restarted Simulation \n";
+                _output_file_fuv->flush();
               }
     
 
     }
 
+    if (_read_file) {
+      std::cout<<"Reading FUV sources!"<<std::endl;
+      std::ifstream fuv_file;
+      fuv_file.open(_read_fuv_filename);
+      if (!fuv_file.is_open()) {
+        cmac_error("Could not open file \"%s\"!", _read_fuv_filename.c_str());
+      } else {
+        std::cout << "Opened file - " << _read_fuv_filename << " for FUV heating term..." << std::endl;
+      }
+
+      double cluster_time, cluster_mass;
+      std::string dummyLine_fuv, current_line_fuv;
+
+      std::getline(fuv_file, dummyLine_fuv);
+
+      while (std::getline(fuv_file, current_line_fuv)) {
+        if (current_line_fuv.empty() || current_line_fuv[0] == '#') continue;
+
+        std::stringstream ss(current_line_fuv);
+        
+        if (ss >> cluster_time >> cluster_mass) {
+          double min_time_limit = _total_time - (110.*unit_Myr);
+          if ((cluster_time > min_time_limit) && (cluster_time < _total_time)) { // only select clusters that are under 110 Myr old and younger than simulation time
+            _fuv_source_birth_time.push_back(cluster_time);
+            _fuv_source_masses.push_back(cluster_mass);
+          }
+        }
+        
+      }
+      std::cout << "FUV clusters of length " << _fuv_source_birth_time.size() << " loaded from file, up to time: " << _fuv_source_birth_time.back()/unit_Myr << " Myr" << std::endl;
+      fuv_file.close();
+    }
+
      if (_read_file){
       std::ifstream file;
-      file.open(_filename);
+      file.open(_read_filename);
       if (!file.is_open()) {
-        cmac_error("Could not open file \"%s\"!", _filename.c_str());
+        cmac_error("Could not open file \"%s\"!", _read_filename.c_str());
       } else {
-        std::cout << "Opened file - " << _filename << " for clean stream restoration..." << std::endl;
+        std::cout << "Opened file - " << _read_filename << " for clean stream restoration..." << std::endl;
       }
 
       double time_val,posx,posy,posz,luminosity,mass;
@@ -608,34 +649,8 @@ public:
       }
 
       file.close();
-
-      std::ifstream fuv_file;
-      fuv_file.open(_fuv_filename);
-      if (!fuv_file.is_open()) {
-        cmac_error("Could not open file \"%s\"!", _fuv_filename.c_str());
-      } else {
-        std::cout << "Opened file - " << _fuv_filename << " for FUV heating term..." << std::endl;
-      }
-
-      double cluster_time, cluster_mass;
-      std::string dummyLine_fuv, current_line_fuv;
-
-      std::getline(fuv_file, dummyLine_fuv);
-
-      while (std::getline(fuv_file, current_line_fuv)) {
-        if (current_line_fuv.empty() || current_line_fuv[0] == '#') continue;
-
-        std::stringstream ss(current_line_fuv);
-        
-        if (ss >> cluster_time >> cluster_mass) {
-          _fuv_source_birth_time.push_back(cluster_time);
-          _fuv_source_masses.push_back(cluster_mass);
-        }
-      }
-
-      fuv_file.close();
       
-      file.open(_filename);
+      file.open(_read_filename);
       std::getline(file, dummyLine); 
 
       double a0z = 9.955209529401348; 
@@ -782,6 +797,7 @@ public:
             params.get_value<std::string>("PhotonSourceDistribution:source filename","Bursty_source_positions.txt"),
             params.get_value<std::string>("PhotonSourceDistribution:total luminosity filename","TotalLuminosity.txt"),
             params.get_value<std::string>("PhotonSourceDistribution:FUV filename", "FUV_sources.txt"),
+            params.get_value<std::string>("PhotonSourceDistribution:read FUV filename", "FUV_sources.txt"),
             params.get_value<std::string>("PhotonSourceDistribution:FUV L to M filename","Kroupa_IMF_L_FUV_per_mass.csv"),
             params.get_physical_value<QUANTITY_TIME>("PhotonSourceDistribution:time","0.0 Myr"),
             log) {
@@ -1331,10 +1347,13 @@ public:
       // mgb edit 23.07.2026: addition of FUV source trackers
       _fuv_source_birth_time.push_back(_total_time);
       _fuv_source_masses.push_back(mass_to_generate/0.207);
-
+      
+      std::cout<< "Should be outputting to FUV file: " << _output_file_fuv << std::endl;
       if (_output_file_fuv != nullptr) {
         double fuv_total_mass = mass_to_generate/0.207;
+        std::cout<< "FUV total mass = " << fuv_total_mass << std::endl;
         *_output_file_fuv << _total_time << "\t" << fuv_total_mass << "\n";
+        _output_file_fuv->flush();
       }
 
       if (_output_file_lum != nullptr) {                                                                                                                                                                                            
@@ -1709,7 +1728,7 @@ public:
         _holmes_sh(restart_reader.read<double>()),
         _holmes_lum(restart_reader.read<double>()),
         _number_of_holmes(restart_reader.read<uint_fast32_t>()),
-        _read_file(false), _filename(), _time(0.),
+        _read_file(false), _read_filename(), _time(0.),
         type1done(restart_reader.read<int>()),
         _total_time(restart_reader.read<double>()),
         _holmes_added(restart_reader.read<bool>()),
