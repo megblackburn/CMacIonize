@@ -50,6 +50,12 @@ private:
     const double _z_min;
     const double _z_max;
     const double _nz;
+    const double _max_radius;
+    const double _radius_decay_scale;
+    const double _hydrostatic_halo_radius;
+    const double _neutral_fraction_halo;
+    const double _temperature_halo;
+    const double _halo_base_number_density;
     const double _gamma;
     const double _M_stars;
     const double _R_stars;
@@ -57,6 +63,7 @@ private:
     const double _M_halo;
     const double _R_halo;
     const double _concentration;
+    
 
   /**
    * @brief Get the mean particle mass @f$\mu{} m_p@f$ corresponding to the
@@ -189,6 +196,12 @@ public:
                                     const double z_min,
                                     const double z_max,
                                     const int nz,
+                                    const double max_radius,
+                                    const double radius_decay_scale,
+                                    const double hydrostatic_halo_radius,
+                                    const double neutral_fraction_halo,
+                                    const double temperature_halo,
+                                    const double halo_base_number_density,
                                     const double gamma, 
                                     const double M_stars, 
                                     const double R_stars, 
@@ -206,6 +219,12 @@ public:
         _z_min(z_min),
         _z_max(z_max),
         _nz(nz),
+        _max_radius(max_radius),
+        _radius_decay_scale(radius_decay_scale),
+        _hydrostatic_halo_radius(hydrostatic_halo_radius),
+        _neutral_fraction_halo(neutral_fraction_halo),
+        _temperature_halo(temperature_halo),
+        _halo_base_number_density(halo_base_number_density),
         _gamma(gamma),
         _M_stars(M_stars),
         _R_stars(R_stars),
@@ -245,6 +264,12 @@ public:
             params.get_physical_value< QUANTITY_LENGTH >("DensityFunction:z min", "-5. kpc"),
             params.get_physical_value< QUANTITY_LENGTH >("DensityFunction:z max", "5. kpc"),
             params.get_value< int >("DensityFunction:nz", 256),
+            params.get_physical_value< QUANTITY_LENGTH >("DensityFunction:max radius", "4.5 kpc"),
+            params.get_physical_value< QUANTITY_LENGTH >("DensityFunction:radius decay scale", "0.5 kpc"),
+            params.get_physical_value< QUANTITY_LENGTH >("DensityFunction:hydrostatic halo radius", "100. kpc"),\
+            params.get_value< double >("DensityFunction:neutral fraction halo", 1.0),
+            params.get_physical_value< QUANTITY_TEMPERATURE >("DensityFunction:temperature halo", "1.e6 K"),
+            params.get_physical_value< QUANTITY_NUMBER_DENSITY >("DensityFunction:halo base number density", "1.e-4 cm^-3"),
             params.get_value< double >("Hydro:polytropic index", 1.0),
             params.get_physical_value< QUANTITY_MASS >("ExternalPotential:stellar mass", "1.e10 Msol"),
             params.get_physical_value< QUANTITY_LENGTH >("ExternalPotential:stellar scale radius", "800. pc"),
@@ -258,7 +283,7 @@ public:
   /**
    * @brief Virtual destructor.
    */
-  virtual ~StarburstDensityFunction() {} /// Lewis's edited density function: mgb note 30.10.2025
+  virtual ~StarburstDensityFunction() {} 
 
   /**
    * @brief Function that gives the density for a given cell.
@@ -277,10 +302,13 @@ public:
     const double kB = PhysicalConstants::get_physical_constant(PHYSICALCONSTANT_BOLTZMANN);
     const double mu = get_mean_particle_mass(_neutral_fraction);
 
-    const double surface_density = _initial_surface_density * std::exp(-r / _R_gas);
-    const double sound_speed = std::sqrt(kB * _temperature / mu); 
-    const double c_s2 = sound_speed * sound_speed;
+    double surface_density = _initial_surface_density * std::exp(-r / _R_gas);
 
+    if (r > _max_radius) {
+        surface_density *= std::exp(-(r-_max_radius) / (_radius_decay_scale));
+    }
+
+    const double c_s2 = (kB * _temperature / mu); 
 
     const double rho_normalisation = get_normalisation(x, y, z, c_s2, surface_density, _z_min, _z_max, _nz);
 
@@ -290,12 +318,25 @@ public:
     const double mass_dens = rho_normalisation * std::exp((phi_z - phi_0) / c_s2);
     const double number_density = mass_dens / mu;
 
+    const double phi_halo = get_starburst_potential_value(0.0, 0.0, _hydrostatic_halo_radius);
+    const double mean_particle_mass_halo = get_mean_particle_mass(_neutral_fraction_halo);
+    const double c_s2_halo = kB * _temperature_halo / mean_particle_mass_halo;
 
+    double halo_factor = 1 + (_gamma - 1) * (phi_z - phi_halo) / c_s2_halo;
+
+    double halo_number_density = 0.0;
+    if (halo_factor > 0.0) {
+        halo_number_density = _halo_base_number_density * std::pow(halo_factor, 1.0 / (_gamma - 1.0));
+    }
+
+    const double total_number_density = number_density + halo_number_density;
+    const double total_neutral_fraction = (_neutral_fraction * number_density + _neutral_fraction_halo * halo_number_density) / total_number_density;
+    const double total_temperature = (_temperature * number_density + _temperature_halo * halo_number_density) / total_number_density;
 
     DensityValues values;
-    values.set_number_density(number_density);
-    values.set_temperature(_temperature);
-    values.set_ionic_fraction(ION_H_n, _neutral_fraction);
+    values.set_number_density(total_number_density);
+    values.set_temperature(total_temperature);
+    values.set_ionic_fraction(ION_H_n, total_neutral_fraction);
 
     double vx = 0.0;
     double vy = 0.0;
