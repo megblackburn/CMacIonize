@@ -271,6 +271,14 @@ add_unit_test(NAME testSILCCPhotonSourceDistribution
               SOURCES ${TESTSILCCPHOTONSOURCEDISTRIBUTION_SOURCES})
 
 ## Unit test for IonizationStateCalculator
+add_unit_test(NAME testChemistrySolverReuse
+              SOURCES testChemistrySolverReuse.cpp
+              LIBS SharedEngine)
+
+add_unit_test(NAME testSamplingHydroChemistry
+              SOURCES testSamplingHydroChemistry.cpp
+              LIBS SharedEngine)
+
 set(TESTIONIZATIONSTATECALCULATOR_SOURCES
     testIonizationStateCalculator.cpp
 )
@@ -1023,6 +1031,9 @@ add_unit_test(NAME testSphericalDensitySubGridEntry
               SOURCES ${TESTSPHERICALDENSITYSUBGRIDENTRY_SOURCES})
 
 ## Unit test for TaskBasedIonizationSimulation
+add_unit_test(NAME testTransparentSphericalCavity
+              SOURCES testTransparentSphericalCavity.cpp)
+
 set(TESTTASKBASEDIONIZATIONSIMULATION_SOURCES
     testTaskBasedIonizationSimulation.cpp
 )

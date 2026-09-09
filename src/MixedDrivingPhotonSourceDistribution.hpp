@@ -852,6 +852,12 @@ public:
 
 }
 
+  double get_photon_frequency_weighted(RandomGenerator &random,
+      photonsourcenumber_t index, double uniform_fraction, double &weight) {
+    return _all_spectra[_spectrum_index[index]]->get_random_frequency_weighted(
+        random, uniform_fraction, weight);
+  }
+
 
   /**
    * @brief Update the distribution after the system moved to the given time.
@@ -1079,7 +1085,6 @@ public:
               "No positive mass or density weight available for star formation.");
         }
         _last_sf = _total_time;
-        updated = true;
         ++_number_of_updates;
         return updated;
       }
@@ -1245,7 +1250,10 @@ public:
       }
 
         _last_sf = _total_time;
-        updated = true;
+        // Rebuilding the radiation-copy hierarchy is only necessary when a
+        // source was actually created. The bookkeeping update itself does not
+        // change the source distribution.
+        updated = updated || mass_generated > 0.;
         ++_number_of_updates;
     }
 

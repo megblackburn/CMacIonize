@@ -247,6 +247,17 @@ TaskBasedIonizationSimulation::TaskBasedIonizationSimulation(
   _time_log.start("simulation start");
 
   _time_log.start("memory space");
+  const double frequency_uniform_fraction = _parameter_file.get_value<double>(
+      "TaskBasedIonizationSimulation:frequency sampling uniform fraction", 0.);
+  if (!std::isfinite(frequency_uniform_fraction) ||
+      frequency_uniform_fraction < 0. || frequency_uniform_fraction > 1.) {
+    cmac_error("frequency sampling uniform fraction must be in [0,1].");
+  }
+  if (_log) {
+    _log->write_status("Frequency sampling uniform fraction: ",
+                       frequency_uniform_fraction);
+  }
+
   const size_t number_of_buffers = _parameter_file.get_value< size_t >(
       "TaskBasedIonizationSimulation:number of buffers", 50000);
   _memory_log.add_entry("memory space");
@@ -855,7 +866,7 @@ void TaskBasedIonizationSimulation::run(
     _time_log.end("photon source tasks");
 
     _time_log.start("photon propagation");
-    bool global_run_flag = true;
+    AtomicValue< bool > global_run_flag(true);
     AtomicValue< uint_fast64_t > num_photon_done(0);
 
 
@@ -869,7 +880,8 @@ void TaskBasedIonizationSimulation::run(
               *photon_source, *_buffers, _random_generators,
               discrete_photon_weight, *_photon_source_spectrum, _abundances,
               *_cross_sections, *_grid_creator, *_tasks,*_photon_source_distribution,
-              &statistics);
+              &statistics, _parameter_file.get_value<double>(
+                  "TaskBasedIonizationSimulation:frequency sampling uniform fraction", 0.));
     }
 
 
@@ -923,9 +935,9 @@ void TaskBasedIonizationSimulation::run(
       }
 
       // actual run flag
-      uint_fast32_t current_index = _shared_queue->get_task(*_tasks);
+      uint_fast32_t current_index = scheduler.get_task(thread_id);
       size_t next_stall_warning = 1000000;
-      while (global_run_flag) {
+      while (global_run_flag.value()) {
 
 
         if (current_index == NO_TASK) {
@@ -940,8 +952,8 @@ void TaskBasedIonizationSimulation::run(
 
           // execute task
           uint_fast32_t num_tasks_to_add = 0;
-          uint_fast32_t tasks_to_add[TRAVELDIRECTION_NUMBER];
-          int_fast32_t queues_to_add[TRAVELDIRECTION_NUMBER];
+          uint_fast32_t tasks_to_add[TaskContext::MAX_CREATED_TASKS];
+          int_fast32_t queues_to_add[TaskContext::MAX_CREATED_TASKS];
 
           Task &task = (*_tasks)[current_index];
           thread_stats[thread_id].start(task.get_type());
@@ -978,7 +990,7 @@ void TaskBasedIonizationSimulation::run(
 
         if (_buffers->is_empty() &&
             num_photon_done.value() == _number_of_photons) {
-          global_run_flag = false;
+          global_run_flag.set(false);
         } else {
           current_index = scheduler.get_task(thread_id);
           if (current_index == NO_TASK) {

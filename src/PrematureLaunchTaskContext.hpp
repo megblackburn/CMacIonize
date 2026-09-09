@@ -51,6 +51,12 @@ private:
   /*! @brief General shared queue. */
   TaskQueue &_shared_queue;
 
+  /*! @brief Optional count of unfinished photon tasks. */
+  AtomicValue< uint_fast64_t > *_pending_tasks;
+
+  /*! @brief Shared rotating search: idle workers inspect different chunks. */
+  AtomicValue< size_t > _search_cursor;
+
 public:
   /**
    * @brief Constructor.
@@ -65,23 +71,34 @@ public:
       MemorySpace &buffers,
       _creator_type &grid_creator,
       ThreadSafeVector< Task > &tasks, std::vector< TaskQueue * > &queues,
-      TaskQueue &shared_queue)
+      TaskQueue &shared_queue,
+      AtomicValue< uint_fast64_t > *pending_tasks = nullptr)
       : _buffers(buffers), _grid_creator(grid_creator), _tasks(tasks),
-        _queues(queues), _shared_queue(shared_queue) {}
+        _queues(queues), _shared_queue(shared_queue),
+        _pending_tasks(pending_tasks) {}
 
   /**
    * @brief Execute a premature launch task.
+   *
+   * @return True if a partial photon buffer was launched.
    */
-  inline void execute() {
+  inline bool execute() {
 
-    uint_fast32_t threshold_size = PHOTONBUFFER_SIZE;
-    while (threshold_size > 0) {
-      threshold_size >>= 1;
-      for (auto gridit = _grid_creator.begin();
-           gridit != _grid_creator.all_end(); ++gridit) {
-        _subgrid_type_ &this_subgrid = *gridit;
-        if (this_subgrid.get_largest_buffer_size() > threshold_size &&
-            this_subgrid.get_dependency()->try_lock()) {
+    bool launched = false;
+    // Do not repeatedly scan the entire grid at decreasing size thresholds.
+    // At the photon tail most buffers contain one packet. Bound each search
+    // and share its cursor so workers return promptly to runnable tasks.
+    const size_t count = _grid_creator.all_end().get_index();
+    if (count == 0) {
+      return false;
+    }
+    const size_t chunk = std::min(size_t(64), count);
+    const size_t start = _search_cursor.post_add(chunk) % count;
+    for (size_t offset = 0; offset < chunk; ++offset) {
+        DensitySubGrid &this_subgrid =
+            *_grid_creator.get_subgrid((start + offset) % count);
+        // Read buffer metadata only while holding its owning subgrid lock.
+        if (this_subgrid.get_dependency()->try_lock()) {
 
           const uint_fast8_t largest_index =
               this_subgrid.get_largest_buffer_index();
@@ -95,6 +112,9 @@ public:
             Task &new_task = _tasks[task_index];
             new_task.set_subgrid(_buffers[non_full_index].get_subgrid_index());
             new_task.set_buffer(non_full_index);
+            if (_pending_tasks != nullptr) {
+              _pending_tasks->pre_increment();
+            }
             if (largest_index > 0) {
               _subgrid_type_ &subgrid = *_grid_creator.get_subgrid(
                   _buffers[non_full_index].get_subgrid_index());
@@ -132,7 +152,7 @@ public:
             this_subgrid.get_dependency()->unlock();
 
             // we managed to activate a buffer, we are done
-            threshold_size = 0;
+            launched = true;
             break;
           } else {
             // no semi-full buffers for this subgrid: release the lock
@@ -140,8 +160,8 @@ public:
             this_subgrid.get_dependency()->unlock();
           }
         }
-      }
     }
+    return launched;
   }
 };
 

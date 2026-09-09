@@ -29,6 +29,7 @@
 #include "AlveliusTurbulenceForcing.hpp"
 #include "BarnesHutTree.hpp"
 #include "ChargeTransferRates.hpp"
+#include "ChemistryDiagnostics.hpp"
 #include "CollisionalRates.hpp"
 #include "CommandLineParser.hpp"
 #include "ContinuousPhotonSourceFactory.hpp"
@@ -42,6 +43,7 @@
 #include "HydroBoundaryManager.hpp"
 #include "GalacticShearingBox.hpp"
 #include "HydroDensitySubGrid.hpp"
+#include "HydroStepChemistry.hpp"
 #include "HydroMaskFactory.hpp"
 #include "InitialTurbulence.hpp"
 #include "LineCoolingData.hpp"
@@ -848,7 +850,8 @@ double total_neutral_fraction = h0;
     const double alpha_e_2sP = 4.17e-20 * std::pow(T4, -0.861);
     const double pHots = h0 > 0. ?
         1. / (1. + 77. * he0 / (sqrtT * h0)) : 0.;
-    const double ne = n * (1. - h0 + AHe * hep + 2*AHe*(1. - hep - he0));
+    const double ne = n * (std::max(0., 1. - h0) + AHe * hep +
+                           2*AHe*std::max(0., 1. - hep - he0));
     const double nenhep = ne * hep * n * AHe;
     gain += pHots * 1.21765423e-18 * alpha_e_2sP * nenhep/inverse_volume;
 
@@ -1628,7 +1631,20 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     "TaskBasedRadiationHydrodynamicsSimulation:time dependent ionization", false);
 
   const bool _advect_ionization = params->get_value< bool >(
-    "TaskBasedRadiationHydrodynamicsSimulation:advect ionization", false);
+      "TaskBasedRadiationHydrodynamicsSimulation:advect ionization", false);
+  const bool chemistry_every_hydro_step = params->get_value<bool>(
+      "TaskBasedRadiationHydrodynamicsSimulation:chemistry every hydro step", false);
+  const bool chemistry_diagnostics_enabled = params->get_value<bool>(
+      "TaskBasedRadiationHydrodynamicsSimulation:chemistry diagnostics", false);
+  const double frequency_uniform_fraction = params->get_value<double>(
+      "TaskBasedRadiationHydrodynamicsSimulation:frequency sampling uniform fraction", 0.);
+  if (!std::isfinite(frequency_uniform_fraction) || frequency_uniform_fraction < 0. ||
+      frequency_uniform_fraction > 1.) {
+    cmac_error("frequency sampling uniform fraction must be in [0,1].");
+  }
+  if (chemistry_diagnostics_enabled && !chemistry_every_hydro_step) {
+    cmac_error("chemistry diagnostics requires chemistry every hydro step.");
+  }
 #ifndef HAVE_GSL
  // if (_time_dependent_ionization) {
   //  cmac_error("Cant do full time dependent ionization without GSL.")
@@ -1730,6 +1746,18 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
   const bool do_explicit_temp_calc = params->get_value< bool >(
           "TaskBasedRadiationHydrodynamicsSimulation:do explicit temperature calculation",
           false);
+  if (chemistry_every_hydro_step && (!_time_dependent_ionization ||
+      !do_explicit_temp_calc || params->get_value<bool>(
+          "TemperatureCalculator:do temperature calculation", false))) {
+    cmac_error("chemistry every hydro step requires time dependent ionization=true, "
+               "do explicit temperature calculation=true, and "
+               "TemperatureCalculator:do temperature calculation=false.");
+  }
+  if (log) {
+    log->write_status("Chemistry every hydro step: ", chemistry_every_hydro_step,
+                      "; GSL diagnostics: ", chemistry_diagnostics_enabled,
+                      "; frequency sampling uniform fraction: ", frequency_uniform_fraction);
+  }
 
   const bool _do_FUV_heating = params->get_value< bool >( // mgb edit 20.07.2026
     "TaskBasedRadiationHydrodynamicsSimulation:do FUV heating", false
@@ -1851,6 +1879,9 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
   uint_fast64_t numphoton = params->get_value< uint_fast64_t >(
       "TaskBasedRadiationHydrodynamicsSimulation:number of photons", 1e6);
+  if (chemistry_every_hydro_step && do_radiation && (!nloop || !numphoton)) {
+    cmac_error("Hydro-step chemistry with radiation requires positive photon and iteration counts.");
+  }
 
   const double _max_photon_distance = params->get_physical_value< QUANTITY_LENGTH >(
       "TaskBasedRadiationHydrodynamicsSimulation:max photon distance", "-1 kpc");
@@ -1871,6 +1902,8 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
   ChargeTransferRates charge_transfer_rates;
   CollisionalRates collisional_rates;
+  IonizationStateCalculator hydro_chemistry(0., abundances, *recombination_rates,
+                                           charge_transfer_rates, collisional_rates);
 
   TemperatureCalculator *temperature_calculator;
 
@@ -2330,6 +2363,21 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
   /// SIMULATION
   TimeLine *timeline = nullptr;
   int_fast32_t num_step = 0;
+  const size_t chemistry_cells_per_subgrid =
+      (*grid_creator->get_subgrid(0)).get_number_of_cells();
+  ChemistryDiagnostics chemistry_diagnostics(chemistry_diagnostics_enabled,
+      chemistry_cells_per_subgrid * grid_creator->number_of_original_subgrids(),
+      num_thread);
+  // Rebuild rates at the restored physical state before advancing chemistry.
+  // No fields are added to the binary restart layout.
+  bool refresh_chemistry_radiation = chemistry_every_hydro_step && restart_reader != nullptr;
+  if (refresh_chemistry_radiation && do_radiation && log) {
+    log->write_status("Refreshing cached radiation rates on restart for hydro-step chemistry.");
+  }
+  if (chemistry_every_hydro_step && !do_radiation) {
+    for (auto it = grid_creator->begin(); it != grid_creator->original_end(); ++it)
+      (*it).reset_intensities();
+  }
   double actual_timestep, current_time;
   requested_timestep *= CFL;
   bool has_next_step;
@@ -2397,9 +2445,10 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
 
     // decide whether or not to do the radiation step
-    if (do_radiation &&
-        (hydro_radtime < 0. ||
-         (current_time-actual_timestep) >= hydro_lastrad * hydro_radtime)) {
+    const bool radiation_due = hydro_radtime < 0. ||
+        (current_time-actual_timestep) >= hydro_lastrad * hydro_radtime;
+    if (do_radiation && (radiation_due || refresh_chemistry_radiation)) {
+      chemistry_diagnostics.flush(current_time);
 
         if (_cooling_file != nullptr) {
           *_cooling_file << current_time_restarted << "\t" << total_thermal_lost<< "\n";
@@ -2412,7 +2461,8 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         log->write_status("Starting radiation step...");
       }
 
-      ++hydro_lastrad;
+      if (radiation_due) ++hydro_lastrad;
+      refresh_chemistry_radiation = false;
 
     if(sourcedistribution != nullptr) {
    //   log->write_status("Getting Total Luminosity: ", sourcedistribution->get_total_luminosity());
@@ -2510,6 +2560,11 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           // reset the photon source information
           photon_source.reset();
 
+          // Count all photon tasks from creation until completion. This lets
+          // the scheduler distinguish real work from a stranded buffer or a
+          // permanently locked dependency at the end of an iteration.
+          AtomicValue< uint_fast64_t > pending_photon_tasks(0);
+
           // reset the diffuse field variables
           if (reemission_handler != nullptr) {
             AtomicValue< size_t > igrid(0);
@@ -2542,6 +2597,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                 (*tasks)[new_task].set_type(TASKTYPE_SOURCE_DISCRETE_PHOTON);
                 (*tasks)[new_task].set_subgrid(isrc);
                 (*tasks)[new_task].set_buffer(number_of_photons_this_batch);
+                pending_photon_tasks.pre_increment();
                 shared_queue->add_task(new_task);
                 number_of_photons_done += number_of_photons_this_batch;
               }
@@ -2549,8 +2605,16 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           }
           cmac_assert(number_of_photons_done == numphoton);
 
-          bool global_run_flag = true;
+          AtomicValue< bool > global_run_flag(true);
           AtomicValue< uint_fast64_t > num_photon_done(0);
+          AtomicValue< uint_fast32_t > active_photon_tasks(0);
+          AtomicValue< uint_fast32_t > scheduler_calls(0);
+          AtomicValue< uint_fast64_t > stalled_polls(0);
+          AtomicValue< bool > recovery_requested(false);
+          AtomicValue< bool > recovery_lock(false);
+          AtomicValue< uint_fast32_t > dependency_recoveries(0);
+          const uint_fast64_t stalled_poll_limit =
+              1000000 * static_cast< uint_fast64_t >(num_thread);
 
 
           // create task contexts
@@ -2559,7 +2623,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
               new SourceDiscretePhotonTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> >(
                   photon_source, *buffers, random_generators, 1., *spectrum,
                   abundances, *cross_sections, *grid_creator, *tasks,
-                   *sourcedistribution,nullptr);
+                   *sourcedistribution,nullptr, frequency_uniform_fraction);
 
 
           if (reemission_handler) {
@@ -2576,7 +2640,8 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                   reemission_handler != nullptr, _max_photon_distance);
 
           PrematureLaunchTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> > premature_launch(
-              *buffers, *grid_creator, *tasks, queues, *shared_queue);
+              *buffers, *grid_creator, *tasks, queues, *shared_queue,
+              &pending_photon_tasks);
 
           Scheduler scheduler(*tasks, queues, *shared_queue);
 
@@ -2595,21 +2660,43 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
               }
             }
 
-            // actual run flag
-            uint_fast32_t current_index = shared_queue->get_task(*tasks);
-            while (global_run_flag) {
+            // Do not enter the scheduler while a stalled iteration is being
+            // inspected. A task returned here is counted as active before the
+            // scheduler call is published as complete, closing the small gap
+            // between removing a task from a queue and executing it.
+            const auto schedule_task = [&](const bool launch_partial) {
+              if (recovery_requested.value()) {
+                return static_cast< uint_fast32_t >(NO_TASK);
+              }
+              scheduler_calls.pre_increment();
+              if (recovery_requested.value()) {
+                scheduler_calls.pre_decrement();
+                return static_cast< uint_fast32_t >(NO_TASK);
+              }
+              if (launch_partial) {
+                premature_launch.execute();
+              }
+              const uint_fast32_t task_index = scheduler.get_task(thread_id);
+              if (task_index != NO_TASK) {
+                active_photon_tasks.pre_increment();
+              }
+              scheduler_calls.pre_decrement();
+              return task_index;
+            };
+
+            uint_fast32_t current_index = schedule_task(false);
+            while (global_run_flag.value()) {
 
               if (current_index == NO_TASK) {
-                premature_launch.execute();
-                current_index = scheduler.get_task(thread_id);
+                current_index = schedule_task(true);
               }
 
               while (current_index != NO_TASK) {
 
                 // execute task
                 uint_fast32_t num_tasks_to_add = 0;
-                uint_fast32_t tasks_to_add[TRAVELDIRECTION_NUMBER];
-                int_fast32_t queues_to_add[TRAVELDIRECTION_NUMBER];
+                uint_fast32_t tasks_to_add[TaskContext::MAX_CREATED_TASKS];
+                int_fast32_t queues_to_add[TaskContext::MAX_CREATED_TASKS];
 
                 Task &task = (*tasks)[current_index];
                 uint_fast64_t task_start, task_stop;
@@ -2620,6 +2707,13 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                 num_tasks_to_add = task_contexts[task.get_type()]->execute(
                     thread_id, thread_contexts[task.get_type()], tasks_to_add,
                     queues_to_add, task);
+
+                // Account for extra successors before making them visible.
+                // The current task already supplies the count for the common
+                // one-successor case.
+                if (num_tasks_to_add > 1) {
+                  pending_photon_tasks.pre_add(num_tasks_to_add - 1);
+                }
 
                 // log the end time of the task
                 task.stop();
@@ -2643,15 +2737,110 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                   }
                 }
 
-                current_index = scheduler.get_task(thread_id);
+                // With no successor, retire the current pending-task count.
+                if (num_tasks_to_add == 0) {
+                  pending_photon_tasks.pre_decrement();
+                }
+                active_photon_tasks.pre_decrement();
+                stalled_polls.set(0);
+                current_index = schedule_task(false);
               }
 
-              if (buffers->is_empty() && num_photon_done.value() == numphoton) {
-                global_run_flag = false;
+              if (buffers->is_empty() &&
+                  num_photon_done.value() == numphoton &&
+                  pending_photon_tasks.value() == 0) {
+                global_run_flag.set(false);
               } else {
-                current_index = scheduler.get_task(thread_id);
+                current_index = schedule_task(false);
+                if (current_index == NO_TASK &&
+                    active_photon_tasks.value() == 0 &&
+                    !recovery_requested.value()) {
+                  const uint_fast64_t stall_count =
+                      stalled_polls.pre_increment();
+
+                  // A transient gap between scheduler calls is normal. Only
+                  // inspect the global state after sustained zero progress.
+                  if (stall_count >= stalled_poll_limit &&
+                      recovery_lock.lock()) {
+                    recovery_requested.set(true);
+                    while (scheduler_calls.value() > 0 ||
+                           active_photon_tasks.value() > 0) {
+                    }
+
+                    // A task may have completed while recovery was being
+                    // requested. In that case progress is healthy: resume
+                    // scheduling without touching any dependency.
+                    if (stalled_polls.value() < stalled_poll_limit) {
+                      recovery_requested.set(false);
+                      recovery_lock.unlock();
+                      continue;
+                    }
+
+                    size_t queued_tasks = shared_queue->size();
+                    for (size_t iqueue = 0; iqueue < queues.size(); ++iqueue) {
+                      queued_tasks += queues[iqueue]->size();
+                    }
+                    const size_t active_buffers =
+                        buffers->get_number_of_active_buffers();
+                    const uint_fast64_t pending_tasks =
+                        pending_photon_tasks.value();
+                    const uint_fast64_t photons_done = num_photon_done.value();
+
+                    bool recovered = false;
+                    if (pending_tasks == 0 && active_buffers > 0) {
+                      // Normal partial buffers are recoverable: detach the
+                      // largest one and turn it into a traversal task.
+                      recovered = premature_launch.execute();
+                      if (recovered) {
+                        cmac_warning(
+                            "Recovered a stalled photon iteration %" PRIuFAST32
+                            " by launching a partial photon buffer "
+                            "(photons=%" PRIuFAST64 "/%" PRIuFAST64
+                            ", buffers=%zu).",
+                            iloop, photons_done, numphoton, active_buffers);
+                      }
+                    } else if (pending_tasks > 0 && queued_tasks > 0 &&
+                               dependency_recoveries.value() == 0) {
+                      // With every worker and scheduler call stopped, no grid
+                      // dependency can legitimately remain locked. Clear a
+                      // stale lock once and retry the queued work.
+                      for (auto gridit = grid_creator->begin();
+                           gridit != grid_creator->all_end(); ++gridit) {
+                        (*gridit).get_dependency()->unlock();
+                      }
+                      dependency_recoveries.pre_increment();
+                      recovered = true;
+                      cmac_warning(
+                          "Recovered stalled photon iteration %" PRIuFAST32
+                          " by releasing stale subgrid dependency locks once "
+                          "(photons=%" PRIuFAST64 "/%" PRIuFAST64
+                          ", buffers=%zu, pending tasks=%" PRIuFAST64
+                          ", queued tasks=%zu).",
+                          iloop, photons_done, numphoton, active_buffers,
+                          pending_tasks, queued_tasks);
+                    }
+
+                    if (!recovered) {
+                      cmac_error(
+                          "Photon iteration %" PRIuFAST32
+                          " cannot make progress: all "
+                          "workers are idle, photons=%" PRIuFAST64
+                          "/%" PRIuFAST64 ", buffers=%zu, pending tasks=%"
+                          PRIuFAST64 ", queued tasks=%zu, dependency "
+                          "recoveries=%" PRIuFAST32 ". No safe recovery is "
+                          "available; aborting instead of spinning forever.",
+                          iloop, photons_done, numphoton, active_buffers,
+                          pending_tasks, queued_tasks,
+                          dependency_recoveries.value());
+                    }
+
+                    stalled_polls.set(0);
+                    recovery_requested.set(false);
+                    recovery_lock.unlock();
+                  }
+                }
               }
-            } // while(global_run_flag)
+            } // while(global_run_flag.value())
 
             for (int_fast32_t itask = 0; itask < TASKTYPE_NUMBER; ++itask) {
               delete thread_contexts[itask];
@@ -2711,7 +2900,20 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                                    abundances.get_abundance(ELEMENT_He));
 #endif
             }
-                if (_time_dependent_ionization) { 
+                if (chemistry_every_hydro_step) {
+                  size_t local_cell = 0;
+                  const double luminosity_per_packet =
+                      sourcedistribution->get_total_luminosity() / numphoton;
+                  for (auto cell = (*gridit).begin(); cell != (*gridit).end(); ++cell, ++local_cell) {
+                    auto &vars = cell.get_ionization_variables();
+                    const double jfac = luminosity_per_packet / cell.get_volume();
+                    ChemistryDiagnostics::Scope diagnostic(chemistry_diagnostics,
+                        this_igrid*chemistry_cells_per_subgrid+local_cell,
+                        get_thread_index(), vars, actual_timestep, true, jfac);
+                    HydroStepChemistry::radiation_trial(vars, hydro_chemistry,
+                        jfac, actual_timestep, iloop == nloop-1);
+                  }
+                } else if (_time_dependent_ionization) {
                   if (iloop == nloop -1) {
                     temperature_calculator->calculate_temperature(
                       iloop, numphoton, *gridit, current_time - lastrad_time, true, true);
@@ -2729,6 +2931,13 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                 task.stop();
                 cpucycle_tick(task_stop);
                 active_time[get_thread_index()] += task_stop - task_start;
+
+                // Retain completed tasks only while producing a task plot.
+                // Returning these timing-only tasks here lets the normal
+                // end-of-step task reset avoid scanning the full task pool.
+                if (task_plot_i >= task_plot_N) {
+                  tasks->free_element(itask);
+                }
               }
             }
             stop_parallel_timing_block();
@@ -2774,7 +2983,9 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                   cellit.get_ionization_variables().set_prev_ionic_fraction(ION_H_n,-1.);
                 }      
               }
-              if (_time_dependent_ionization) {
+              if (chemistry_every_hydro_step) {
+                // No photons: reset_intensities() above supplies zero rates.
+              } else if (_time_dependent_ionization) {
                   
                temperature_calculator->calculate_temperature( 
                       0, 0, *gridit, current_time - lastrad_time, true, true);
@@ -2820,7 +3031,9 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                   cellit.get_ionization_variables().set_prev_ionic_fraction(ION_H_n,-1.);
                 }      
               } 
-              if (_time_dependent_ionization) {
+              if (chemistry_every_hydro_step) {
+                // No source distribution: chemistry remains collisional only.
+              } else if (_time_dependent_ionization) {
               
                   temperature_calculator->calculate_temperature( 
                     0, 0, *gridit, current_time - lastrad_time, true, true);
@@ -2858,7 +3071,8 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
       if (log) {
         log->write_status("Done with radiation step.");
-      } 
+      }
+      chemistry_diagnostics.flush(current_time);
 
       std::cout << "setting last radtime to " << current_time << std::endl;
       std::cout << "last one was " << lastrad_time << " for a difference of " << current_time - lastrad_time <<  std::endl; 
@@ -3326,11 +3540,29 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         const size_t this_igrid = igrid.post_increment();
         if (this_igrid < grid_creator->number_of_original_subgrids()) {
           auto gridit = grid_creator->get_subgrid(this_igrid);
+          size_t local_cell = 0;
           for (auto cellit = (*gridit).hydro_begin();
-               cellit != (*gridit).hydro_end(); ++cellit) {
+               cellit != (*gridit).hydro_end(); ++cellit, ++local_cell) {
            // hydro.set_primitive_variables(cellit.get_hydro_variables(), cellit.get_ionization_variables(), cellit.get_volume())
-            hydro.hydro_to_ionization(cellit.get_hydro_variables(), cellit.get_ionization_variables()); 
-            //hydro.align_temp_to_p(cellit.get_hydro_variables(), cellit.get_ionization_variables()); 
+            HydroVariables &cell_hydro = cellit.get_hydro_variables();
+            IonizationVariables &cell_ionization =
+                cellit.get_ionization_variables();
+            hydro.hydro_to_ionization(cell_hydro, cell_ionization);
+            if (cell_hydro.get_primitives_density() > 0. &&
+                cell_hydro.get_primitives_pressure() > 0.) {
+              hydro.align_temp_to_p(cell_hydro, cell_ionization);
+            } else if (cell_hydro.get_primitives_density() > 0.) {
+              hydro.set_temperature(cell_ionization, cell_hydro,
+                                    cellit.get_volume(), _cooling_temp_floor);
+            }
+            if (chemistry_every_hydro_step && cell_hydro.get_primitives_density() > 0.) {
+              ChemistryDiagnostics::Scope diagnostic(chemistry_diagnostics,
+                  this_igrid*chemistry_cells_per_subgrid+local_cell,
+                  get_thread_index(), cell_ionization, actual_timestep);
+              HydroStepChemistry::advance(cell_ionization, hydro_chemistry, actual_timestep);
+              // Chemistry changes particle number, not the hydro thermal energy.
+              hydro.align_temp_to_p(cell_hydro, cell_ionization);
+            }
 
           //  hydro.align_temp_to_p(cellit.get_hydro_variables(), cellit.get_ionization_variables());
             IonizationVariables ionization_variables =
@@ -3837,6 +4069,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     } 
   }
 
+  chemistry_diagnostics.flush(current_time);
   cpucycle_tick(program_end);
 
   time_logger.output("time_log.txt", true);
