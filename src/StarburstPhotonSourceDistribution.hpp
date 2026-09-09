@@ -36,7 +36,7 @@
 #include "PhotonSourceDistribution.hpp"
 #include "RandomGenerator.hpp"
 #include "DensitySubGridCreator.hpp"
-#include "SupernovaHandler.hpp"
+#include "ClusteredSupernovaHandler.hpp"
 #include "WMBasicPhotonSourceSpectrum.hpp"
 #include "PowerLawPhotonSourceSpectrum.hpp"
 #include "Pegase3PhotonSourceSpectrum.hpp"
@@ -231,7 +231,7 @@ private:
 
   RandomGenerator _random_generator;
 
-  SupernovaHandler *novahandler;
+  ClusteredSupernovaHandler *novahandler;
 
   ReadFUVLumToMass *fuvlumtomass;
 
@@ -492,7 +492,7 @@ public:
         _read_file(read_file), _filename(filename), _source_filename(source_filename), _total_luminosity_filename(total_luminosity_filename), _fuv_LtoM_filename(fuv_LtoM_filename), _time(time),
         _random_generator(seed), _log(log){
 
-    novahandler = new SupernovaHandler(_sne_energy);
+    novahandler = new ClusteredSupernovaHandler(_sne_energy);
     fuvlumtomass = new ReadFUVLumToMass(_fuv_LtoM_filename);
 
     
@@ -735,7 +735,7 @@ public:
             params.get_value< double >("PhotonSourceDistribution:clustering factor", 1.0), // mgb edit 11.11.2025
             params.get_value< bool >("PhotonSourceDistribution:float sources",false),
             params.get_physical_value< QUANTITY_LENGTH >( // mgb edit 11.11.2025
-                "PhotonSourceDistribution:scale height peak", "200 pc"), 
+                "PhotonSourceDistribution:scale height peak", "10 pc"), 
             params.get_value< bool >("PhotonSourceDistribution:scale with neutral", false), // mgb edit 10.03.2026
             params.get_physical_value< QUANTITY_LENGTH >( // mgb edit 11.11.2025
                 "PhotonSourceDistribution:type1 sne scale height", "325 pc"),
@@ -1288,7 +1288,7 @@ public:
         if (clusters_required > 1.0) {
           // set lower and upper cluster mass bounds to sample from - Match CGOlS limits
             double min_cluster_mass = 1.0e4; 
-            double max_cluster_mass = 5.0e-6;
+            double max_cluster_mass = 5.0e6;
             double alpha_fac = -2.0;
 
             double rand_cl = _random_generator.get_uniform_random_double();
@@ -1967,7 +1967,7 @@ public:
   for (const double luminosity : _source_luminosities) {
     _spectrum_index.push_back(spectrum_index_from_luminosity(luminosity));
   }
-  novahandler = new SupernovaHandler(_sne_energy);
+  novahandler = new ClusteredSupernovaHandler(_sne_energy);
   }
 };
 

@@ -946,24 +946,28 @@ public:
     return tot_lum;
   }
 
-  virtual double get_FUV_field_strength(DensitySubGridCreator< HydroDensitySubGrid > *grid_creator) {
+ virtual double get_FUV_field_strength(DensitySubGridCreator< HydroDensitySubGrid > *grid_creator) {
 
     double Lsol = 3.828e26; // W
 
     bool debug = false;
-
+    
   //  fuvlumtomass = new ReadFUVLumToMass(_fuv_LtoM_filename);
-  
+    
+
     double total_fuv_luminosity_Lsol = 0.0;
 
     for (size_t i = 0; i < _fuv_source_masses.size(); ++i){
 
-      double mass_Msol = _fuv_source_masses[i]; // Msol
+      double mass_Msol = _fuv_source_masses[i]; // kg
       double birth_time_s = _fuv_source_birth_time[i]; // seconds
 
       double source_age = _total_time - birth_time_s; // seconds
+      if (source_age > 100. * unit_Myr) {
+          continue;
+      } 
       double LtoMratio = fuvlumtomass->get_l_fuv_per_mass_at_time(source_age); // L_sol/Msol
-
+      
       total_fuv_luminosity_Lsol += (mass_Msol * LtoMratio); // L_sol
       if (i <= 10 && debug == true) {
         std::cout<< "mass_Msol = " << mass_Msol << std::endl;
@@ -992,7 +996,6 @@ public:
 
     return FUV_radiation_field; // in units of W m^-2
   }
-
 
 
     double get_photon_frequency(RandomGenerator &random_generator,

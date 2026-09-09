@@ -823,6 +823,9 @@ void GadgetDensityGridWriter::write(
 
   // close file
   HDF5Tools::close_file(file);
+  if (_log) {
+    _log->write_status("Finished file write \"", filename, "\".");
+  }
 }
 
 /**
