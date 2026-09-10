@@ -21,7 +21,7 @@
  *
  * @brief Disc patch density function.
  *
- * @author Bert Vandenbroucke (bv7@st-andrews.ac.uk)
+ * @author Meg Blackburn (mgb27@st-andrews.ac.uk)
  */
 #ifndef SILCCDENSITYFUNCTION_HPP
 #define SILCCDENSITYFUNCTION_HPP
@@ -35,53 +35,7 @@
 
 /**
  * @brief Disc patch density function.
- *
- * Represents a gas density profile that is initially in hydrostatic equilibrium
- * with a SILCCExternalPotential corresponding to a matter density profile
- * of the form
- * \f[
- *   \rho{}_M = \frac{\Sigma{}_M}{2b_M} \left(\cosh\left(\frac{z}{b_M}\right)
- *   \right)^{-2},
- * \f]
- * with @f$z@f$ the third component of the position, @f$\Sigma{}_M@f$ the
- * surface density of matter in the plane @f$z=0@f$ and @f$b_M@f$ a vertical
- * scale height for the density profile.
- *
- * The gas density profile itself has the general form
- * \f[
- *   \rho{}_g = \frac{\Sigma{}_g}{2b_M} \left(\cosh\left(\frac{z}{b_M}\right)
- *   \right)^{-\frac{2b_M}{b_g}},
- * \f]
- * where @f$\Sigma{}_g@f$ and @f$b_g@f$ are the surface density and scale height
- * for the gas density profile. The latter is given by
- * \f[
- *   b_g = \frac{k_B T}{\mu{} m_p \pi{} G \Sigma{}_M},
- * \f]
- * with @f$T@f$ the hydrostatic equilibrium temperature and @f$\mu{}@f$ the
- * mean molecular weight,
- * \f[
- *   \mu{} = \frac{1}{2} (1 + x_{\rm{}H}),
- * \f]
- * with @f$x_{\rm{}H}@f$ the hydrogen neutral fraction (we assume a hydrogen
- * only gas). @f$k_B@f$, @f$m_p@f$ and @f$G@f$ are respectively Bolzmann's
- * constant, the proton mass and Newton's constant.
- *
- * The gas surface density @f$\Sigma{}_g@f$ can be related to the total surface
- * density @f$\Sigma{}_M@f$ by imposing a fixed mass ratio
- * @f$f_g = \frac{M_g}{M_M}@f$, with
- * \f[
- *   M_X = \int_{-\infty{}}^{+\infty{}} \rho{}_X (z)~{\rm{}d}z, X = [M, g].
- * \f]
- * The corresponding expression is
- * \f[
- *   \Sigma{}_g = \frac{2}{I\left(-\frac{2b_M}{b_g}\right)} f_g \Sigma{}_M,
- * \f]
- * with
- * \f[
- *   I(d) = \int_{-\infty{}}^{+\infty{}} (\cosh(x))^d~{\rm{}d}x.
- * \f]
- * This integral has to be evaluated numerically. We use a third order
- * polynomial fit in log-log space to approximate it.
+ * model based on SILCC - Brugaletta et al. 2025, MNRAS & Rathjen et al. 2021 MNRAS
  */
 class SILCCDensityFunction : public DensityFunction {
 private:
