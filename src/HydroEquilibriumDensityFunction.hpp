@@ -79,12 +79,12 @@ public:
    */
   inline HydroEquilibriumDensityFunction(const double stellar_surface_density,
                                   const double gas_surface_density,
+                                  const double midplane_number_density,
                                   const double scale_height,
                                   const double neutral_fraction,
                                   const double density_floor,
                                   const double temperature,
                                   const double gamma,
-                                  const double midplane_number_density,
                                   const bool trace_initial_neutral_flag,
                                   const double temperature_to_trace)
       : _stellar_surface_density(stellar_surface_density), _gas_surface_density(gas_surface_density), _midplane_number_density(midplane_number_density), _scale_height(scale_height), _neutral_fraction(neutral_fraction), _density_floor(density_floor), _temperature(temperature), _gamma(gamma), _trace_initial_neutral_flag(trace_initial_neutral_flag), _temperature_to_trace(temperature_to_trace) {}
@@ -104,7 +104,7 @@ public:
                 params.get_value< double >("DensityFunction:neutral fraction", 0.99999),
                 params.get_physical_value< QUANTITY_DENSITY >("DensityFunction:density floor", "3e-28 g cm^-3"),
                 params.get_physical_value< QUANTITY_TEMPERATURE >("DensityFunction:temperature", "1.e4 K"),
-                params.get_value< double >("Hydro:polytropic index", 5/3),
+                params.get_value< double >("Hydro:polytropic index", 5./3.),
                 params.get_value< bool >("DensityFunction:trace initial neutral flag", false),
                 params.get_physical_value< QUANTITY_TEMPERATURE >(
                     "DensityFunction:temperature to trace", "500. K")
