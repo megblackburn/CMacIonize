@@ -34,6 +34,7 @@
 #include "DiscPatchExternalPotential.hpp"
 #include "PointMassExternalPotential.hpp"
 #include "StarburstExternalPotential.hpp"
+#include "SILCCExternalPotential.hpp"
 
 /**
  * @brief Factory for ExternalPotential instances.
@@ -73,6 +74,8 @@ public:
       return new PointMassExternalPotential(params);
     } else if (type == "Starburst") {
       return new StarburstExternalPotential(params);
+    } else if (type == "SILCC") {
+      return new SILCCExternalPotential(params);
     } else if ("None") {
       return nullptr;
     } else {

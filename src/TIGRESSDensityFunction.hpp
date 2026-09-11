@@ -249,13 +249,13 @@ public:
             params.get_physical_value< QUANTITY_TEMPERATURE >(
                 "DensityFunction:temperature to trace", "500. K"),
             params.get_value< double >("DensityFunction:neutral fraction",1e-6),
-            params.get_value< bool >("DensityFunction:observational disc",
+            params.get_value< bool >("DensityFunction:observationaldisc",
                                      true)) {}
 
   /**
    * @brief Virtual destructor.
    */
-  virtual ~DiscPatchDensityFunction() {} 
+  virtual ~DiscPatchDensityFunction() {} /// Lewis's edited density function: mgb note 30.10.2025
 
   /**
    * @brief Function that gives the density for a given cell.

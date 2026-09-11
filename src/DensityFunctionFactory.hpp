@@ -51,6 +51,8 @@
 #include "SPHNGSnapshotDensityFunction.hpp"
 #include "SpiralGalaxyDensityFunction.hpp"
 #include "KelvinHelmholtzDensityFunction.hpp"
+#include "SILCCDensityFunction.hpp"
+#include "HydroEquilibriumDensityFunction.hpp"
 
 // HDF5 dependent implementations
 #ifdef HAVE_HDF5
@@ -183,6 +185,10 @@ public:
       return new SPHNGSnapshotDensityFunction(params, log);
     } else if (type == "SpiralGalaxy") {
       return new SpiralGalaxyDensityFunction(params, log);
+    } else if (type == "SILCC") {
+      return new SILCCDensityFunction(params);
+    } else if (type == "HydroEquilibrium") {
+      return new HydroEquilibriumDensityFunction(params);
 #ifdef HAVE_HDF5
     } else if (type == "AmunSnapshot") {
       return new AmunSnapshotDensityFunction(params, log);

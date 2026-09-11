@@ -1358,10 +1358,10 @@ public:
       _fuv_source_birth_time.push_back(_total_time);
       _fuv_source_masses.push_back(mass_to_generate/0.207);
       
-      std::cout<< "Should be outputting to FUV file: " << _output_file_fuv << std::endl;
+    //  std::cout<< "Should be outputting to FUV file: " << _output_file_fuv << std::endl;
       if (_output_file_fuv != nullptr) {
         double fuv_total_mass = mass_to_generate/0.207;
-        std::cout<< "FUV total mass = " << fuv_total_mass << std::endl;
+      //  std::cout<< "FUV total mass = " << fuv_total_mass << std::endl;
         *_output_file_fuv << _total_time << "\t" << fuv_total_mass << "\n";
         _output_file_fuv->flush();
       }

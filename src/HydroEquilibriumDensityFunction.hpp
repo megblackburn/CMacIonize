@@ -17,14 +17,14 @@
  ******************************************************************************/
 
 /**
- * @file SILCCDensityFunction.hpp
+ * @file HYDROEQUILIBRIUMDensityFunction.hpp
  *
  * @brief Disc patch density function.
  *
  * @author Meg Blackburn (mgb27@st-andrews.ac.uk)
  */
-#ifndef SILCCDENSITYFUNCTION_HPP
-#define SILCCDENSITYFUNCTION_HPP
+#ifndef HYDROEQUILIBRIUMDENSITYFUNCTION_HPP
+#define HYDROEQUILIBRIUMDENSITYFUNCTION_HPP
 
 #include "CoordinateVector.hpp"
 #include "DensityFunction.hpp"
@@ -35,15 +35,19 @@
 
 /**
  * @brief Disc patch density function.
- * model based on SILCC - Brugaletta et al. 2025, MNRAS & Rathjen et al. 2021 MNRAS
+ * model for hydro equilibrium with the SILCC potential - used in Li, Bryan & Ostriker 2017, ApJ, 841, 101
+ * not true equilibrium due to the DM potential and density floor
  */
-class SILCCDensityFunction : public DensityFunction {
+class HydroEquilibriumDensityFunction : public DensityFunction {
 private:
-    const double _surface_density;
+    const double _stellar_surface_density;
+    const double _gas_surface_density;
+    const double _midplane_number_density;
     const double _scale_height;
     const double _neutral_fraction;
     const double _density_floor;
     const double _temperature;
+    const double _gamma;
     const bool _trace_initial_neutral_flag;
     const double _temperature_to_trace;
 
@@ -52,6 +56,10 @@ private:
            PhysicalConstants::get_physical_constant(
                PHYSICALCONSTANT_PROTON_MASS) *
            (1. + neutral_fraction);
+  }
+
+  static inline double sech(const double x) {
+    return 1.0 / std::cosh(x);
   }
 
 public:
@@ -69,29 +77,34 @@ public:
    * @f$x_{\rm{}H}@f$.
    * @param observational_disc Use the observational vertical density profile?
    */
-  inline SILCCDensityFunction(const double surface_density,
+  inline HydroEquilibriumDensityFunction(const double stellar_surface_density,
+                                  const double gas_surface_density,
                                   const double scale_height,
                                   const double neutral_fraction,
                                   const double density_floor,
                                   const double temperature,
+                                  const double gamma,
+                                  const double midplane_number_density,
                                   const bool trace_initial_neutral_flag,
                                   const double temperature_to_trace)
-      : _surface_density(surface_density), _scale_height(scale_height), _neutral_fraction(neutral_fraction), _density_floor(density_floor), _temperature(temperature), _trace_initial_neutral_flag(trace_initial_neutral_flag), _temperature_to_trace(temperature_to_trace) {}
+      : _stellar_surface_density(stellar_surface_density), _gas_surface_density(gas_surface_density), _midplane_number_density(midplane_number_density), _scale_height(scale_height), _neutral_fraction(neutral_fraction), _density_floor(density_floor), _temperature(temperature), _gamma(gamma), _trace_initial_neutral_flag(trace_initial_neutral_flag), _temperature_to_trace(temperature_to_trace) {}
 
   /**
    * @brief ParameterFile constructor.
    *
-
    * @param params ParameterFile to read from.
    */
-  inline SILCCDensityFunction(ParameterFile &params)
-      : SILCCDensityFunction(
+  inline HydroEquilibriumDensityFunction(ParameterFile &params)
+      : HydroEquilibriumDensityFunction(
             params.get_physical_value< QUANTITY_SURFACE_DENSITY >(
-                "DensityFunction:surface density", "10 Msol pc^-2"),
-                params.get_physical_value< QUANTITY_LENGTH >("DensityFunction:scale height", "30. pc"),
-                params.get_value< double >("DensityFunction:neutral fraction", 0.9999),
-                params.get_physical_value< QUANTITY_DENSITY >("DensityFunction:density floor", "1e-27 g cm^-3"),
-                params.get_physical_value< QUANTITY_TEMPERATURE >("DensityFunction:temperature", "5000. K"),
+                "DensityFunction:stellar surface density", "10 Msol pc^-2"),
+                params.get_physical_value< QUANTITY_SURFACE_DENSITY >("DensityFunction:gas surface density", "10. Msol pc^-2"),
+                params.get_physical_value< QUANTITY_NUMBER_DENSITY >("DensityFunction:midplane number density", "0.822 cm^-3"),
+                params.get_physical_value< QUANTITY_LENGTH >("DensityFunction:scale height", "300. pc"),
+                params.get_value< double >("DensityFunction:neutral fraction", 0.99999),
+                params.get_physical_value< QUANTITY_DENSITY >("DensityFunction:density floor", "3e-28 g cm^-3"),
+                params.get_physical_value< QUANTITY_TEMPERATURE >("DensityFunction:temperature", "1.e4 K"),
+                params.get_value< double >("Hydro:polytropic index", 5/3),
                 params.get_value< bool >("DensityFunction:trace initial neutral flag", false),
                 params.get_physical_value< QUANTITY_TEMPERATURE >(
                     "DensityFunction:temperature to trace", "500. K")
@@ -100,7 +113,7 @@ public:
   /**
    * @brief Virtual destructor.
    */
-  virtual ~SILCCDensityFunction() {} 
+  virtual ~HydroEquilibriumDensityFunction() {} 
   /**
    * @brief Function that gives the density for a given cell.
    *
@@ -111,12 +124,21 @@ public:
 
     const double z = cell.get_cell_midpoint()[2];
 
-    const double midplane_density = _surface_density/ (std::sqrt(2. * M_PI) * _scale_height);
-    double density = midplane_density * std::exp(-0.5 * std::pow(z / _scale_height, 2));
+    const double G = PhysicalConstants::get_physical_constant(PHYSICALCONSTANT_NEWTON_CONSTANT);
+    const double velocity_dispersion = std::sqrt(M_PI * _scale_height * G * _stellar_surface_density);
 
-    density = std::max(density, _density_floor);
+    const double f_star = _stellar_surface_density / (_gas_surface_density + _stellar_surface_density);
+
+    const double kB = PhysicalConstants::get_physical_constant(PHYSICALCONSTANT_BOLTZMANN);
+    const double sound_speed = std::sqrt(kB * _temperature / get_mean_particle_mass(_neutral_fraction));
+    const double alpha = _gamma * velocity_dispersion * velocity_dispersion / ( f_star * sound_speed * sound_speed);
+
+
+    double number_density = _midplane_number_density * std::pow((sech(z/_scale_height)), 2 * alpha);
+    double number_density_floor = _density_floor / get_mean_particle_mass(_neutral_fraction);
+
+    number_density = std::max(number_density, number_density_floor);
     
-    const double number_density = density / get_mean_particle_mass(_neutral_fraction);
 
     DensityValues values;
     values.set_number_density(number_density);
@@ -144,4 +166,4 @@ public:
   }
 };
 
-#endif // SILCCDENSITYFUNCTION_HPP
+#endif // HYDROEQUILIBRIUMDENSITYFUNCTION_HPP
