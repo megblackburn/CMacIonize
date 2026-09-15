@@ -150,6 +150,10 @@ private:
 
   std::vector< double > _fuv_source_birth_time;
   std::vector< double > _fuv_source_masses;
+  std::vector<double> _fuv_source_luminosity_cache;
+  std::vector<double> _fuv_source_age_cache;
+  double _fuv_field_cache_time = -1.0;
+  double _fuv_field_cache_value = 0.0;
 
   std::vector<int> _to_delete;
 
@@ -161,9 +165,13 @@ private:
   std::vector < double > _mass_range;
 
   /*! @brief Output file for the sources (if applicable). */
-  std::ofstream *_output_file;
+  std::ofstream *_output_file_source;
 
-  std::ofstream *_output_file2;
+  std::ofstream *_output_file_lum;
+
+  std::ofstream *_output_file_fuv;
+
+  std::ofstream *_read_file_fuv;
 
   /*! @brief Number of updates since the start of the simulation. */
   uint_fast32_t _number_of_updates;
@@ -218,10 +226,12 @@ private:
 
 
   bool _read_file;
-  std::string _filename;
+  std::string _read_filename;
   std::string _source_filename;
   std::string _total_luminosity_filename;
   std::string _sfr_filename;
+  std::string _fuv_filename;
+  std::string _read_fuv_filename;
   std::string _fuv_LtoM_filename = "Kroupa_IMF_L_FUV_per_mass.csv";
 
   double _time;
@@ -497,10 +507,13 @@ public:
       const double holmes_lum=5e46,
       const uint_fast32_t number_of_holmes=200,
       const bool read_file=false,
-      const std::string filename="sources.txt",
+      const std::string read_filename="sources.txt",
       const std::string source_filename="Bursty_source_positions.txt",
       const std::string total_luminosity_filename="TotalLuminosity.txt",
       const std::string sfr_filename = "MilkyWayInverted.csv",
+      const std::string fuv_filename="FUV_sources.txt",
+      const std::string read_fuv_filename="FUV_sources.txt",
+      const std::string fuv_LtoM_filename="Kroupa_IMF_L_FUV_per_mass.csv",
       const double time=100.,
       Log *log=nullptr)
       : _star_formation_rate(star_formation_rate), _bursty_sfr_flag(bursty_sfr_flag), _KS_scaling_flag(KS_scaling_flag), _length_of_burst(length_of_burst), _time_of_burst_peak(time_of_burst_peak),
@@ -509,11 +522,11 @@ public:
         _kennicutt_schmidt_index(kennicutt_schmidt_index), _restart_flag(restart_flag), _restart_time(restart_time),
         _M_init(M_init), _use_mw_sfh(use_mw_sfh), _start_mw_sfh_time(start_mw_sfh_time), _start_type1a_sne(start_type1a_sne), _delay_supernovae(delay_supernovae),
         _update_interval(update_interval),
-        _output_file(nullptr), _number_of_updates(1), _next_index(0),
+        _output_file_source(nullptr),  _output_file_lum(nullptr), _output_file_fuv(nullptr), _number_of_updates(1), _next_index(0),
         _sne_energy(sne_energy), _lum_adjust(lum_adjust), _scale_height(scale_height),
         _peak_fraction(peak_fraction),_holmes_time(holmes_time),
         _holmes_sh(holmes_sh),_holmes_lum(holmes_lum),_number_of_holmes(number_of_holmes),
-        _read_file(read_file), _filename(filename), _source_filename(source_filename), _total_luminosity_filename(total_luminosity_filename), _sfr_filename(sfr_filename), _time(time),
+        _read_file(read_file), _read_filename(read_filename), _source_filename(source_filename), _total_luminosity_filename(total_luminosity_filename), _sfr_filename(sfr_filename), _fuv_filename(fuv_filename), _read_fuv_filename(read_fuv_filename), _fuv_LtoM_filename(fuv_LtoM_filename), _time(time),
         _random_generator(seed), _log(log){
 
     novahandler = new SupernovaHandler(_sne_energy);
@@ -547,38 +560,97 @@ public:
       _last_sf = _total_time;
     }
 
-    std::ifstream test_file(_source_filename);
-    bool source_file_existed_at_start = test_file.good();
-    test_file.close(); 
 
-    /*std::ifstream test_file2(_total_luminosity_filename);
-    bool luminosity_file_existed_at_start = test_file2.good();
-    test_file2.close(); 
-    */
+    std::ifstream test_file_source(_source_filename);
+    bool source_file_existed_at_start = test_file_source.good();
+    test_file_source.close(); 
+
+    std::ifstream test_file_lum(_total_luminosity_filename);
+    bool luminosity_file_existed_at_start = test_file_lum.good();
+    test_file_lum.close(); 
+
+    std::ifstream test_file_fuv(_fuv_filename);
+    bool fuv_file_existed_at_start = test_file_fuv.good();
+    test_file_fuv.close(); 
+
+
     if (output_sources) {
-      
-        _output_file = new std::ofstream(_source_filename, std::ios_base::out | std::ios_base::app);
-        if (_output_file->tellp() == 0) {
-          *_output_file << "#time (s)\tx (m)\ty (m)\tz (m)\tevent\tindex\tluminosity\tMass\ttype\n";
-        }
-        _output_file->flush();
+    
+      _output_file_source= new std::ofstream(_source_filename, std::ios_base::out | std::ios_base::app);
+      if (_output_file_source->tellp() == 0) {
+        *_output_file_source<< "#time (s)\tx (m)\ty (m)\tz (m)\tevent\tindex\tluminosity\tMass\ttype\n";
+      }
+      _output_file_source->flush();
 
-        _output_file2 = new std::ofstream(_total_luminosity_filename, std::ios_base::out | std::ios_base::app);
-        if (_output_file2->tellp() == 0) {
-          *_output_file2 << "simulation time (s)\tlum (s^-1)\tnumsne\tSFR_base (Msol Myr-1)\tM_gen (Msol)\tSFR (kg s^-1 kpc^-2)\tM_init (kg)\tM (kg)\n";
-        }
-        _output_file2->flush();
+      _output_file_lum = new std::ofstream(_total_luminosity_filename, std::ios_base::out | std::ios_base::app);
+      if (_output_file_lum->tellp() == 0) {
+        *_output_file_lum << "#simulation time (s)\ttotal time (s)\tlum (s^-1)\tnumsne\tSFR_base (Msol Myr-1)\tSFR_KS (Msol Myr^-1 kpc^-2)\tSFR_KS (kg s^-1 kpc^-2)\tM_gen (Msol)\tM_over (Msol)\tM_gas (kg)\n";
+      }
+      _output_file_lum->flush();
+
+      _output_file_fuv = new std::ofstream(_fuv_filename, std::ios_base::out | std::ios_base::app);
+      if (_output_file_fuv->tellp() == 0) {
+        *_output_file_fuv << "#fuv cluster birth time (s)\tfuv cluster mass (MSol)\n";
+      }
+      _output_file_fuv->flush();
+
+      if (_output_file_source!= nullptr && source_file_existed_at_start) {
+                *_output_file_source<< "# Restarted Simulation \n";
+                _output_file_source->flush();
+              }
+      if (_output_file_lum != nullptr && luminosity_file_existed_at_start) {
+                *_output_file_lum << "# Restarted Simulation \n";
+                _output_file_lum->flush();
+              }
+      std::cout<<"FUV file: " <<_fuv_filename << "\t" << _output_file_fuv << "\t" << fuv_file_existed_at_start << std::endl;
+      if (_output_file_fuv != nullptr && fuv_file_existed_at_start) {
+                *_output_file_fuv << "# Restarted Simulation \n";
+                _output_file_fuv->flush();
+              }
       
 
     }
 
+    if (_read_file) {
+      std::cout<<"Reading FUV sources!"<<std::endl;
+      std::ifstream fuv_file;
+      fuv_file.open(_read_fuv_filename);
+      if (!fuv_file.is_open()) {
+        cmac_error("Could not open file \"%s\"!", _read_fuv_filename.c_str());
+      } else {
+        std::cout << "Opened file - " << _read_fuv_filename << " for FUV heating term..." << std::endl;
+      }
+
+      double cluster_time, cluster_mass;
+      std::string dummyLine_fuv, current_line_fuv;
+
+      std::getline(fuv_file, dummyLine_fuv);
+
+      while (std::getline(fuv_file, current_line_fuv)) {
+        if (current_line_fuv.empty() || current_line_fuv[0] == '#') continue;
+
+        std::stringstream ss(current_line_fuv);
+        
+        if (ss >> cluster_time >> cluster_mass) {
+          double min_time_limit = _total_time - (110.*unit_Myr);
+          if ((cluster_time > min_time_limit) && (cluster_time < _total_time)) { // only select clusters that are under 110 Myr old and younger than simulation time
+            _fuv_source_birth_time.push_back(cluster_time);
+            _fuv_source_masses.push_back(cluster_mass);
+          }
+        }
+        
+      }
+      std::cout << "FUV clusters of length " << _fuv_source_birth_time.size() << " loaded from file, up to time: " << _fuv_source_birth_time.back()/unit_Myr << " Myr" << std::endl;
+      fuv_file.close();
+    }
+
     if (_read_file){
       std::ifstream file;
-      file.open(_filename);
+      file.open(_read_filename);
       if (!file.is_open()) {
-        cmac_error("Could not open file \"%s\"!", _filename.c_str());
+        cmac_error("Could not open file \"%s\"!", _read_filename.c_str());
       } else {
-        std::cout << "Opened file - " << _filename << " for clean stream restoration..." << std::endl;
+        std::cout << "Opened file - " << _read_filename << " for clean stream restoration..." << std::endl;
       }
 
       double time_val,posx,posy,posz,luminosity,mass;
@@ -605,7 +677,7 @@ public:
 
     file.close();
 
-    file.open(_filename);
+    file.open(_read_filename);
 
 
     std::getline(file, dummyLine);
@@ -642,14 +714,15 @@ public:
                 _source_ages.push_back(source_age);
                 _source_indices.push_back(_next_index);
                 _source_masses.push_back(mass);
+                _source_velocities.push_back(CoordinateVector<double>());
                 
                 double interpolatedTemp = interpolate(mass, stellarMasses, temperatures);
                 size_t closestIndex = findClosestIndex(interpolatedTemp, avail_temps);
                 std::cout << "Adding star of mass " << mass << " temp of " << interpolatedTemp << " for spec index " << closestIndex << std::endl;
                 _spectrum_index.push_back(closestIndex);
                 
-                if (_output_file != nullptr && !source_file_existed_at_start) {
-                  *_output_file << _total_time << "\t" << posx << "\t" << posy
+                if (_output_file_source != nullptr && !source_file_existed_at_start) {
+                  *_output_file_source << _total_time << "\t" << posx << "\t" << posy
                             << "\t" << posz << "\t1\t"
                             << _source_indices.back() << "\t"
                             << _source_luminosities.back() << "\t"
@@ -756,6 +829,9 @@ public:
             params.get_value<std::string>("PhotonSourceDistribution:source filename","Bursty_source_positions.txt"),
             params.get_value<std::string>("PhotonSourceDistribution:total luminosity filename","TotalLuminosity.txt"),
             params.get_value<std::string>("PhotonSourceDistribution:sfr filename", "MilkyWayInverted.csv"),
+            params.get_value<std::string>("PhotonSourceDistribution:fuv filename", "FUV_sources.txt"),
+            params.get_value<std::string>("PhotonSourceDistribution:read fuv filename", "FUV_sources.txt"),
+            params.get_value<std::string>("PhotonSourceDistribution:FUV L to M filename", "Kroupa_IMF_L_FUV_per_mass.csv"),
             params.get_physical_value<QUANTITY_TIME>("PhotonSourceDistribution:time","0.0 Myr"),
             log) {
               novahandler->set_tigress_like_injection(params.get_value<bool>("SupernovaHandler:TIGRESS like injection", true));
@@ -1056,9 +1132,9 @@ public:
       _source_ages[i] += actual_timestep;
       if (_source_lifetimes[i] <= 0.) { // Star Dying so injects supernovae after erasing O star: stellar feedback would copy this but happen every timestep
         // remove the element
-        if (_output_file != nullptr) {
+        if (_output_file_source != nullptr) {
           const CoordinateVector<> &pos = _source_positions[i];
-          *_output_file << _total_time << "\t" << pos.x() << "\t" << pos.y()
+          *_output_file_source << _total_time << "\t" << pos.x() << "\t" << pos.y()
                       << "\t" << pos.z() << "\t2\t"
                       << _source_indices[i] << "\t" 
                       << _source_luminosities[i] << "\t"
@@ -1066,7 +1142,7 @@ public:
                       << "SNeII" << "\n";
                     
                     
-        //  *_output_file << _total_time << "\t0.\t0.\t0.\t2\t"
+        //  *_output_file_source << _total_time << "\t0.\t0.\t0.\t2\t"
           //              << _source_indices[i] << "\t0\t0\tSNe\n";    
         }
         _to_do_feedback.push_back(_source_positions[i]);
@@ -1148,8 +1224,8 @@ public:
                   _snapshot_supernova_times.push_back(_total_time);
                   _snapshot_supernova_types.push_back(1); // Type Ia supernovae
               }
-              if (_output_file != nullptr) {
-              *_output_file << _total_time << "\t" << x<< "\t" << y
+              if (_output_file_source != nullptr) {
+              *_output_file_source << _total_time << "\t" << x<< "\t" << y
                           << "\t" << z << "\t0\t" 
                           << 0 << "\t" // index
                           << 0 << "\t" // luminosity
@@ -1157,7 +1233,7 @@ public:
                           << "SNeIa" << "\n";
                         
                         
-            //  *_output_file << _total_time << "\t0.\t0.\t0.\t2\t"
+            //  *_output_file_source << _total_time << "\t0.\t0.\t0.\t2\t"
               //              << _source_indices[i] << "\t0\t0\tSNe\n";    
             }
 
@@ -1181,8 +1257,8 @@ public:
                 if (grid_creator->get_box().inside(CoordinateVector<double>(x,y,z))) {
                         _to_do_feedback.push_back(CoordinateVector<double>(x,y,z));
                 }
-                if (_output_file != nullptr) {
-                *_output_file << _total_time << "\t" << x<< "\t" << y
+                if (_output_file_source != nullptr) {
+                *_output_file_source << _total_time << "\t" << x<< "\t" << y
                             << "\t" << z << "\t3\t" 
                             << 0 << "\t" // index
                             << 0 << "\t" // luminosity
@@ -1190,7 +1266,7 @@ public:
                             << "SNe Ia" << "\n";
                           
                           
-              //  *_output_file << _total_time << "\t0.\t0.\t0.\t2\t"
+              //  *_output_file_source << _total_time << "\t0.\t0.\t0.\t2\t"
                 //              << _source_indices[i] << "\t0\t0\tSNe\n";    
               }
 
@@ -1238,9 +1314,9 @@ public:
         _source_masses.push_back(0.);
         _source_indices.push_back(_next_index);
         ++_next_index;
-        if (_output_file != nullptr) {
+        if (_output_file_source != nullptr) {
           const CoordinateVector<> &pos = _source_positions.back();
-          *_output_file << _total_time << "\t" << pos.x() << "\t" << pos.y()
+          *_output_file_source << _total_time << "\t" << pos.x() << "\t" << pos.y()
                         << "\t" << pos.z() << "\t3\t"
                         << _source_indices.back() << "\t"
                         << _source_luminosities.back() << "\t"
@@ -1359,10 +1435,17 @@ public:
       _fuv_source_birth_time.push_back(_total_time);
       _fuv_source_masses.push_back(mass_to_generate/0.207);
 
-      if (_output_file2 != nullptr) {
+      if (_output_file_fuv != nullptr) {
+        double fuv_total_mass = mass_to_generate/0.207;
+      //  std::cout<< "FUV total mass = " << fuv_total_mass << std::endl;
+        *_output_file_fuv << _total_time << "\t" << fuv_total_mass << "\n";
+        _output_file_fuv->flush();
+      }
+
+      if (_output_file_lum != nullptr) {
         double totallum = get_total_luminosity();
-        *_output_file2 << _total_time << "\t" << totallum << "\t" << _num_sne << "\t" << ((star_formation_rate*unit_Myr)/(unit_Msol * area_kpc)) << "\t" << mass_to_generate << "\t" <<  (star_formation_rate/area_kpc) << "\t" << init_running_mass << "\t" << running_mass << "\n"; // output the SFR in Msol Myr^-1 kpc^-2 and in kg s^-1 kpc^-2
-        _output_file2->flush();
+        *_output_file_lum << _total_time << "\t" << totallum << "\t" << _num_sne << "\t" << ((star_formation_rate*unit_Myr)/(unit_Msol * area_kpc)) << "\t" << mass_to_generate << "\t" <<  (star_formation_rate/area_kpc) << "\t" << init_running_mass << "\t" << running_mass << "\n"; // output the SFR in Msol Myr^-1 kpc^-2 and in kg s^-1 kpc^-2
+        _output_file_lum->flush();
 
       }
 
@@ -1464,9 +1547,9 @@ public:
         size_t closestIndex = findClosestIndex(interpolatedTemp, avail_temps);
         _spectrum_index.push_back(closestIndex);
         std::cout << "MAKING STAR OF MASS " << m_cur << " temp = " << interpolatedTemp << " specindex = " << closestIndex <<  std::endl;
-        if (_output_file != nullptr) {
+        if (_output_file_source != nullptr) {
           const CoordinateVector<> &pos = _source_positions.back();
-          *_output_file << _total_time << "\t" << pos.x() << "\t" << pos.y()
+          *_output_file_source << _total_time << "\t" << pos.x() << "\t" << pos.y()
                         << "\t" << pos.z() << "\t1\t"
                         << _source_indices.back() << "\t"
                         << _source_luminosities.back() << "\t"
@@ -1492,8 +1575,8 @@ public:
     }
 
 
-      if (_output_file != nullptr) {
-        _output_file->flush();
+      if (_output_file_source != nullptr) {
+        _output_file_source->flush();
       }
 
     return updated;
@@ -1682,15 +1765,17 @@ public:
       }
     }
     restart_writer.write(_number_of_updates);
-    const bool has_output = (_output_file != nullptr);
+    const bool has_output = (_output_file_source != nullptr);
     restart_writer.write(has_output);
     if (has_output) {
       // store current position in the std::ofstream
       // we want to be able to continue writing from that point
-      const auto filepos = _output_file->tellp();
+      const auto filepos = _output_file_source->tellp();
       restart_writer.write(filepos);
-      const auto filepos2 = _output_file2->tellp();
+      const auto filepos2 = _output_file_lum->tellp();
       restart_writer.write(filepos2);
+      const auto filepos3 = _output_file_fuv->tellp();
+      restart_writer.write(filepos3);
     }
       {
         const auto size = _source_indices.size();
@@ -1731,7 +1816,7 @@ public:
         _start_type1a_sne(restart_reader.read<double>()),
         _delay_supernovae(restart_reader.read< bool >()),
         _update_interval(restart_reader.read< double >()),
-        _output_file(nullptr), _output_file2(nullptr), _number_of_updates(0),
+        _output_file_source(nullptr), _output_file_lum(nullptr),  _output_file_fuv(nullptr), _number_of_updates(0),
         _next_index(0),
         _lum_adjust(restart_reader.read< double >()),
         _excess_mass(restart_reader.read<double>()),
@@ -1743,7 +1828,7 @@ public:
         _holmes_sh(restart_reader.read<double>()),
         _holmes_lum(restart_reader.read<double>()),
         _number_of_holmes(restart_reader.read<uint_fast32_t>()),
-        _read_file(false), _filename(), _time(0.),
+        _read_file(false), _read_filename(), _time(0.),
         type1done(restart_reader.read<int>()),
         _total_time(restart_reader.read<double>()),
         _holmes_added(restart_reader.read<bool>()),
@@ -1827,7 +1912,7 @@ public:
         cmac_error("Error while truncating output file!");
       }
       // now open the file in append mode
-      _output_file = new std::ofstream("Bursty_source_positions.txt",
+      _output_file_source = new std::ofstream("Bursty_source_positions.txt",
                                        std::ios_base::app);
 
       const std::streampos filepos2 = restart_reader.read< std::streampos >();
@@ -1836,9 +1921,15 @@ public:
               cmac_error("Error while truncating output file!");
             }
                                        // now open the file in append mode
-      _output_file2 = new std::ofstream("TotalLuminosity.txt",
+      _output_file_lum = new std::ofstream("TotalLuminosity.txt",
                                             std::ios_base::app);
 
+      if (truncate("FUV_sources.txt", filepos2) != 0) {
+              cmac_error("Error while truncating output file!");
+            }
+                                       // now open the file in append mode
+      _output_file_fuv = new std::ofstream("FUV_sources.txt",
+                                            std::ios_base::app);   
 
       if (!extended) {
         const std::vector< uint_fast32_t >::size_type size =
