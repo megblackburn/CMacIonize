@@ -94,6 +94,7 @@ private:
   std::vector< double > _source_lifetimes;
 
   std::vector< double > _source_luminosities;
+  std::vector< double > _source_ages;
 
   /*! @brief Initial stellar masses (in Msol). */
   std::vector< double > _source_masses;
@@ -101,6 +102,7 @@ private:
   /*! @brief Supernovae that occurred since the preceding HDF5 snapshot. */
   std::vector< CoordinateVector<> > _snapshot_supernova_positions;
   std::vector< double > _snapshot_supernova_times;
+  std::vector< double > _snapshot_supernova_types;
 
   std::vector<int> _to_delete;
 
@@ -524,6 +526,7 @@ public:
             lifetime = lifetime*3.154e+7;
             lifetime -= (_time - time_val);
             _source_lifetimes.push_back(lifetime);
+            _source_ages.push_back(_time-time_val);
             std::cout << "Source lifetime pushed "<< lifetime << std::endl; 
             _source_indices.push_back(_next_index);
             if (star_type == "HOLMES") {
@@ -728,7 +731,7 @@ public:
 
   }
 
-  /**
+   /**
    * @brief Append live stars and supernovae since the previous snapshot.
    */
   virtual void write_snapshot_metadata(const std::string &filename,
@@ -748,6 +751,7 @@ public:
     std::string coordinate_units = "m";
     std::string luminosity_units = "s^-1";
     std::string mass_units = "Msol";
+    std::string age_units = "s";
     HDF5Tools::write_attribute< uint32_t >(
         sources, "NumberOfSources", number_of_sources);
     HDF5Tools::write_attribute< std::string >(
@@ -756,12 +760,15 @@ public:
         sources, "IonizingLuminosityUnits", luminosity_units);
     HDF5Tools::write_attribute< std::string >(
         sources, "MassUnits", mass_units);
+    HDF5Tools::write_attribute< std::string >(
+        sources, "AgeUnits", age_units);
     if (!_source_positions.empty()) {
       HDF5Tools::write_dataset< CoordinateVector<> >(
           sources, "Coordinates", _source_positions);
       HDF5Tools::write_dataset< double >(
           sources, "IonizingLuminosity", _source_luminosities);
       HDF5Tools::write_dataset< double >(sources, "Mass", _source_masses);
+      HDF5Tools::write_dataset< double >(sources, "Age", _source_ages);
     }
     HDF5Tools::close_group(sources);
 
@@ -784,6 +791,8 @@ public:
           supernovae, "Coordinates", _snapshot_supernova_positions);
       HDF5Tools::write_dataset< double >(
           supernovae, "Time", _snapshot_supernova_times);
+      HDF5Tools::write_dataset< double >(
+          supernovae, "EventType", _snapshot_supernova_types);
     }
     HDF5Tools::close_group(supernovae);
     HDF5Tools::close_file(file);
@@ -791,6 +800,7 @@ public:
     // Only clear after the HDF5 file was closed successfully.
     _snapshot_supernova_positions.clear();
     _snapshot_supernova_times.clear();
+    _snapshot_supernova_types.clear();
 #else
     (void)filename;
     (void)simulation_time;
@@ -890,6 +900,7 @@ public:
     size_t i = 0;
     while (i < _source_lifetimes.size()) {
       _source_lifetimes[i] -= actual_timestep;
+      _source_ages[i] += actual_timestep;
       if (_source_lifetimes[i] <= 0.) {
         // remove the element
         if (_output_file != nullptr) {
@@ -901,9 +912,11 @@ public:
         _to_do_feedback.push_back(_source_positions[i]);
         _snapshot_supernova_positions.push_back(_source_positions[i]);
         _snapshot_supernova_times.push_back(_total_time);
+        _snapshot_supernova_types.push_back(2); 
         _source_positions.erase(_source_positions.begin() + i);
         _source_velocities.erase(_source_velocities.begin() + i);
         _source_lifetimes.erase(_source_lifetimes.begin() + i);
+        _source_ages.erase(_source_ages.begin() + i);
         _source_luminosities.erase(_source_luminosities.begin() + i);
         _source_masses.erase(_source_masses.begin() + i);
         _spectrum_index.erase(_spectrum_index.begin() + i);
@@ -954,6 +967,7 @@ public:
               _to_do_feedback.push_back(position);
               _snapshot_supernova_positions.push_back(position);
               _snapshot_supernova_times.push_back(_total_time);
+              _snapshot_supernova_types.push_back(1);
       }
 
       //dotype1
@@ -993,6 +1007,7 @@ public:
 
         _source_lifetimes.push_back(lifetime);
         _source_luminosities.push_back(_holmes_lum);
+        _source_ages.push_back(0.0);
         // HOLMES represents a population rather than one massive star.
         _source_masses.push_back(0.);
         _source_indices.push_back(_next_index);
@@ -1206,6 +1221,7 @@ public:
         double offset = _random_generator.get_uniform_random_double() *
                         star_formation_interval;
         _source_lifetimes.push_back(lifetime-offset);
+        _source_ages.push_back(offset);
         _source_luminosities.push_back(lum_from_mass(m_cur));
         _source_masses.push_back(m_cur);
         _source_indices.push_back(_next_index);
@@ -1323,6 +1339,7 @@ public:
         _source_positions.erase(_source_positions.begin() + i);
         _source_velocities.erase(_source_velocities.begin() + i);
         _source_lifetimes.erase(_source_lifetimes.begin() + i);
+        _source_ages.erase(_source_ages.begin() + i);
         _source_luminosities.erase(_source_luminosities.begin() + i);
         _source_masses.erase(_source_masses.begin() + i);
         _spectrum_index.erase(_spectrum_index.begin() + i);
@@ -1392,6 +1409,13 @@ public:
       }
     }
     {
+      const auto size = _source_ages.size();
+      restart_writer.write(size);
+      for (std::vector< double >::size_type i = 0; i < size; ++i) {
+        restart_writer.write(_source_ages[i]);
+      }
+    }
+    {
       const auto size = _source_luminosities.size();
       restart_writer.write(size);
       for (std::vector< double >::size_type i = 0; i < size; ++i) {
@@ -1412,6 +1436,10 @@ public:
       for (const CoordinateVector<> &position :
            _snapshot_supernova_positions) {
         position.write_restart_file(restart_writer);
+      }
+      for (const double type :
+           _snapshot_supernova_types) {
+        restart_writer.write(type);
       }
       for (const double time : _snapshot_supernova_times) {
         restart_writer.write(time);
@@ -1495,6 +1523,14 @@ public:
     {
       const std::vector< double >::size_type size =
           restart_reader.read< std::vector< double >::size_type >();
+      _source_ages.resize(size);
+      for (std::vector< double >::size_type i = 0; i < size; ++i) {
+        _source_ages[i] = restart_reader.read< double >();
+      }
+    }
+    {
+      const std::vector< double >::size_type size =
+          restart_reader.read< std::vector< double >::size_type >();
       _source_luminosities.resize(size);
       for (std::vector< double >::size_type i = 0; i < size; ++i) {
         _source_luminosities[i] = restart_reader.read< double >();
@@ -1512,11 +1548,15 @@ public:
               .read< std::vector< CoordinateVector<> >::size_type >();
       _snapshot_supernova_positions.resize(number_of_supernovae);
       _snapshot_supernova_times.resize(number_of_supernovae);
+      _snapshot_supernova_types.resize(number_of_supernovae);
       for (CoordinateVector<> &position : _snapshot_supernova_positions) {
         position = CoordinateVector<>(restart_reader);
       }
       for (double &time : _snapshot_supernova_times) {
         time = restart_reader.read< double >();
+      }
+      for (double &type : _snapshot_supernova_types) {
+        type = restart_reader.read< double >();
       }
     } else {
       _source_masses.reserve(_source_luminosities.size());

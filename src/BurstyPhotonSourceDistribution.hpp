@@ -1469,7 +1469,7 @@ public:
         double offset =
               _random_generator.get_uniform_random_double() * _update_interval;
         _source_lifetimes.push_back(lifetime-offset);
-        _source_ages.push_back(0.0);
+        _source_ages.push_back(offset);
         _source_luminosities.push_back(lum_from_mass(m_cur));
         _source_indices.push_back(_next_index);
         _source_masses.push_back(m_cur);
