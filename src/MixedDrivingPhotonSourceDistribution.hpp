@@ -286,18 +286,13 @@ size_t findClosestIndex(double value, const std::vector<double>& values) {
       std::vector<double> tablemasses= {57.95, 46.94, 38.08, 34.39, 30.98, 28.0, 25.29, 22.90, 20.76, 18.80, 17.08, 15.55}; // O star mass range so if < O star then no lum mgb comment 06.10.25
       std::vector<double> tablelums = {49.64,49.44,49.22,49.10,48.99,48.88,48.75,48.61,48.44,48.27,48.06,47.88};
       double lum = 0.0;
-      std::cout << "Within lum_from_mass =  " << lum << std::endl; // mgb 06.10
       if (mass > tablemasses.front()){
-        std::cout << " Greater than set mass limit, mass =  " << mass << std::endl; // mgb 06.10
         lum = tablelums.front();
         lum = std::pow(10,lum);
         lum = lum*_lum_adjust;
         return lum;
       } else if (mass < tablemasses.back()) {
-        std::cout << "Lower than O star limit, mass =  " << mass << std::endl; // mgb 06.10 
-        std::cout << "luminosity set to zero " << std::endl; // mgb 06.10 
         return 0.0;
-        std::cout << "after return =  " << std::endl; // mgb 06.10 
       }
 
 
@@ -305,7 +300,6 @@ size_t findClosestIndex(double value, const std::vector<double>& values) {
       for (size_t i = 0; i < tablemasses.size() - 1; ++i) {
           if (tablemasses[i] >= mass && mass >= tablemasses[i + 1]) {
               // Perform linear interpolation
-              std::cout << "Within the limit of O star masses, mass =  " << mass << std::endl; // mgb 06.10
               double x1 = tablemasses[i];
               double x2 = tablemasses[i + 1];
               double y1 = tablelums[i];
@@ -313,10 +307,8 @@ size_t findClosestIndex(double value, const std::vector<double>& values) {
               lum = y1 + (mass - x1) * (y2 - y1) / (x2 - x1);
           } 
       }
-      std::cout << "luminosity in lum_from_mass before power =  " << lum << std::endl; // mgb 06.10
       lum = std::pow(10,lum);
       lum = lum*_lum_adjust;
-      std::cout << "luminosity in lum_from_mass  after power and adjust =  " << lum << std::endl; // mgb 06.10
       return lum;
 
     }
@@ -1202,7 +1194,6 @@ public:
       }
        
 
-        std::cout << "source positions defined " << sizeof(_source_positions)<< std::endl; // mgb 06.10
        // _source_luminosities.push_back(0.0);
 
         double a0z = 9.955209529401348;
@@ -1218,10 +1209,8 @@ public:
         _source_luminosities.push_back(lum_from_mass(m_cur));
         _source_masses.push_back(m_cur);
         _source_indices.push_back(_next_index);
-        std::cout << "source indices pushed, before ++next_index " << _next_index<< std::endl; // mgb 06.10 
         ++_next_index;
 
-        std::cout << "lifetimes, luminosities and indices pushed " << sizeof(_source_luminosities)<< std::endl; // mgb 06.10
 
         double interpolatedTemp = interpolate(m_cur, stellarMasses, temperatures);
         size_t closestIndex = findClosestIndex(interpolatedTemp, avail_temps);

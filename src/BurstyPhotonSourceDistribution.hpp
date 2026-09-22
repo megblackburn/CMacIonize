@@ -496,7 +496,7 @@ public:
         _kennicutt_schmidt_index(kennicutt_schmidt_index), _restart_flag(restart_flag), _restart_time(restart_time),
         _M_init(M_init),
         _update_interval(update_interval),
-        _output_file_source(nullptr), _number_of_updates(1), _next_index(0),
+        _output_file_source(nullptr),  _output_file_lum(nullptr), _output_file_fuv(nullptr), _number_of_updates(1), _next_index(0),
         _sne_energy(sne_energy), _lum_adjust(lum_adjust), _scale_height(scale_height),
         _peak_fraction(peak_fraction),_holmes_time(holmes_time),
         _holmes_sh(holmes_sh),_holmes_lum(holmes_lum),_number_of_holmes(number_of_holmes),
@@ -1068,6 +1068,13 @@ public:
 }
 
 
+  double get_photon_frequency_weighted(RandomGenerator &random,
+      photonsourcenumber_t index, double uniform_fraction, double &weight) {
+    return _all_spectra[_spectrum_index[index]]->get_random_frequency_weighted(
+        random, uniform_fraction, weight);
+  }
+
+
   /**
    * @brief Update the distribution after the system moved to the given time.
    *
@@ -1323,7 +1330,6 @@ public:
               "No positive mass or density weight available for star formation.");
         }
         _last_sf = _total_time;
-        updated = true;
         ++_number_of_updates;
         return updated;
       }
@@ -1495,7 +1501,10 @@ public:
       }
 
         _last_sf = _total_time;
-        updated = true;
+        // Rebuilding the radiation-copy hierarchy is only necessary when a
+        // source was actually created. The bookkeeping update itself does not
+        // change the source distribution.
+        updated = updated || mass_generated > 0.;
         ++_number_of_updates;
     }
 
