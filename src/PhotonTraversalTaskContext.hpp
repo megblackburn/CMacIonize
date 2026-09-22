@@ -247,9 +247,24 @@ public:
           report_distance_limited_photon(photon);
         }*/
         if (_statistics != nullptr) {
+          
           if (result == 0) {
+            if (photon.get_type() == PHOTONTYPE_DIFFUSE_HI) {
+              _statistics->absorb_reemitted_H_photon(photon);
+            } else if (photon.get_type() == PHOTONTYPE_DIFFUSE_HeI) {
+              _statistics->absorb_reemitted_He_photon(photon);
+            } else {
+              _statistics->absorb_source_photon(photon);
+            }
             _statistics->absorb_photon(photon);
           } else {
+            if (photon.get_type() == PHOTONTYPE_DIFFUSE_HI) {
+              _statistics->escape_reemitted_H_photon(photon);
+            } else if (photon.get_type() == PHOTONTYPE_DIFFUSE_HeI) {
+              _statistics->escape_reemitted_He_photon(photon);
+            } else {
+              _statistics->escape_source_photon(photon);
+            }
             _statistics->escape_photon(photon);
           }
         }

@@ -90,10 +90,15 @@ public:
     if (log) {
       log->write_info("Requested DiffuseReemissionHandler type: ", type);
     }
+    
+    std::cout<<"Diffuse Reemission Handler type: "<<type<<std::endl;
 
     if (type == "FixedValue") {
       return new FixedValueDiffuseReemissionHandler(params);
     } else if (type == "Physical") {
+      if (log) {
+        log->write_info("Successfully set DiffuseReemissionHandler to: Physical");
+      }
       return new PhysicalDiffuseReemissionHandler(cross_sections);
     } else if (type == "None") {
       return nullptr;

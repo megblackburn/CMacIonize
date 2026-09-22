@@ -141,6 +141,10 @@ double PhysicalDiffuseReemissionHandler::reemit(
           random_generator, ionization_variables.get_temperature());
       type = PHOTONTYPE_DIFFUSE_HI;
 
+      if (statistics != nullptr) {
+        statistics->reemit_H_photon();
+      }
+
     } else {
 
       // photon absorbed
@@ -177,12 +181,20 @@ double PhysicalDiffuseReemissionHandler::reemit(
           random_generator, ionization_variables.get_temperature());
       type = PHOTONTYPE_DIFFUSE_HeI;
 
+      if (statistics != nullptr) {
+        statistics->reemit_He_photon();
+      }
+
     } else if (x <= ionization_variables.get_reemission_probability(
                         REEMISSIONPROBABILITY_HELIUM_NPEEV)) {
 
       // new frequency is 19.8eV
       new_frequency = 4.788e15;
       type = PHOTONTYPE_DIFFUSE_HeI;
+
+      if (statistics != nullptr) {
+        statistics->reemit_He_photon();
+      }
 
     } else if (x <= ionization_variables.get_reemission_probability(
                         REEMISSIONPROBABILITY_HELIUM_TPC)) {
@@ -197,6 +209,10 @@ double PhysicalDiffuseReemissionHandler::reemit(
         new_frequency = _He2pc_spectrum.get_random_frequency(
             random_generator, ionization_variables.get_temperature());
         type = PHOTONTYPE_DIFFUSE_HeI;
+
+        if (statistics != nullptr) {
+          statistics->reemit_He_photon();
+        }
 
       } else {
 
@@ -247,6 +263,11 @@ double PhysicalDiffuseReemissionHandler::reemit(
               random_generator, ionization_variables.get_temperature());
           type = PHOTONTYPE_DIFFUSE_HI;
 
+          // mgb 22.09.2026 - only tracking hydrogen reemission
+          if (statistics != nullptr) {
+            statistics->reemit_H_photon();
+          }
+
         } else {
 
           // photon absorbed
@@ -274,6 +295,10 @@ double PhysicalDiffuseReemissionHandler::reemit(
           new_frequency =
               _He2pc_spectrum.get_random_frequency(random_generator);
           type = PHOTONTYPE_DIFFUSE_HeI;
+
+          if (statistics != nullptr) {
+            statistics->reemit_He_photon();
+          }
 
         } else {
 

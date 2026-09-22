@@ -52,6 +52,7 @@
 #include "MemorySpace.hpp"
 #include "OpenMP.hpp"
 #include "ParameterFile.hpp"
+#include "PhotonPacketStatistics.hpp"
 #include "PhotonReemitTaskContext.hpp"
 #include "PhotonSourceDistributionFactory.hpp"
 #include "PhotonSourceSpectrumFactory.hpp"
@@ -1493,6 +1494,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
   const int_fast32_t num_thread = parser.get_value< int_fast32_t >("threads");
   set_number_of_threads(num_thread);
 
+
   // set the unit for time stats terminal output
   std::string output_time_unit =
       parser.get_value< std::string >("output-time-unit");
@@ -1533,6 +1535,16 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         *cross_sections, *params, log);
   }
 
+  // mgb 22.09.2026 - Track Photon Statistics
+  PhotonPacketStatistics *statistics = nullptr;
+  if (params->get_value< bool >(
+          "TaskBasedRadiationHydrodynamicsSimulation:track photon statistics",
+          true)) {
+    statistics = new PhotonPacketStatistics(*params);
+  } 
+
+  
+
   // initialize the simulation box
   const SimulationBox simulation_box(*params);
   const GalacticShearingBox galactic_shearing_box(*params, log);
@@ -1543,6 +1555,8 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           false)) {
     external_potential = ExternalPotentialFactory::generate(*params, log);
   }
+
+  std::cout<< "Potential and box setup" << std::endl;
   HydroMask *hydro_mask = nullptr;
   if (params->get_value< bool >(
           "TaskBasedRadiationHydrodynamicsSimulation:use mask", false)) {
@@ -1897,6 +1911,8 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
   const double _max_velocity = params->get_physical_value< QUANTITY_VELOCITY >(
       "Hydro:maximum velocity", "1.e99 m s^-1");
 
+  std::cout<< "All params read in" << std::endl;
+
   Hydro hydro(abundances, *params);
   HydroBoundaryManager hydro_boundary_manager(*params);
 
@@ -2238,11 +2254,21 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         sourcedistribution->write_snapshot_metadata(
                 writer->get_snapshot_filename(_restart_iteration), _restart_time);
           }
+      if (statistics != nullptr) {
+        statistics->write_snapshot_photon_statistics(
+                writer->get_snapshot_filename(_restart_iteration));
+        statistics->reset_counters();
+      }
     } else {
       writer->write(*grid_creator, 0, *params, 0.);
     if (sourcedistribution != nullptr) {
       sourcedistribution->write_snapshot_metadata(
           writer->get_snapshot_filename(0), 0.);
+    }
+    if (statistics != nullptr) {
+      statistics->write_snapshot_photon_statistics(
+          writer->get_snapshot_filename(0));
+      statistics->reset_counters();
     }
   }
     time_logger.end("snapshot");
@@ -2623,7 +2649,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
               new SourceDiscretePhotonTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> >(
                   photon_source, *buffers, random_generators, 1., *spectrum,
                   abundances, *cross_sections, *grid_creator, *tasks,
-                   *sourcedistribution,nullptr, frequency_uniform_fraction);
+                   *sourcedistribution, statistics, frequency_uniform_fraction); // mgb 22.09.2026 - add statistics
 
 
           if (reemission_handler) {
@@ -2631,12 +2657,12 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                 new PhotonReemitTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> >(
                     *buffers, random_generators, *reemission_handler,
                     abundances, *cross_sections, *grid_creator, *tasks,
-                    num_photon_done,nullptr);
+                    num_photon_done, statistics); // mgb 22.09.2026 - add statistics
           }
 
           task_contexts[TASKTYPE_PHOTON_TRAVERSAL] =
               new PhotonTraversalTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> >(
-                  *buffers, *grid_creator, *tasks, num_photon_done, nullptr,
+                  *buffers, *grid_creator, *tasks, num_photon_done, statistics, // mgb 22.09.2026 - add statistics
                   reemission_handler != nullptr, _max_photon_distance);
 
           PrematureLaunchTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> > premature_launch(
@@ -2849,6 +2875,22 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           stop_parallel_timing_block();
 
           buffers->reset();
+
+          if (iloop == nloop - 1) {
+            if (statistics != nullptr) {
+           //   statistics->print_stats();
+              std::cout << "Number of photons escaped = " << statistics->get_num_escaped() << std::endl;
+              std::cout << "Number of photons absorbed (all gas) = " << statistics->get_num_absorbed() << std::endl;
+              std::cout << "Number of photons absorbed (dust) = " << statistics->get_num_abs_dust() << std::endl;
+              std::cout << "Number of H photons reemitted = " << statistics->get_num_reemitted_H() << std::endl;
+              
+              std::cout << "Number of photons absorbed (dense gas) = " << statistics->get_num_abs_dens() << std::endl;
+              std::cout << "Number of photons absorbed (diffuse gas) = " << statistics->get_num_abs_dif() << std::endl;
+              std::cout << "Number of photons escaped (ionizing) = " << statistics->get_num_escaped_ionizing() << std::endl;
+              std::cout << "Number of photons escaped (non-ionizing) = " << statistics->get_num_escaped_nonionizing() << std::endl;
+            //  statistics->reset_counters();
+            }
+          }
 
           // update copies
           grid_creator->update_original_counters();
@@ -3748,6 +3790,11 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
             sourcedistribution->write_snapshot_metadata(
                 writer->get_snapshot_filename(hydro_lastsnap_restart), current_time_restarted);
           }
+          if (statistics != nullptr) {
+            statistics->write_snapshot_photon_statistics(
+                writer->get_snapshot_filename(hydro_lastsnap_restart));
+            statistics->reset_counters();
+          }
           time_logger.end("snapshot");
         } else {
           time_logger.start("snapshot");
@@ -3755,6 +3802,11 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           if (sourcedistribution != nullptr) {
             sourcedistribution->write_snapshot_metadata(
                 writer->get_snapshot_filename(hydro_lastsnap), current_time);
+          }
+          if (statistics != nullptr) {
+            statistics->write_snapshot_photon_statistics(
+                writer->get_snapshot_filename(hydro_lastsnap));
+            statistics->reset_counters();
           }
           time_logger.end("snapshot");
         }
@@ -4056,6 +4108,11 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
             sourcedistribution->write_snapshot_metadata(
                 writer->get_snapshot_filename(hydro_lastsnap_restart), current_time_restarted);
           }
+        if (statistics != nullptr) {
+            statistics->write_snapshot_photon_statistics(
+                writer->get_snapshot_filename(hydro_lastsnap_restart));
+            statistics->reset_counters();
+        }
         time_logger.end("snapshot");
       } else {
           time_logger.start("snapshot");
@@ -4063,6 +4120,11 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           if (sourcedistribution != nullptr) {
             sourcedistribution->write_snapshot_metadata(
                 writer->get_snapshot_filename(hydro_lastsnap), current_time);
+          }
+          if (statistics != nullptr) {
+            statistics->write_snapshot_photon_statistics(
+                writer->get_snapshot_filename(hydro_lastsnap));
+            statistics->reset_counters();
           }
           time_logger.end("snapshot");
       }
