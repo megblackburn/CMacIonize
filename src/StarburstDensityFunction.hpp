@@ -100,7 +100,7 @@ private:
     const double nfw_r_factor = std::log(1.0 + rRhalo);
 
     const double nfw_numerator = G * _M_halo * nfw_r_factor;
-    const double nfw_denominator = r_sphere * nfw_concentration;
+    const double nfw_denominator = (r_sphere + 1.0e-10) * nfw_concentration;
     const double nfw_potential = -nfw_numerator / nfw_denominator;
 
     return stellar_disk_potential + nfw_potential;
@@ -122,8 +122,8 @@ private:
         double phi_0 = get_starburst_potential_value(x,y,z_0);
         double phi_1 = get_starburst_potential_value(x,y,z_1);
 
-        double f_0 = std::exp((phi_0 - phi_0_midplane) / (c_s2));
-        double f_1 = std::exp((phi_1 - phi_0_midplane) / (c_s2));
+        double f_0 = std::exp(-(phi_0 - phi_0_midplane) / (c_s2));
+        double f_1 = std::exp(-(phi_1 - phi_0_midplane) / (c_s2));
 
         integral_sum += 0.5 * (f_0 + f_1) * dz;
     }
@@ -260,17 +260,17 @@ public:
             params.get_physical_value< QUANTITY_TEMPERATURE >(
                 "DensityFunction:temperature to trace", "500. K"),
             params.get_physical_value< QUANTITY_LENGTH >("DensityFunction:gas radius", "1600 pc"),
-            params.get_physical_value< QUANTITY_SURFACE_DENSITY >("DensityFunction:initial surface density", "30. Msol pc^2"),
+            params.get_physical_value< QUANTITY_SURFACE_DENSITY >("DensityFunction:initial surface density", "30. Msol pc^-2"),
             params.get_physical_value< QUANTITY_LENGTH >("DensityFunction:z min", "-5. kpc"),
             params.get_physical_value< QUANTITY_LENGTH >("DensityFunction:z max", "5. kpc"),
-            params.get_value< int >("DensityFunction:nz", 256),
+            params.get_value< int >("DensityFunction:nz", 512),
             params.get_physical_value< QUANTITY_LENGTH >("DensityFunction:max radius", "4.5 kpc"),
             params.get_physical_value< QUANTITY_LENGTH >("DensityFunction:radius decay scale", "0.5 kpc"),
-            params.get_physical_value< QUANTITY_LENGTH >("DensityFunction:hydrostatic halo radius", "100. kpc"),\
+            params.get_physical_value< QUANTITY_LENGTH >("DensityFunction:hydrostatic halo radius", "100. kpc"),
             params.get_value< double >("DensityFunction:neutral fraction halo", 1.0),
-            params.get_physical_value< QUANTITY_TEMPERATURE >("DensityFunction:temperature halo", "1.e6 K"),
+            params.get_physical_value< QUANTITY_TEMPERATURE >("DensityFunction:temperature halo", "2.e6 K"),
             params.get_physical_value< QUANTITY_NUMBER_DENSITY >("DensityFunction:halo base number density", "1.e-4 cm^-3"),
-            params.get_value< double >("Hydro:polytropic index", 1.0),
+            params.get_value< double >("Hydro:polytropic index", 5.0/3.0),
             params.get_physical_value< QUANTITY_MASS >("ExternalPotential:stellar mass", "1.e10 Msol"),
             params.get_physical_value< QUANTITY_LENGTH >("ExternalPotential:stellar scale radius", "800. pc"),
             params.get_physical_value< QUANTITY_LENGTH >("ExternalPotential:stellar scale height", "150. pc"),
@@ -310,66 +310,103 @@ public:
 
     const double c_s2 = (kB * _temperature / mu); 
 
+    // Safe normalization call (z argument is unused inside, which is fine)
     const double rho_normalisation = get_normalisation(x, y, z, c_s2, surface_density, _z_min, _z_max, _nz);
 
+    // Protect against potential calculation anomalies at exact zero
+    const double eps = 1.0e-5 * _R_gas; 
     const double phi_z = get_starburst_potential_value(x, y, z);
     const double phi_0 = get_starburst_potential_value(x, y, 0.0);
 
-    const double mass_dens = rho_normalisation * std::exp((phi_z - phi_0) / c_s2);
+    const double mass_dens = rho_normalisation * std::exp(-(phi_z - phi_0) / c_s2);
     const double number_density = mass_dens / mu;
 
-    const double phi_halo = get_starburst_potential_value(0.0, 0.0, _hydrostatic_halo_radius);
+    // --- 2. CORRECTED ADIABATIC HYDROSTATIC HALO ---
+    // Add small softening length to the halo coordinate to guarantee stability at the core
+    const double phi_halo = get_starburst_potential_value(eps, eps, _hydrostatic_halo_radius);
     const double mean_particle_mass_halo = get_mean_particle_mass(_neutral_fraction_halo);
     const double c_s2_halo = kB * _temperature_halo / mean_particle_mass_halo;
 
-    double halo_factor = 1 + (_gamma - 1) * (phi_z - phi_halo) / c_s2_halo;
+    // FIX: Using (phi_halo - phi_z) maps the negative potential correctly.
+    // As you rise out of the well (phi_z increases toward 0), the factor drops, modeling physical escape.
+    double halo_factor = 1.0 + (_gamma - 1.0) * (phi_halo - phi_z) / c_s2_halo;
 
     double halo_number_density = 0.0;
+    double local_halo_temperature = _temperature_halo;
+
     if (halo_factor > 0.0) {
+        // Density power law relation for gamma = 5/3
         halo_number_density = _halo_base_number_density * std::pow(halo_factor, 1.0 / (_gamma - 1.0));
+        // FIX: Update local temperature dynamically so it drops with altitude
+        local_halo_temperature = _temperature_halo * halo_factor;
     }
 
-    const double total_number_density = number_density + halo_number_density;
+    // --- 3. DENSITY & TEMPERATURE MIXING ---
+    double total_number_density = number_density + halo_number_density;
+    total_number_density = std::max(total_number_density, 1.e-30);
+
     const double total_neutral_fraction = (_neutral_fraction * number_density + _neutral_fraction_halo * halo_number_density) / total_number_density;
-    const double total_temperature = (_temperature * number_density + _temperature_halo * halo_number_density) / total_number_density;
+    
+    // Now averages smoothly between 10^4 K (disk) and a stratified 10^6 K profile (halo)
+    const double total_temperature = (_temperature * number_density + local_halo_temperature * halo_number_density) / total_number_density;
 
     DensityValues values;
     values.set_number_density(total_number_density);
     values.set_temperature(total_temperature);
     values.set_ionic_fraction(ION_H_n, total_neutral_fraction);
 
-    double vx = 0.0;
-    double vy = 0.0;
-    double vz = 0.0;
+    // --- 4. STABLE VELOCITY ROTATION FIELD ---
+    double vx = 0.0; double vy = 0.0; double vz = 0.0;
 
-    if (r > 0.0) {
+    if (r > eps) {
         const double dr = 1.0e-3 * _R_gas;
         const double r_shift = r + dr;
 
-        const double x_shift = x * (r_shift/r);
-        const double y_shift = y * (r_shift/r);
+        const double x_shift = x * (r_shift / r);
+        const double y_shift = y * (r_shift / r);
 
-        const double surface_dens_shift = _initial_surface_density * std::exp(-r_shift / _R_gas);
-        const double rho_normalisation_shift = get_normalisation(x_shift, y_shift, z, c_s2, surface_dens_shift, _z_min, _z_max, _nz);
+        double surface_dens_shift = _initial_surface_density * std::exp(-r_shift / _R_gas);
+        if (r_shift > _max_radius) {
+            surface_dens_shift *= std::exp(-(r_shift - _max_radius) / (_radius_decay_scale));
+        }
+
+        const double rho_norm_shift = get_normalisation(x_shift, y_shift, z, c_s2, surface_dens_shift, _z_min, _z_max, _nz);
         const double phi_z_shift = get_starburst_potential_value(x_shift, y_shift, z);
         const double phi_0_shift = get_starburst_potential_value(x_shift, y_shift, 0.0);
 
-        const double mass_dens_shift = rho_normalisation_shift * std::exp((phi_z_shift - phi_0_shift) / c_s2);
-        const double dln_rho_dr = (std::log(mass_dens_shift) - std::log(mass_dens)) / dr;
+        const double mass_dens_disk_shift = rho_norm_shift * std::exp(-(phi_z_shift - phi_0_shift) / c_s2);
+        
+        // Match shifted halo calculation
+        double halo_fact_shift = 1.0 + (_gamma - 1.0) * (phi_halo - phi_z_shift) / c_s2_halo;
+        double halo_nd_shift = 0.0;
+        if (halo_fact_shift > 0.0) {
+            halo_nd_shift = _halo_base_number_density * std::pow(halo_fact_shift, 1.0 / (_gamma - 1.0));
+        }
+        
+        // Total shifted mass profiles for accurate pressure gradient integration
+        const double total_rho_shift = (mass_dens_disk_shift) + (halo_nd_shift * mean_particle_mass_halo);
+        const double total_rho_local = (number_density * mu) + (halo_number_density * mean_particle_mass_halo);
 
-        CoordinateVector< double > acceleration = get_starburst_acceleration(x,y,z);
+        const double dln_rho_dr = (std::log(total_rho_shift) - std::log(total_rho_local)) / dr;
+
+        CoordinateVector<double> acceleration = get_starburst_acceleration(x, y, z);
         const double a_r = (acceleration.x() * x + acceleration.y() * y) / r;
-        const double v_phi_square = r * (-a_r + (c_s2 / _gamma) * dln_rho_dr);
+        
+        // Blend effective thermal support smoothly
+        const double eff_mu = (mu * number_density + mean_particle_mass_halo * halo_number_density) / total_number_density;
+        const double c_s2_eff = (kB * total_temperature / eff_mu);
+
+        const double v_phi_square = r * (-a_r + (c_s2_eff / _gamma) * dln_rho_dr);
 
         double vphi = 0.0;
         if (v_phi_square > 0.0) {
             vphi = std::sqrt(v_phi_square);
         }
-        vx = -vphi * (y/r);
-        vy = vphi * (x/r);
+        vx = -vphi * (y / r);
+        vy = vphi * (x / r);
     }
 
-    CoordinateVector< double > velocity(vx,vy,vz);
+    CoordinateVector<double> velocity(vx, vy, vz);
     values.set_velocity(velocity);
 
     if (_trace_initial_neutral_flag == true){
