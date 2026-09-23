@@ -58,8 +58,8 @@ private:
   AtomicValue<uint_fast32_t> _num_abs_reemitted_H;
   AtomicValue<uint_fast32_t> _num_abs_reemitted_He;
 
-  AtomicValue<uint_fast32_t> _num_escape_reemitted_ionizing_source;
-  AtomicValue<uint_fast32_t> _num_escape_reemitted_nonionizing_source;
+  AtomicValue<uint_fast32_t> _num_escape_ionizing_source;
+  AtomicValue<uint_fast32_t> _num_escape_nonionizing_source;
   AtomicValue<uint_fast32_t> _num_escape_reemitted_ionizing_H;
   AtomicValue<uint_fast32_t> _num_escape_reemitted_nonionizing_H;
   AtomicValue<uint_fast32_t> _num_escape_reemitted_ionizing_He;
@@ -277,7 +277,7 @@ public:
     double photon_energy = packet.get_energy();
     if (photon_energy >= min_frequency) {
 
-      _num_escape_reemitted_ionizing_source.pre_increment();
+      _num_escape_ionizing_source.pre_increment();
     
       if (photon_energy < max_frequency) {
         // Determine the bin index for this energy
@@ -286,7 +286,7 @@ public:
         _outgoing_spectrum[bin_index].pre_increment();
       }
     } else {
-      _num_escape_reemitted_nonionizing_source.pre_increment();
+      _num_escape_nonionizing_source.pre_increment();
     }
   }
 
@@ -313,11 +313,11 @@ public:
   }
 
   inline uint_fast32_t get_num_escaped_ionizing_source() {
-    return _num_escape_reemitted_ionizing_source.value();
+    return _num_escape_ionizing_source.value();
   }
 
   inline uint_fast32_t get_num_escaped_nonionizing_source() {
-    return _num_escape_reemitted_nonionizing_source.value();
+    return _num_escape_nonionizing_source.value();
   }
 
   inline uint_fast32_t get_num_escaped_ionizing_H() {
@@ -385,8 +385,8 @@ public:
     _num_abs_source.set(0);
     _num_abs_reemitted_H.set(0);
     _num_abs_reemitted_He.set(0);
-    _num_escape_reemitted_ionizing_source.set(0);
-    _num_escape_reemitted_nonionizing_source.set(0);
+    _num_escape_ionizing_source.set(0);
+    _num_escape_nonionizing_source.set(0);
     _num_escape_reemitted_ionizing_H.set(0);
     _num_escape_reemitted_nonionizing_H.set(0);
     _num_escape_reemitted_ionizing_He.set(0);
@@ -450,8 +450,8 @@ inline void write_snapshot_photon_statistics(const std::string &filename) {
   uint_fast32_t abs_source = _num_abs_source.value();
   uint_fast32_t abs_reemitted_H = _num_abs_reemitted_H.value();
   uint_fast32_t abs_reemitted_He = _num_abs_reemitted_He.value();
-  uint_fast32_t escape_reemitted_ionizing_source = _num_escape_reemitted_ionizing_source.value();
-  uint_fast32_t escape_reemitted_nonionizing_source = _num_escape_reemitted_nonionizing_source.value();
+  uint_fast32_t escape_ionizing_source = _num_escape_ionizing_source.value();
+  uint_fast32_t escape_nonionizing_source = _num_escape_nonionizing_source.value();
   uint_fast32_t escape_reemitted_ionizing_H = _num_escape_reemitted_ionizing_H.value();
   uint_fast32_t escape_reemitted_nonionizing_H = _num_escape_reemitted_nonionizing_H.value();
   uint_fast32_t escape_reemitted_ionizing_He = _num_escape_reemitted_ionizing_He.value();
@@ -469,8 +469,8 @@ inline void write_snapshot_photon_statistics(const std::string &filename) {
   HDF5Tools::write_attribute< uint_fast32_t >(photon_stats, "TotalAbsorbedSource", abs_source);
   HDF5Tools::write_attribute< uint_fast32_t >(photon_stats, "TotalAbsorbedReemittedHydrogen", abs_reemitted_H);
   HDF5Tools::write_attribute< uint_fast32_t >(photon_stats, "TotalAbsorbedReemittedHelium", abs_reemitted_He);
-  HDF5Tools::write_attribute< uint_fast32_t >(photon_stats, "TotalEscapedReemittedIonizingSource", escape_reemitted_ionizing_source);
-  HDF5Tools::write_attribute< uint_fast32_t >(photon_stats, "TotalEscapedReemittedNonIonizingSource", escape_reemitted_nonionizing_source);
+  HDF5Tools::write_attribute< uint_fast32_t >(photon_stats, "TotalEscapedIonizingSource", escape_ionizing_source);
+  HDF5Tools::write_attribute< uint_fast32_t >(photon_stats, "TotalEscapedNonIonizingSource", escape_nonionizing_source);
   HDF5Tools::write_attribute< uint_fast32_t >(photon_stats, "TotalEscapedReemittedIonizingHydrogen", escape_reemitted_ionizing_H);
   HDF5Tools::write_attribute< uint_fast32_t >(photon_stats, "TotalEscapedReemittedNonIonizingHydrogen", escape_reemitted_nonionizing_H);
   HDF5Tools::write_attribute< uint_fast32_t >(photon_stats, "TotalEscapedReemittedIonizingHelium", escape_reemitted_ionizing_He);
