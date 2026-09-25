@@ -906,8 +906,16 @@ public:
     std::string luminosity_units = "s^-1";
     std::string mass_units = "Msol";
     std::string age_units = "s";
+
+    double snapshot_time = simulation_time;
+    double total_luminosity = get_total_luminosity();
+
     HDF5Tools::write_attribute< uint32_t >(
         sources, "NumberOfSources", number_of_sources);
+    HDF5Tools::write_attribute< double >(
+        sources, "SimulationTime", snapshot_time);
+    HDF5Tools::write_attribute< double >(
+      sources, "TotalStellarLuminosity", total_luminosity);
     HDF5Tools::write_attribute< std::string >(
         sources, "CoordinateUnits", coordinate_units);
     HDF5Tools::write_attribute< std::string >(
@@ -931,7 +939,6 @@ public:
     uint32_t number_of_supernovae =
         _snapshot_supernova_positions.size();
     std::string time_units = "s";
-    double snapshot_time = simulation_time;
     HDF5Tools::write_attribute< uint32_t >(
         supernovae, "NumberOfEvents", number_of_supernovae);
     HDF5Tools::write_attribute< std::string >(

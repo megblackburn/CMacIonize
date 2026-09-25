@@ -17,21 +17,20 @@
  ******************************************************************************/
 
 /**
- * @file SourceDiscretePhotonTaskContext.hpp
+ * @file SourceDiscreteDiffusePhotonTaskContext.hpp
  *
  * @brief Task context responsible for generating new photon packets that
  * originate from discrete sources.
  *
  * @author Bert Vandenbroucke (bert.vandenbroucke@ugent.be)
  */
-#ifndef SOURCEDISCRETEPHOTONTASKCONTEXT_HPP
-#define SOURCEDISCRETEPHOTONTASKCONTEXT_HPP
+#ifndef SOURCEDISCRETEDIFFUSEPHOTONTASKCONTEXT_HPP
+#define SOURCEDISCRETEDIFFUSEPHOTONTASKCONTEXT_HPP
 
 #include "CrossSections.hpp"
 #include "DistributedPhotonSource.hpp"
-#include "PhotonSourceDistribution.hpp"
+#include "DiffusePhotonSourceDistribution.hpp"
 #include "MemorySpace.hpp"
-#include "PhotonSourceSpectrum.hpp"
 #include "Task.hpp"
 #include "TaskContext.hpp"
 
@@ -40,12 +39,10 @@
  * originate from discrete sources.
  */
 template < typename _subgrid_type_, typename _creator_type >
-class SourceDiscretePhotonTaskContext : public TaskContext {
+class SourceDiscreteDiffusePhotonTaskContext : public TaskContext {
 private:
   /*! @brief Discrete photon source. */
   DistributedPhotonSource< _subgrid_type_, _creator_type > &_photon_source;
-
-
 
   /*! @brief Photon buffer array. */
   MemorySpace &_buffers;
@@ -56,9 +53,6 @@ private:
   /*! @brief Weight of an individual discrete photon packet. */
   const double _discrete_photon_weight;
   const double _frequency_uniform_fraction;
-
-  /*! @brief Spectrum for discrete sources. */
-  const PhotonSourceSpectrum &_photon_source_spectrum;
 
   /*! @brief Abundances. */
   const Abundances _abundances;
@@ -72,7 +66,7 @@ private:
   /*! @brief Task space. */
   ThreadSafeVector< Task > &_tasks;
 
-  PhotonSourceDistribution &_photon_source_distribution;
+  DiffusePhotonSourceDistribution &_photon_source_distribution;
 
   /*! @brief Statistical information about photon packets. */
   PhotonPacketStatistics *_statistics;
@@ -86,29 +80,26 @@ public:
    * @param random_generators Per thread random generator.
    * @param discrete_photon_weight Weight of an individual discrete photon
    * packet.
-   * @param photon_source_spectrum Spectrum for discrete sources.
    * @param abundances Abundances.
    * @param cross_sections Cross sections for photoionization.
    * @param grid_creator Grid creator.
    * @param tasks Task space.
    */
    
-  inline SourceDiscretePhotonTaskContext(
+  inline SourceDiscreteDiffusePhotonTaskContext(
       DistributedPhotonSource< _subgrid_type_, _creator_type > &photon_source,
       MemorySpace &buffers, std::vector< RandomGenerator > &random_generators,
       const double discrete_photon_weight,
-      PhotonSourceSpectrum &photon_source_spectrum,
       const Abundances &abundances, CrossSections &cross_sections,
       _creator_type &grid_creator, // mgb edit 24.04.2026
       ThreadSafeVector< Task > &tasks,
-      PhotonSourceDistribution &photon_source_distribution,
+      DiffusePhotonSourceDistribution &photon_source_distribution,
       PhotonPacketStatistics *statistics,
       const double frequency_uniform_fraction = 0.)
       : _photon_source(photon_source), _buffers(buffers),
         _random_generators(random_generators),
         _discrete_photon_weight(discrete_photon_weight),
         _frequency_uniform_fraction(frequency_uniform_fraction),
-        _photon_source_spectrum(photon_source_spectrum),
         _abundances(abundances), _cross_sections(cross_sections),
         _grid_creator(grid_creator), _tasks(tasks),
         _photon_source_distribution(photon_source_distribution),
@@ -134,6 +125,7 @@ public:
 
     const size_t num_photon_this_loop = task.get_buffer();
     const size_t subgrid_index = _photon_source.get_subgrid(source_index);
+    const size_t diffuse_source_index = _photon_source.get_index(source_index);
 
     // get a free photon buffer in the central queue
     uint_fast32_t buffer_index = _buffers.get_free_buffer();
@@ -152,7 +144,7 @@ public:
 
       PhotonPacket &photon = input_buffer[i];
 
-      photon.set_type(PHOTONTYPE_PRIMARY);
+      photon.set_type(PHOTONTYPE_DIFFUSE_HI);
       photon.set_scatter_counter(0);
       photon.set_distance_travelled(0.0);
 
@@ -182,36 +174,14 @@ public:
       photon.set_target_optical_depth(
           -std::log(_random_generators[thread_id].get_uniform_random_double()));
 
-      double frequency;
+        const double frequency =
+          _photon_source_distribution.get_diffuse_photon_frequency(
+            diffuse_source_index);
+        const double dust_opacity = _cross_sections.get_dust_opacity(frequency);
+      
+      photon.set_weight(_discrete_photon_weight);
 
-
-      if (typeid(TextFilePhotonSourceDistribution).name() == typeid(_photon_source_distribution).name() ||
-          typeid(ArepoSnapshotPhotonSourceDistribution).name() == typeid(_photon_source_distribution).name() ||
-          typeid(HDF5PhotonSourceDistribution).name() == typeid(_photon_source_distribution).name() || 
-          typeid(MixedDrivingPhotonSourceDistribution).name() == typeid(_photon_source_distribution).name() ||
-          typeid(SwiggumFilePhotonSourceDistribution).name() == typeid(_photon_source_distribution).name() || 
-          typeid(MilkyWayPhotonSourceDistribution).name() == typeid(_photon_source_distribution).name() ||
-          typeid(BurstyPhotonSourceDistribution).name() == typeid(_photon_source_distribution).name() ||
-          typeid(StarburstPhotonSourceDistribution).name() == typeid(_photon_source_distribution).name() ) {
-        double spectral_weight = 1.;
-        frequency = _photon_source_distribution.get_photon_frequency_weighted(
-          _random_generators[thread_id], _photon_source.get_index(source_index),
-          _frequency_uniform_fraction, spectral_weight);
-        //photon.set_weight(_photon_source_distribution.get_photon_weighting(_photon_source.get_index(source_index)));
-        photon.set_weight(_discrete_photon_weight * spectral_weight);
-      } else {
-        double spectral_weight = 1.;
-        frequency = _photon_source_spectrum.get_random_frequency_weighted(
-            _random_generators[thread_id], _frequency_uniform_fraction,
-            spectral_weight);
-        // Frequency importance sampling changes packet weights, not luminosity.
-        photon.set_weight(_discrete_photon_weight * spectral_weight);
-      }
-
-
-
-
-      photon.set_source_index(_photon_source.get_index(source_index));
+        photon.set_source_index(diffuse_source_index);
 
 
       photon.set_energy(frequency);
@@ -226,10 +196,9 @@ public:
         }
 #endif
         photon.set_photoionization_cross_section(ion, sigma);
-        photon.set_dust_opacity(_cross_sections.get_dust_opacity(frequency));
 
 
-
+      photon.set_dust_opacity(dust_opacity);
       }
     }
 
@@ -238,7 +207,7 @@ public:
     _subgrid_type_ *subgrid_ptr = &(*it_test);
 
     if (subgrid_ptr == nullptr) {
-        std::cerr << "CRITICAL: Task tried to access null subgrid at index " << subgrid_index << std::endl;
+        std::cerr << "CRITICAL: Diffuse Task tried to access null subgrid at index " << subgrid_index << std::endl;
         return 0; 
     }
 
@@ -263,4 +232,4 @@ public:
   }
 };
 
-#endif // SOURCEDISCRETEPHOTONTASKCONTEXT_HPP
+#endif // SOURCEDISCRETEDIFFUSEPHOTONTASKCONTEXT_HPP

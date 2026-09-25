@@ -242,6 +242,7 @@ set(LIBSHAREDENGINE_SOURCES
   SPHNGVoronoiGeneratorDistribution.cpp
   SwiggumFilePhotonSourceDistribution.cpp
   TemperatureCalculator.cpp
+  TimeDependentDiffuseReemissionHandler.cpp
   VernerCrossSections.cpp
   VernerRecombinationRates.cpp
   WMBasicPhotonSourceSpectrum.cpp

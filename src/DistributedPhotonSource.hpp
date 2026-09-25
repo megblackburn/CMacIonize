@@ -28,6 +28,7 @@
 
 #include "DensitySubGridCreator.hpp"
 #include "PhotonSourceDistribution.hpp"
+#include "DiffusePhotonSourceDistribution.hpp"
 #include "RandomGenerator.hpp"
 #include "ThreadLock.hpp"
 
@@ -68,7 +69,7 @@ public:
  //  template < typename CreatorType >
   DistributedPhotonSource(
       const size_t number_of_photons, PhotonSourceDistribution &distribution,
-      _creator_type &grid_creator) { // mgb edit 24.04.2026
+      _creator_type &grid_creator) { 
 
     size_t number_done = 0;
     std::vector< size_t > overhead;
@@ -163,6 +164,120 @@ public:
     }
     if (number_done != number_of_photons) {
       cmac_error("Distributed photon-source allocation produced %zu packets, "
+                 "but %zu were requested.",
+                 number_done, number_of_photons);
+    }
+
+    _locks = new std::vector< ThreadLock >(_subgrids.size());
+  }
+
+
+  /**
+   * @brief Constructor.
+   *
+   * @param number_of_photons Total number of photon packets to emit.
+   * @param distribution PhotonSourceDistribution specifying the positions and
+   * weights of all the sources.
+   * @param grid_creator Distributed grid.
+   */
+ //  template < typename CreatorType >
+  DistributedPhotonSource(
+      const size_t number_of_photons, DiffusePhotonSourceDistribution &distribution,
+      _creator_type &grid_creator) { 
+
+    size_t number_done = 0;
+    std::vector< size_t > overhead;
+    const photonsourcenumber_t number_of_sources =
+        distribution.get_number_of_diffuse_sources();
+    double active_weight = 0.;
+    size_t number_of_active_sources = 0;
+    for (photonsourcenumber_t isource = 0; isource < number_of_sources;
+         ++isource) {
+      if (grid_creator.contains(distribution.get_diffuse_position(isource))) {
+        const double weight = distribution.get_diffuse_weight(isource);
+        if (!std::isfinite(weight) || weight < 0.) {
+          cmac_error("Invalid diffuse photon-source weight for source %zu: %g.",
+                     static_cast< size_t >(isource), weight);
+        }
+        active_weight += weight;
+        ++number_of_active_sources;
+      }
+    }
+    if (number_of_photons > 0 &&
+        (number_of_active_sources == 0 || !(active_weight > 0.) ||
+         !std::isfinite(active_weight))) {
+      cmac_error("Cannot distribute %zu diffuse photon packets: %zu active sources "
+                 "have total weight %g. Aborting instead of entering a "
+                 "no-progress photon scheduling loop.",
+                 number_of_photons, number_of_active_sources, active_weight);
+    }
+
+    for (photonsourcenumber_t isource = 0; isource < number_of_sources;
+         ++isource) {
+      const CoordinateVector<> position = distribution.get_diffuse_position(isource);
+      // A moved source can be outside the grid before its distribution has
+      // removed it.  Never turn that position into an unchecked subgrid index.
+      if (!grid_creator.contains(position)) {
+        continue;
+      }
+      typename DensitySubGridCreator< _subgrid_type_ >::iterator first_cell =
+          grid_creator.get_subgrid(position);
+
+      //std::cout << "DEBUG: Mapping position (" 
+      //    << position.x() << ", " << position.y() << ", " << position.z() 
+       //   << ") to index " << first_cell.get_index() << std::endl;
+
+      std::vector< size_t > subgrids(1, first_cell.get_index());
+      std::pair< typename _creator_type::iterator, // mgb edit 24.04.2026
+                 typename _creator_type::iterator > // mgb edit 24.04.2026
+          copies = first_cell.get_copies();
+      if (copies.first != grid_creator.all_end()) {
+        for (auto it = copies.first; it != copies.second; ++it) {
+          subgrids.push_back(it.get_index());
+        }
+      }
+      const size_t number_this_source =
+          number_of_photons * distribution.get_diffuse_weight(isource) / active_weight;
+      const size_t number_per_copy = number_this_source / subgrids.size();
+      const size_t breakpoint = number_this_source % subgrids.size();
+      const size_t old_size = _subgrids.size();
+      for (size_t i = 0; i < subgrids.size(); ++i) {
+        _subgrids.push_back(subgrids[i]);
+        _positions.push_back(position);
+        _original_indexes.push_back(isource);
+        _total_number_of_photons.push_back(number_per_copy);
+        if (i < breakpoint) {
+          ++_total_number_of_photons.back();
+        }
+        _number_done.push_back(0);
+      }
+      overhead.push_back(old_size + breakpoint);
+      number_done += number_this_source;
+    }
+    if (overhead.empty()) {
+      if (number_of_photons > 0) {
+        cmac_error("No distributed diffuse photon sources were created for %zu "
+                   "requested photon packets. Aborting instead of spinning "
+                   "forever.",
+                   number_of_photons);
+      }
+      _locks = new std::vector< ThreadLock >();
+      return;
+    }
+    const size_t num_overhead = number_of_photons - number_done;
+    RandomGenerator random_generator;
+    for (size_t i = 0; i < num_overhead; ++i) {
+      const size_t index =
+          random_generator.get_uniform_random_double() * overhead.size();
+      ++_total_number_of_photons[overhead[index]];
+    }
+
+    number_done = 0;
+    for (size_t i = 0; i < _subgrids.size(); ++i) {
+      number_done += _total_number_of_photons[i];
+    }
+    if (number_done != number_of_photons) {
+      cmac_error("Distributed diffuse photon-source allocation produced %zu packets, "
                  "but %zu were requested.",
                  number_done, number_of_photons);
     }

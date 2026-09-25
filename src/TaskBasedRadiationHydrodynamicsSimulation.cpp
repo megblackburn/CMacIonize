@@ -38,6 +38,7 @@
 #include "DensityFunctionFactory.hpp"
 #include "DensityGridWriterFactory.hpp"
 #include "DiffuseReemissionHandlerFactory.hpp"
+#include "DiffusePhotonSourceDistributionFactory.hpp"
 #include "DistributedPhotonSource.hpp"
 #include "ExternalPotentialFactory.hpp"
 #include "HydroBoundaryManager.hpp"
@@ -64,6 +65,7 @@
 #include "Scheduler.hpp"
 #include "SimulationBox.hpp"
 #include "SourceDiscretePhotonTaskContext.hpp"
+#include "SourceDiscreteDiffusePhotonTaskContext.hpp"
 #include "TaskQueue.hpp"
 #include "TemperatureCalculator.hpp"
 #include "TimeLine.hpp"
@@ -1529,8 +1531,15 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
   RecombinationRates *recombination_rates =
       RecombinationRatesFactory::generate(*params, log);
   DiffuseReemissionHandler *reemission_handler = nullptr;
-  if (params->get_value< bool >(
-          "TaskBasedRadiationHydrodynamicsSimulation:diffuse field", false)) {
+
+  const bool _diffuse_field_flag = params->get_value< bool >(
+      "DiffuseReemissionHandler:diffuse field", false);
+
+  const bool _time_dependent_diffuse_field_flag = params->get_value< bool >(
+      "DiffuseReemissionHandler:time dependent diffuse field",
+      false);
+
+  if (_diffuse_field_flag || _time_dependent_diffuse_field_flag) {
     reemission_handler = DiffuseReemissionHandlerFactory::generate(
         *cross_sections, *params, log);
   }
@@ -1851,6 +1860,26 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         params->get_value< bool >(
             "SupernovaHandler:TIGRESS like injection", true));
   }
+
+  DiffusePhotonSourceDistribution *diffusesourcedistribution = nullptr;
+
+  if (_time_dependent_diffuse_field_flag) {
+    if (restart_reader == nullptr) {
+      diffusesourcedistribution =
+          DiffusePhotonSourceDistributionFactory::generate(*params, *recombination_rates, *cross_sections, log);
+    } else {
+      diffusesourcedistribution =
+          DiffusePhotonSourceDistributionFactory::restart(*restart_reader, *recombination_rates, *cross_sections, log);
+    }
+  } else {
+    if (restart_reader != nullptr) {
+      cmac_warning("Restart file contains diffuse photon source distribution, but "
+                   "diffuse field is disabled in the parameter file. The diffuse "
+                   "photon source distribution will be ignored.");
+    }
+  }
+  
+
   PhotonSourceSpectrum *spectrum = PhotonSourceSpectrumFactory::generate(
       "PhotonSourceSpectrum", *params, log);
 
@@ -1861,6 +1890,10 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     cmac_warning("Discrete photon source spectrum provided, but no discrete "
                  "photon source distributions. The given spectrum will be "
                  "ignored.");
+  }
+
+  if (diffusesourcedistribution == nullptr && _time_dependent_diffuse_field_flag) {
+    cmac_error("Diffuse photon source distribution is required for time-dependent diffuse field.");
   }
 
   ContinuousPhotonSource *continuoussource =
@@ -1923,13 +1956,22 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
   TemperatureCalculator *temperature_calculator;
 
-  if (sourcedistribution == nullptr) {
+  // mgb 24.09.2026 - Addition of diffuse photon field luminosity
+  if (sourcedistribution == nullptr && diffusesourcedistribution == nullptr) {
     temperature_calculator = new TemperatureCalculator(
         0.0, abundances, line_cooling_data,
         *recombination_rates, charge_transfer_rates, collisional_rates,radiative_cooling, *params, log);
-  } else {
+  } else if (sourcedistribution != nullptr && diffusesourcedistribution == nullptr) {
     temperature_calculator = new TemperatureCalculator(
         sourcedistribution->get_total_luminosity(), abundances, line_cooling_data,
+        *recombination_rates, charge_transfer_rates, collisional_rates,radiative_cooling, *params, log);
+  } else if (sourcedistribution == nullptr && diffusesourcedistribution != nullptr) {
+    temperature_calculator = new TemperatureCalculator(
+        diffusesourcedistribution->get_total_diffuse_luminosity(), abundances, line_cooling_data,
+        *recombination_rates, charge_transfer_rates, collisional_rates,radiative_cooling, *params, log);
+  } else {
+    temperature_calculator = new TemperatureCalculator(
+        sourcedistribution->get_total_luminosity()+diffusesourcedistribution->get_total_diffuse_luminosity(), abundances, line_cooling_data,
         *recombination_rates, charge_transfer_rates, collisional_rates,radiative_cooling, *params, log);
 
   }
@@ -2254,6 +2296,10 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         sourcedistribution->write_snapshot_metadata(
                 writer->get_snapshot_filename(_restart_iteration), _restart_time);
           }
+      if (diffusesourcedistribution != nullptr) {
+        diffusesourcedistribution->write_snapshot_diffuse_metadata(
+                writer->get_snapshot_filename(_restart_iteration), _restart_time);
+          }
       if (statistics != nullptr) {
         statistics->write_snapshot_photon_statistics(
                 writer->get_snapshot_filename(_restart_iteration));
@@ -2261,16 +2307,21 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
       }
     } else {
       writer->write(*grid_creator, 0, *params, 0.);
-    if (sourcedistribution != nullptr) {
-      sourcedistribution->write_snapshot_metadata(
-          writer->get_snapshot_filename(0), 0.);
+      
+      if (sourcedistribution != nullptr) {
+        sourcedistribution->write_snapshot_metadata(
+            writer->get_snapshot_filename(0), 0.);
+      }
+      if (diffusesourcedistribution != nullptr) {
+        diffusesourcedistribution->write_snapshot_diffuse_metadata(
+            writer->get_snapshot_filename(0), 0.);
+      }
+      if (statistics != nullptr) {
+        statistics->write_snapshot_photon_statistics(
+            writer->get_snapshot_filename(0));
+        statistics->reset_counters();
+      }
     }
-    if (statistics != nullptr) {
-      statistics->write_snapshot_photon_statistics(
-          writer->get_snapshot_filename(0));
-      statistics->reset_counters();
-    }
-  }
     time_logger.end("snapshot");
 }
 
@@ -2324,6 +2375,8 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
     // set the copy level off all subgrids containing a source to the given
     // parameter value (for now)
+
+    // DISCRETE STELLAR SOURCES
     {
       photonsourcenumber_t number_of_sources;
 
@@ -2345,6 +2398,31 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         }
         DensitySubGridCreator< HydroDensitySubGrid >::iterator gridit =
             grid_creator->get_subgrid(position);
+        levels[gridit.get_index()] = source_copy_level;
+      }
+    }
+    // DIFFUSE FIELD SOURCES
+    {
+      photonsourcenumber_t number_of_diffuse_sources;
+
+      if (diffusesourcedistribution == nullptr) {
+        number_of_diffuse_sources = 0;
+      } else {
+        number_of_diffuse_sources =
+            diffusesourcedistribution->get_number_of_diffuse_sources();
+      }
+      for (photonsourcenumber_t diffuse_isource = 0; diffuse_isource < number_of_diffuse_sources;
+           ++diffuse_isource) {
+        const CoordinateVector<> diffuse_position =
+            diffusesourcedistribution->get_diffuse_position(diffuse_isource);
+        if (!simulation_box.get_box().inside(diffuse_position)) {
+          if (log) {
+            log->write_warning("Ignoring diffuse photon source outside the simulation box.");
+          }
+          continue;
+        }
+        DensitySubGridCreator< HydroDensitySubGrid >::iterator gridit =
+            grid_creator->get_subgrid(diffuse_position);
         levels[gridit.get_index()] = source_copy_level;
       }
     }
@@ -2493,6 +2571,10 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     if(sourcedistribution != nullptr) {
    //   log->write_status("Getting Total Luminosity: ", sourcedistribution->get_total_luminosity());
 
+    const double stellar_luminosity = sourcedistribution->get_total_luminosity();
+    const double diffuse_luminosity =
+        diffusesourcedistribution != nullptr ?
+            diffusesourcedistribution->get_total_diffuse_luminosity() : 0.0;
     bool has_active_source = false;
     for (photonsourcenumber_t isource = 0;
          isource < sourcedistribution->get_number_of_sources(); ++isource) {
@@ -2502,7 +2584,21 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         break;
       }
     }
-    if (sourcedistribution->get_total_luminosity() > 0. && has_active_source) {
+    if (diffusesourcedistribution != nullptr) {
+      bool has_active_diffuse_sources = false;
+      for (photonsourcenumber_t diffuse_isource = 0;
+           diffuse_isource < diffusesourcedistribution->get_number_of_diffuse_sources();
+           ++diffuse_isource) {
+        if (simulation_box.get_box().inside(
+                diffusesourcedistribution->get_diffuse_position(diffuse_isource))) {
+          has_active_diffuse_sources = true;
+          break;
+        }
+      }
+      has_active_source = has_active_source || has_active_diffuse_sources;
+    }
+
+    if ((stellar_luminosity > 0. || diffuse_luminosity > 0.) && has_active_source) {
         time_logger.start("radiation transfer");
 
         {
@@ -2533,8 +2629,33 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           stop_parallel_timing_block();
         }
 
-        DistributedPhotonSource<HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> > photon_source( 
-            numphoton, *sourcedistribution, *grid_creator);
+        // WEIGHT THE PHOTON NUMBERS BASED ON LUMINOSITY 
+
+        const double total_system_luminosity = stellar_luminosity + diffuse_luminosity;
+
+        size_t stellar_packets = 0;
+        size_t diffuse_packets = 0;
+
+
+        if (total_system_luminosity > 0.) {
+          double stellar_weight = stellar_luminosity / total_system_luminosity;
+          stellar_packets = static_cast<size_t>(numphoton * stellar_weight);
+          diffuse_packets = numphoton - stellar_packets;
+        }
+
+        log->write_status("Stellar Luminosity: ", stellar_luminosity, " Diffuse Luminosity: ", diffuse_luminosity, " Total Luminosity: ", total_system_luminosity);
+        log->write_status("Stellar Packets: ", stellar_packets, " Diffuse Packets: ", diffuse_packets, " Total Packets: ", stellar_packets + diffuse_packets);
+
+        // DISTRIBUTE STELLAR PHOTON SOURCES
+
+        DistributedPhotonSource<HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> > stellar_photon_source( 
+            stellar_packets, *sourcedistribution, *grid_creator);
+
+        // DISTRIBUTE DIFFUSE PHOTON SOURCES
+
+        DistributedPhotonSource<HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> > diffuse_photon_source(
+            diffuse_packets, *diffusesourcedistribution, *grid_creator);
+
         {
           AtomicValue< size_t > igrid(0);
           start_parallel_timing_block();
@@ -2584,7 +2705,8 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           grid_creator->update_copy_properties();
 
           // reset the photon source information
-          photon_source.reset();
+          stellar_photon_source.reset();
+          diffuse_photon_source.reset();
 
           // Count all photon tasks from creation until completion. This lets
           // the scheduler distinguish real work from a stranded buffer or a
@@ -2611,13 +2733,16 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
             }
             stop_parallel_timing_block();
           }
-          size_t number_of_photons_done = 0;
-          while (number_of_photons_done < numphoton) {
-            for (size_t isrc = 0; isrc < photon_source.get_number_of_sources();
+
+          // PROCESS & DISPATCH STELLAR SOURCE PHOTONS
+
+          size_t number_of_stellar_photons_done = 0;
+          while (number_of_stellar_photons_done < stellar_packets) {
+            for (size_t isrc = 0; isrc < stellar_photon_source.get_number_of_sources();
                  ++isrc) {
 
               const size_t number_of_photons_this_batch =
-                  photon_source.get_photon_batch(isrc, PHOTONBUFFER_SIZE);
+                  stellar_photon_source.get_photon_batch(isrc, PHOTONBUFFER_SIZE);
               if (number_of_photons_this_batch > 0) {
                 const size_t new_task = tasks->get_free_element();
                 (*tasks)[new_task].set_type(TASKTYPE_SOURCE_DISCRETE_PHOTON);
@@ -2625,11 +2750,35 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                 (*tasks)[new_task].set_buffer(number_of_photons_this_batch);
                 pending_photon_tasks.pre_increment();
                 shared_queue->add_task(new_task);
-                number_of_photons_done += number_of_photons_this_batch;
+                number_of_stellar_photons_done += number_of_photons_this_batch;
               }
             }
           }
-          cmac_assert(number_of_photons_done == numphoton);
+          cmac_assert(number_of_stellar_photons_done == stellar_packets);
+
+          // PROCESS & DISPATCH DIFFUSE SOURCE PHOTONS
+
+          size_t number_of_diffuse_photons_done = 0;
+        //  const size_t DIFFUSE_BUFFER_SIZE = 100 * PHOTONBUFFER_SIZE;
+          while (number_of_diffuse_photons_done < diffuse_packets) {
+            for (size_t isrc_d = 0; isrc_d < diffuse_photon_source.get_number_of_sources();
+                 ++isrc_d) {
+
+              const size_t number_of_diffuse_photons_this_batch =
+                  diffuse_photon_source.get_photon_batch(isrc_d, PHOTONBUFFER_SIZE);
+              if (number_of_diffuse_photons_this_batch > 0) {
+                const size_t new_diffuse_task = tasks->get_free_element();
+                (*tasks)[new_diffuse_task].set_type(TASKTYPE_SOURCE_DISCRETE_DIFFUSE_PHOTON);
+                (*tasks)[new_diffuse_task].set_subgrid(isrc_d);
+                (*tasks)[new_diffuse_task].set_buffer(number_of_diffuse_photons_this_batch);
+                pending_photon_tasks.pre_increment();
+                shared_queue->add_task(new_diffuse_task);
+                number_of_diffuse_photons_done += number_of_diffuse_photons_this_batch;
+              }
+            }
+          }
+          cmac_assert(number_of_diffuse_photons_done == diffuse_packets);
+
 
           AtomicValue< bool > global_run_flag(true);
           AtomicValue< uint_fast64_t > num_photon_done(0);
@@ -2645,12 +2794,21 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
           // create task contexts
          TaskContext *task_contexts[TASKTYPE_NUMBER] = {nullptr};
+
+         // STELLAR PHOTON LAUNCH
           task_contexts[TASKTYPE_SOURCE_DISCRETE_PHOTON] =
               new SourceDiscretePhotonTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> >(
-                  photon_source, *buffers, random_generators, 1., *spectrum,
+                  stellar_photon_source, *buffers, random_generators, 1., *spectrum,
                   abundances, *cross_sections, *grid_creator, *tasks,
                    *sourcedistribution, statistics, frequency_uniform_fraction); // mgb 22.09.2026 - add statistics
 
+
+          // DIFFUSE PHOTON LAUNCH
+          task_contexts[TASKTYPE_SOURCE_DISCRETE_DIFFUSE_PHOTON] = 
+              new SourceDiscreteDiffusePhotonTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> >(
+                  diffuse_photon_source, *buffers, random_generators, 1.,
+                  abundances, *cross_sections, *grid_creator, *tasks,
+                   *diffusesourcedistribution, statistics, frequency_uniform_fraction);
 
           if (reemission_handler) {
             task_contexts[TASKTYPE_PHOTON_REEMIT] =
@@ -2670,6 +2828,8 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
               &pending_photon_tasks);
 
           Scheduler scheduler(*tasks, queues, *shared_queue);
+
+          
 
           start_parallel_timing_block();
 #ifdef HAVE_OPENMP
@@ -2883,12 +3043,6 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
               std::cout << "Number of photons absorbed (all gas) = " << statistics->get_num_absorbed() << std::endl;
               std::cout << "Number of photons absorbed (dust) = " << statistics->get_num_abs_dust() << std::endl;
               std::cout << "Number of H photons reemitted = " << statistics->get_num_reemitted_H() << std::endl;
-              
-              std::cout << "Number of photons absorbed (dense gas) = " << statistics->get_num_abs_dens() << std::endl;
-              std::cout << "Number of photons absorbed (diffuse gas) = " << statistics->get_num_abs_dif() << std::endl;
-              std::cout << "Number of photons escaped (ionizing) = " << statistics->get_num_escaped_ionizing() << std::endl;
-              std::cout << "Number of photons escaped (non-ionizing) = " << statistics->get_num_escaped_nonionizing() << std::endl;
-            //  statistics->reset_counters();
             }
           }
 
@@ -2945,7 +3099,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                 if (chemistry_every_hydro_step) {
                   size_t local_cell = 0;
                   const double luminosity_per_packet =
-                      sourcedistribution->get_total_luminosity() / numphoton;
+                    total_system_luminosity / numphoton;
                   for (auto cell = (*gridit).begin(); cell != (*gridit).end(); ++cell, ++local_cell) {
                     auto &vars = cell.get_ionization_variables();
                     const double jfac = luminosity_per_packet / cell.get_volume();
@@ -3043,46 +3197,135 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         }
 
       }
-    } else { 
+    } else { // no sourcedistribution defined
+        // -------------------------------------------------------------------------
+        // Check if diffuse radiation field is active
+        // -------------------------------------------------------------------------
+        if (diffusesourcedistribution != nullptr &&
+            diffusesourcedistribution->get_total_diffuse_luminosity() > 0.0) {
+          
+          if (log) {
+            log->write_status("No stellar sources found, but active diffuse field detected. Launching diffuse rays.");
+          }
 
-      //  if (log) {
-        //  log->write_status("No source distribution!");
-       // }
+          const size_t diffuse_packets = numphoton; 
 
-        // there are no ionising sources: skip radiation for this step
-        // still call temperature_calculator to get collisional ionised gas
-        {
+          DistributedPhotonSource<HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> > diffuse_photon_source( 
+              diffuse_packets, *diffusesourcedistribution, *grid_creator);
+
+          {
+            AtomicValue< size_t > igrid(0);
+            start_parallel_timing_block();
+#ifdef HAVE_OPENMP
+#pragma omp parallel default(shared)
+#endif
+            while (igrid.value() < grid_creator->number_of_actual_subgrids()) {
+              const size_t this_igrid = igrid.post_increment();
+              if (this_igrid < grid_creator->number_of_actual_subgrids()) {
+                auto gridit = grid_creator->get_subgrid(this_igrid);
+                (*gridit).reset_intensities();
+              }
+            }
+            stop_parallel_timing_block();
+          }
+
+          grid_creator->update_copy_properties();
+          diffuse_photon_source.reset();
+
+          AtomicValue< uint_fast64_t > pending_photon_tasks(0);
+
+          if (reemission_handler != nullptr) {
+            AtomicValue< size_t > igrid(0);
+            start_parallel_timing_block();
+#ifdef HAVE_OPENMP
+#pragma omp parallel default(shared)
+#endif
+            while (igrid.value() < grid_creator->number_of_actual_subgrids()) {
+              const size_t this_igrid = igrid.post_increment();
+              if (this_igrid < grid_creator->number_of_actual_subgrids()) {
+                auto gridit = grid_creator->get_subgrid(this_igrid);
+                for (auto cellit = (*gridit).begin(); cellit != (*gridit).end(); ++cellit) {
+                  IonizationVariables &vars = cellit.get_ionization_variables();
+                  reemission_handler->set_reemission_probabilities(vars);
+                }
+              }
+            }
+            stop_parallel_timing_block();
+          }
+
+          AtomicValue< uint_fast64_t > num_photon_done(0);
+          size_t number_of_diffuse_photons_done = 0;
+          
+          while (number_of_diffuse_photons_done < diffuse_packets) {
+            for (size_t isrc = 0; isrc < diffuse_photon_source.get_number_of_sources(); ++isrc) {
+              const size_t number_of_photons_this_batch = diffuse_photon_source.get_photon_batch(isrc, PHOTONBUFFER_SIZE);
+              if (number_of_photons_this_batch > 0) {
+                const size_t new_task = tasks->get_free_element();
+                (*tasks)[new_task].set_type(TASKTYPE_SOURCE_DISCRETE_DIFFUSE_PHOTON);
+                (*tasks)[new_task].set_subgrid(isrc);
+                (*tasks)[new_task].set_buffer(number_of_photons_this_batch);
+                pending_photon_tasks.pre_increment();
+                shared_queue->add_task(new_task);
+                number_of_diffuse_photons_done += number_of_photons_this_batch;
+              }
+            }
+          }
+
+          TaskContext *task_contexts[TASKTYPE_NUMBER] = {nullptr};
+          task_contexts[TASKTYPE_SOURCE_DISCRETE_DIFFUSE_PHOTON] =
+              new SourceDiscreteDiffusePhotonTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> >(
+                  diffuse_photon_source, *buffers, random_generators, 1.,
+                  abundances, *cross_sections, *grid_creator, *tasks,
+                  *diffusesourcedistribution, statistics, frequency_uniform_fraction);
+
+          if (reemission_handler) {
+            task_contexts[TASKTYPE_PHOTON_REEMIT] =
+                new PhotonReemitTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> >(
+                    *buffers, random_generators, *reemission_handler, abundances, *cross_sections, *grid_creator, *tasks, num_photon_done, statistics);
+          }
+
+          task_contexts[TASKTYPE_PHOTON_TRAVERSAL] =
+              new PhotonTraversalTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> >(
+                  *buffers, *grid_creator, *tasks, num_photon_done, statistics, reemission_handler != nullptr, _max_photon_distance);
+
+          PrematureLaunchTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> > premature_launch(*buffers, *grid_creator, *tasks, queues, *shared_queue, &pending_photon_tasks);
+          Scheduler scheduler(*tasks, queues, *shared_queue);
+
+
+          for (int_fast32_t itask = 0; itask < TASKTYPE_NUMBER; ++itask) {
+            if (task_contexts[itask] != nullptr) delete task_contexts[itask];
+          }
+
+        } else { // No Stellar sources or diffuse sources
+          if (log) {
+            log->write_status("No stellar or diffuse ionizing sources present!");
+          }
+
           AtomicValue< size_t > igrid(0);
           start_parallel_timing_block();
 #ifdef HAVE_OPENMP
 #pragma omp parallel default(shared)
 #endif
-         // if (log) {
-          //  log->write_status("Last call before done with radiation timestep!");
-         // }
           while (igrid.value() < grid_creator->number_of_original_subgrids()) {
             const size_t this_igrid = igrid.post_increment();
             if (this_igrid < grid_creator->number_of_original_subgrids()) {
               auto gridit = grid_creator->get_subgrid(this_igrid);
               (*gridit).reset_intensities();
-              for (auto cellit = (*gridit).begin(); cellit != (*gridit).end();
-                    ++cellit) {
-              if (_throttle_ion_state || _time_dependent_ionization) {
-                  cellit.get_ionization_variables().copy_previous_fractions();
-              } else {
-                  cellit.get_ionization_variables().set_prev_ionic_fraction(ION_H_n,-1.);
-                }      
-              } 
-              if (chemistry_every_hydro_step) {
-                // No source distribution: chemistry remains collisional only.
-              } else if (_time_dependent_ionization) {
               
-                  temperature_calculator->calculate_temperature( 
-                    0, 0, *gridit, current_time - lastrad_time, true, true);
-    
-              } else{
-              temperature_calculator->calculate_temperature(0, 0,
-                                                            *gridit,current_time - lastrad_time,false,true);
+              for (auto cellit = (*gridit).begin(); cellit != (*gridit).end(); ++cellit) {
+                if (_throttle_ion_state || _time_dependent_ionization) {
+                    cellit.get_ionization_variables().copy_previous_fractions();
+                } else {
+                    cellit.get_ionization_variables().set_prev_ionic_fraction(ION_H_n, -1.);
+                }      
+              }
+              
+              if (chemistry_every_hydro_step) {
+                // Collisional changes advance under zero radiation fluxes
+              } else if (_time_dependent_ionization) {
+                  temperature_calculator->calculate_temperature(0, 0, *gridit, current_time - lastrad_time, true, true);
+              } else {
+                  temperature_calculator->calculate_temperature(0, 0, *gridit, current_time - lastrad_time, false, true);
               }
             }
           }
@@ -3092,6 +3335,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
       cmac_assert_message(buffers->is_empty(), "Number of active buffers: %zu",
                           buffers->get_number_of_active_buffers());
+
 //commented out cause Ive moved this
 //       {
 //         time_logger.start("ionizing energy update");
@@ -3790,6 +4034,10 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
             sourcedistribution->write_snapshot_metadata(
                 writer->get_snapshot_filename(hydro_lastsnap_restart), current_time_restarted);
           }
+          if (diffusesourcedistribution != nullptr) {
+            diffusesourcedistribution->write_snapshot_diffuse_metadata(
+                    writer->get_snapshot_filename(hydro_lastsnap_restart), _restart_time);
+          }
           if (statistics != nullptr) {
             statistics->write_snapshot_photon_statistics(
                 writer->get_snapshot_filename(hydro_lastsnap_restart));
@@ -3802,6 +4050,10 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           if (sourcedistribution != nullptr) {
             sourcedistribution->write_snapshot_metadata(
                 writer->get_snapshot_filename(hydro_lastsnap), current_time);
+          }
+          if (diffusesourcedistribution != nullptr) {
+            diffusesourcedistribution->write_snapshot_diffuse_metadata(
+                    writer->get_snapshot_filename(hydro_lastsnap), current_time);
           }
           if (statistics != nullptr) {
             statistics->write_snapshot_photon_statistics(
@@ -3855,17 +4107,30 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
       // update the PhotonSource
 
-      if (sourcedistribution != nullptr) {
+      if (sourcedistribution != nullptr || diffusesourcedistribution != nullptr) {
+
+        bool stellar_updated = false;
+        if (sourcedistribution != nullptr) {
+          stellar_updated = sourcedistribution->update(grid_creator, actual_timestep);
+        }
+
+        bool diffuse_updated = false;
+        if (diffusesourcedistribution != nullptr) {
+          diffuse_updated = diffusesourcedistribution->update(grid_creator, actual_timestep);
+        }
 
 
-      if (sourcedistribution->update(grid_creator,actual_timestep)) {
+      if (stellar_updated || diffuse_updated) {
 
         time_logger.start("source update");
 
-        sourcedistribution->update_fuv_background_sources(grid_creator);
+        if (sourcedistribution != nullptr) {
+          sourcedistribution->update_fuv_background_sources(grid_creator);
+        }
+        double total_stellar_lum = (sourcedistribution != nullptr) ? sourcedistribution->get_total_luminosity() : 0.0;
+        double total_diffuse_lum = (diffusesourcedistribution != nullptr) ? diffusesourcedistribution->get_total_diffuse_luminosity() : 0.0;
 
-        temperature_calculator->update_luminosity(
-            sourcedistribution->get_total_luminosity());
+        temperature_calculator->update_luminosity(total_stellar_lum + total_diffuse_lum);
 
        // if (_moving_sources_flag == true) { // mgb edit
      // sourcedistribution->set_initial_velocity(grid_creator,actual_timestep);
@@ -3884,7 +4149,9 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
         // set the copy level off all subgrids containing a source to the given
         // parameter value (for now)
-        {
+
+        // STELLAR SUBGRIDS
+        if (sourcedistribution != nullptr) {
           const photonsourcenumber_t number_of_sources =
               sourcedistribution->get_number_of_sources();
           for (photonsourcenumber_t isource = 0; isource < number_of_sources;
@@ -3902,6 +4169,25 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                 grid_creator->get_subgrid(position);
             levels[gridit.get_index()] = source_copy_level;
           }
+        }
+
+
+        if (log) {
+          log->write_status("Stellar Discrete Sources have been updated...");
+        }
+        // DIFFUSE SUBGRIDS
+
+        if (diffusesourcedistribution != nullptr) {
+          const photonsourcenumber_t number_of_diffuse = diffusesourcedistribution->get_number_of_diffuse_sources();
+          for (photonsourcenumber_t isource_d = 0; isource_d < number_of_diffuse; ++isource_d) {
+            const size_t diffuse_subgrid_index =
+                diffusesourcedistribution->get_diffuse_subgrid_index(isource_d);
+            levels[diffuse_subgrid_index] = source_copy_level;
+          }
+        }
+
+        if (log) {
+          log->write_status("Diffuse Field Sources have been updated...");
         }
 
         // impose copy restrictions
@@ -4108,6 +4394,10 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
             sourcedistribution->write_snapshot_metadata(
                 writer->get_snapshot_filename(hydro_lastsnap_restart), current_time_restarted);
           }
+        if (diffusesourcedistribution != nullptr) {
+            diffusesourcedistribution->write_snapshot_diffuse_metadata(
+                writer->get_snapshot_filename(hydro_lastsnap_restart), current_time_restarted);
+        }
         if (statistics != nullptr) {
             statistics->write_snapshot_photon_statistics(
                 writer->get_snapshot_filename(hydro_lastsnap_restart));
@@ -4119,6 +4409,10 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           writer->write(*grid_creator, hydro_lastsnap, *params, current_time);
           if (sourcedistribution != nullptr) {
             sourcedistribution->write_snapshot_metadata(
+                writer->get_snapshot_filename(hydro_lastsnap), current_time);
+          }
+          if (diffusesourcedistribution != nullptr) {
+            diffusesourcedistribution->write_snapshot_diffuse_metadata(
                 writer->get_snapshot_filename(hydro_lastsnap), current_time);
           }
           if (statistics != nullptr) {
