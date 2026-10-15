@@ -2257,7 +2257,6 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
       if (statistics != nullptr) {
         statistics->write_snapshot_photon_statistics(
                 writer->get_snapshot_filename(_restart_iteration));
-        statistics->reset_counters();
       }
     } else {
       writer->write(*grid_creator, 0, *params, 0.);
@@ -2268,7 +2267,6 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     if (statistics != nullptr) {
       statistics->write_snapshot_photon_statistics(
           writer->get_snapshot_filename(0));
-      statistics->reset_counters();
     }
   }
     time_logger.end("snapshot");
@@ -2888,7 +2886,8 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
               std::cout << "Number of photons absorbed (diffuse gas) = " << statistics->get_num_abs_dif() << std::endl;
               std::cout << "Number of photons escaped (ionizing) = " << statistics->get_num_escaped_ionizing() << std::endl;
               std::cout << "Number of photons escaped (non-ionizing) = " << statistics->get_num_escaped_nonionizing() << std::endl;
-            //  statistics->reset_counters();
+
+              statistics->record_and_reset_radiation_step();
             }
           }
 
@@ -3793,7 +3792,6 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           if (statistics != nullptr) {
             statistics->write_snapshot_photon_statistics(
                 writer->get_snapshot_filename(hydro_lastsnap_restart));
-            statistics->reset_counters();
           }
           time_logger.end("snapshot");
         } else {
@@ -3806,7 +3804,6 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           if (statistics != nullptr) {
             statistics->write_snapshot_photon_statistics(
                 writer->get_snapshot_filename(hydro_lastsnap));
-            statistics->reset_counters();
           }
           time_logger.end("snapshot");
         }
@@ -4111,7 +4108,6 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         if (statistics != nullptr) {
             statistics->write_snapshot_photon_statistics(
                 writer->get_snapshot_filename(hydro_lastsnap_restart));
-            statistics->reset_counters();
         }
         time_logger.end("snapshot");
       } else {
@@ -4124,7 +4120,6 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           if (statistics != nullptr) {
             statistics->write_snapshot_photon_statistics(
                 writer->get_snapshot_filename(hydro_lastsnap));
-            statistics->reset_counters();
           }
           time_logger.end("snapshot");
       }

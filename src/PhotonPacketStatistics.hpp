@@ -55,6 +55,7 @@ private:
   AtomicValue<uint_fast32_t> _num_escape_nonionizing;
 
   AtomicValue<uint_fast32_t> _num_abs_source;
+  AtomicValue<uint_fast32_t> _num_escape_source;
   AtomicValue<uint_fast32_t> _num_abs_reemitted_H;
   AtomicValue<uint_fast32_t> _num_abs_reemitted_He;
 
@@ -85,7 +86,69 @@ private:
   const double _bin_width = (max_frequency - min_frequency) / numbins;
 
 
+  // mgb 15.10.2026 - record each radiation step
+
+  std::vector< uint_fast32_t > _history_absorbed;
+  std::vector< uint_fast32_t > _history_escaped;
+  std::vector< uint_fast32_t > _history_escaped_source;
+  std::vector< uint_fast32_t > _history_escaped_ionizing;
+  std::vector< uint_fast32_t > _history_escaped_nonionizing;
+  std::vector< uint_fast32_t > _history_escaped_ionizing_source;
+  std::vector< uint_fast32_t > _history_escaped_nonionizing_source;
+  std::vector< uint_fast32_t > _history_reemitted_H;
+  std::vector< uint_fast32_t > _history_reemitted_He;
+  std::vector< uint_fast32_t > _history_reemitted_ionizing_H;
+  std::vector< uint_fast32_t > _history_reemitted_nonionizing_H;
+  std::vector< uint_fast32_t > _history_reemitted_ionizing_He;
+  std::vector< uint_fast32_t > _history_reemitted_nonionizing_He;
+  std::vector< uint_fast32_t > _history_absorbed_source;
+  std::vector< uint_fast32_t > _history_absorbed_reemitted_H;
+  std::vector< uint_fast32_t > _history_absorbed_reemitted_He;
+  std::vector< uint_fast32_t > _history_absorbed_dust;
+  std::vector< uint_fast32_t > _history_absorbed_dens;
+  std::vector< uint_fast32_t > _history_absorbed_dif;
+
+  std::vector<uint_fast32_t> _history_ingoing_spectra;
+  std::vector<uint_fast32_t> _history_outgoing_spectra;
+  
+  uint_fast32_t _recorded_steps_count = 0;
+
 public:
+
+
+  inline void record_and_reset_radiation_step(){
+
+    _history_absorbed.push_back(_num_abs.value());
+    _history_escaped.push_back(_num_escape.value());
+    _history_escaped_ionizing.push_back(_num_escape_ionizing.value());
+    _history_escaped_nonionizing.push_back(_num_escape_nonionizing.value());
+    _history_absorbed_source.push_back(_num_abs_source.value());
+    _history_absorbed_reemitted_H.push_back(_num_abs_reemitted_H.value());
+    _history_absorbed_reemitted_He.push_back(_num_abs_reemitted_He.value());
+    _history_escaped_source.push_back(_num_escape_source.value());
+    _history_escaped_ionizing_source.push_back(_num_escape_ionizing_source.value());
+    _history_escaped_nonionizing_source.push_back(_num_escape_nonionizing_source.value());
+    _history_reemitted_H.push_back(_num_reemitted_H.value());
+    _history_reemitted_ionizing_H.push_back(_num_escape_reemitted_ionizing_H.value());
+    _history_reemitted_nonionizing_H.push_back(_num_escape_reemitted_nonionizing_H.value());
+    _history_reemitted_ionizing_He.push_back(_num_escape_reemitted_ionizing_He.value());
+    _history_reemitted_nonionizing_He.push_back(_num_escape_reemitted_nonionizing_He.value());
+    _history_reemitted_He.push_back(_num_reemitted_He.value());
+    _history_absorbed_dust.push_back(_num_abs_dust.value());
+    _history_absorbed_dens.push_back(_num_abs_dens.value());
+    _history_absorbed_dif.push_back(_num_abs_dif.value());
+
+
+     for (uint_fast32_t i = 0; i < numbins; ++i) {
+      _history_ingoing_spectra.push_back(_ingoing_spectrum[i].value());
+      _history_outgoing_spectra.push_back(_outgoing_spectrum[i].value());
+    }
+    
+    _recorded_steps_count++;
+    
+    reset_counters();
+  }
+
   /**
    * @brief constructor
    *
@@ -271,6 +334,7 @@ public:
    */
   inline void escape_source_photon(const PhotonPacket &packet) {
     _num_escape.pre_increment();
+    _num_escape_source.pre_increment();
     size_t scatter_counter = packet.get_scatter_counter();
     _scatter_histogram[std::min(scatter_counter, _scatter_histogram.size() - 1)]
         .pre_increment();
@@ -302,6 +366,10 @@ public:
 
   inline uint_fast32_t get_num_escaped() {
     return _num_escape.value();
+  }
+
+  inline uint_fast32_t get_num_escaped_source() {
+    return _num_escape_source.value();
   }
 
   inline uint_fast32_t get_num_escaped_ionizing() {
@@ -428,82 +496,120 @@ public:
 
 }
 
+  
 inline void write_snapshot_photon_statistics(const std::string &filename) {
 #ifdef HAVE_HDF5
-  if (filename.empty()) {
-    return;
-  }
+    if (filename.empty()) {
+      return;
+    }
 
-  HDF5Tools::HDF5File file = HDF5Tools::open_file(filename, HDF5Tools::HDF5FILEMODE_APPEND);
+    HDF5Tools::HDF5File file = HDF5Tools::open_file(filename, HDF5Tools::HDF5FILEMODE_APPEND);
 
-  HDF5Tools::HDF5Group photon_stats = HDF5Tools::create_group(file, "PhotonStatistics");
+    HDF5Tools::HDF5Group photon_stats = HDF5Tools::create_group(file, "PhotonStatistics");
 
-  uint_fast32_t total_abs = _num_abs.value();
-  uint_fast32_t total_escape = _num_escape.value();
-  uint_fast32_t escape_ion = _num_escape_ionizing.value();
-  uint_fast32_t escape_nonion = _num_escape_nonionizing.value();
-  uint_fast32_t abs_dens = _num_abs_dens.value();
-  uint_fast32_t abs_dif = _num_abs_dif.value();
-  uint_fast32_t abs_dust = _num_abs_dust.value();
-  uint_fast32_t reemitted_H = _num_reemitted_H.value();
-  uint_fast32_t reemitted_He = _num_reemitted_He.value();
-  uint_fast32_t abs_source = _num_abs_source.value();
-  uint_fast32_t abs_reemitted_H = _num_abs_reemitted_H.value();
-  uint_fast32_t abs_reemitted_He = _num_abs_reemitted_He.value();
-  uint_fast32_t escape_ionizing_source = _num_escape_ionizing_source.value();
-  uint_fast32_t escape_nonionizing_source = _num_escape_nonionizing_source.value();
-  uint_fast32_t escape_reemitted_ionizing_H = _num_escape_reemitted_ionizing_H.value();
-  uint_fast32_t escape_reemitted_nonionizing_H = _num_escape_reemitted_nonionizing_H.value();
-  uint_fast32_t escape_reemitted_ionizing_He = _num_escape_reemitted_ionizing_He.value();
-  uint_fast32_t escape_reemitted_nonionizing_He = _num_escape_reemitted_nonionizing_He.value();
+    // Write metadata attributes describing the dataset properties
+    double min_freq_val = min_frequency;
+    double max_freq_val = max_frequency;
+    uint_fast32_t num_bins_val = numbins;
+    uint_fast32_t steps_in_snapshot = _recorded_steps_count;
 
-  HDF5Tools::write_attribute< uint_fast32_t >(photon_stats, "TotalAbsorbed", total_abs);
-  HDF5Tools::write_attribute< uint_fast32_t >(photon_stats, "TotalEscaped", total_escape);
-  HDF5Tools::write_attribute< uint_fast32_t >(photon_stats, "TotalEscapedIonizing", escape_ion);
-  HDF5Tools::write_attribute< uint_fast32_t >(photon_stats, "TotalEscapedNonIonizing", escape_nonion);
-  HDF5Tools::write_attribute< uint_fast32_t >(photon_stats, "TotalAbsorbedDense", abs_dens);
-  HDF5Tools::write_attribute< uint_fast32_t >(photon_stats, "TotalAbsorbedDiffuse", abs_dif);
-  HDF5Tools::write_attribute< uint_fast32_t >(photon_stats, "TotalAbsorbedDust", abs_dust);
-  HDF5Tools::write_attribute< uint_fast32_t >(photon_stats, "TotalReemittedHydrogen", reemitted_H);
-  HDF5Tools::write_attribute< uint_fast32_t >(photon_stats, "TotalReemittedHelium", reemitted_He);
-  HDF5Tools::write_attribute< uint_fast32_t >(photon_stats, "TotalAbsorbedSource", abs_source);
-  HDF5Tools::write_attribute< uint_fast32_t >(photon_stats, "TotalAbsorbedReemittedHydrogen", abs_reemitted_H);
-  HDF5Tools::write_attribute< uint_fast32_t >(photon_stats, "TotalAbsorbedReemittedHelium", abs_reemitted_He);
-  HDF5Tools::write_attribute< uint_fast32_t >(photon_stats, "TotalEscapedIonizingSource", escape_ionizing_source);
-  HDF5Tools::write_attribute< uint_fast32_t >(photon_stats, "TotalEscapedNonIonizingSource", escape_nonionizing_source);
-  HDF5Tools::write_attribute< uint_fast32_t >(photon_stats, "TotalEscapedReemittedIonizingHydrogen", escape_reemitted_ionizing_H);
-  HDF5Tools::write_attribute< uint_fast32_t >(photon_stats, "TotalEscapedReemittedNonIonizingHydrogen", escape_reemitted_nonionizing_H);
-  HDF5Tools::write_attribute< uint_fast32_t >(photon_stats, "TotalEscapedReemittedIonizingHelium", escape_reemitted_ionizing_He);
-  HDF5Tools::write_attribute< uint_fast32_t >(photon_stats, "TotalEscapedReemittedNonIonizingHelium", escape_reemitted_nonionizing_He);
+    HDF5Tools::write_attribute< double >(photon_stats, "MinFrequency", min_freq_val);
+    HDF5Tools::write_attribute< double >(photon_stats, "MaxFrequency", max_freq_val);
+    HDF5Tools::write_attribute< uint_fast32_t >(photon_stats, "NumBins", num_bins_val);
+    HDF5Tools::write_attribute< uint_fast32_t >(photon_stats, "StepsInSnapshot", steps_in_snapshot);
 
-  double min_freq_val = min_frequency;
-  double max_freq_val = max_frequency;
-  uint_fast32_t num_bins_val = numbins;
+    std::string freq_units = "Hz";
+    HDF5Tools::write_attribute< std::string >(photon_stats, "FrequencyUnits", freq_units);
 
-  HDF5Tools::write_attribute< double >(photon_stats, "MinFrequency", min_freq_val);
-  HDF5Tools::write_attribute< double >(photon_stats, "MaxFrequency", max_freq_val);
-  HDF5Tools::write_attribute< uint_fast32_t >(photon_stats, "NumBins", num_bins_val);
+    // Save frequency bin axis definition
+    HDF5Tools::write_dataset< double >(photon_stats, "Frequencies", _frequencies);
 
-  std::string freq_units = "Hz";
-  HDF5Tools::write_attribute< std::string >(photon_stats, "FrequencyUnits", freq_units);
+    if (steps_in_snapshot == 0) {
+      _history_absorbed.push_back(0);
+      _history_escaped.push_back(0);
+      _history_escaped_ionizing.push_back(0);
+      _history_escaped_nonionizing.push_back(0);
+      _history_absorbed_source.push_back(0);
+      _history_absorbed_reemitted_H.push_back(0);
+      _history_absorbed_reemitted_He.push_back(0);
+      _history_escaped_source.push_back(0);
+      _history_escaped_ionizing_source.push_back(0);
+      _history_escaped_nonionizing_source.push_back(0);
+      _history_reemitted_H.push_back(0);
+      _history_reemitted_ionizing_H.push_back(0);
+      _history_reemitted_nonionizing_H.push_back(0);
+      _history_reemitted_ionizing_He.push_back(0);
+      _history_reemitted_nonionizing_He.push_back(0);
+      _history_reemitted_He.push_back(0);
+      _history_absorbed_dust.push_back(0);
+      _history_absorbed_dens.push_back(0);
+      _history_absorbed_dif.push_back(0);
 
-  std::vector< uint_fast32_t > ingoing_write_spectrum(numbins);
-  std::vector< uint_fast32_t > outgoing_write_spectrum(numbins);
-  for (uint_fast32_t i = 0; i < numbins; ++i) {
-    ingoing_write_spectrum[i] = _ingoing_spectrum[i].value();
-    outgoing_write_spectrum[i] = _outgoing_spectrum[i].value();
-  }
+      // Pad out spectra history vectors with zeros for 1 full dummy step block
+      for (uint_fast32_t i = 0; i < numbins; ++i) {
+        _history_ingoing_spectra.push_back(0);
+        _history_outgoing_spectra.push_back(0);
+      }
+    }
 
-  HDF5Tools::write_dataset< double >(photon_stats, "Frequencies", _frequencies);
-  HDF5Tools::write_dataset< uint_fast32_t >(photon_stats, "IngoingSpectrum", ingoing_write_spectrum);
-  HDF5Tools::write_dataset< uint_fast32_t >(photon_stats, "OutgoingSpectrum", outgoing_write_spectrum);
+    // Write out the step-resolved scalar histories securely
+    HDF5Tools::write_dataset< uint_fast32_t >(photon_stats, "HistoryTotalAbsorbed", _history_absorbed);
+    HDF5Tools::write_dataset< uint_fast32_t >(photon_stats, "HistoryTotalEscaped", _history_escaped);
+    HDF5Tools::write_dataset< uint_fast32_t >(photon_stats, "HistoryTotalEscapedIonizing", _history_escaped_ionizing);
+    HDF5Tools::write_dataset< uint_fast32_t >(photon_stats, "HistoryTotalEscapedNonIonizing", _history_escaped_nonionizing);
+    HDF5Tools::write_dataset< uint_fast32_t >(photon_stats, "HistoryTotalAbsorbedSource", _history_absorbed_source);
+    HDF5Tools::write_dataset< uint_fast32_t >(photon_stats, "HistoryTotalAbsorbedReemittedHydrogen", _history_absorbed_reemitted_H);
+    HDF5Tools::write_dataset< uint_fast32_t >(photon_stats, "HistoryTotalAbsorbedReemittedHelium", _history_absorbed_reemitted_He);
+    HDF5Tools::write_dataset< uint_fast32_t >(photon_stats, "HistoryTotalEscapedSource", _history_escaped_source);
+    HDF5Tools::write_dataset< uint_fast32_t >(photon_stats, "HistoryTotalEscapedIonizingSource", _history_escaped_ionizing_source);
+    HDF5Tools::write_dataset< uint_fast32_t >(photon_stats, "HistoryTotalEscapedNonIonizingSource", _history_escaped_nonionizing_source);
+    HDF5Tools::write_dataset< uint_fast32_t >(photon_stats, "HistoryTotalReemittedHydrogen", _history_reemitted_H);
+    HDF5Tools::write_dataset< uint_fast32_t >(photon_stats, "HistoryTotalEscapedReemittedIonizingHydrogen", _history_reemitted_ionizing_H);
+    HDF5Tools::write_dataset< uint_fast32_t >(photon_stats, "HistoryTotalEscapedReemittedNonIonizingHydrogen", _history_reemitted_nonionizing_H);
+    HDF5Tools::write_dataset< uint_fast32_t >(photon_stats, "HistoryTotalEscapedReemittedIonizingHelium", _history_reemitted_ionizing_He);
+    HDF5Tools::write_dataset< uint_fast32_t >(photon_stats, "HistoryTotalEscapedReemittedNonIonizingHelium", _history_reemitted_nonionizing_He);
+    HDF5Tools::write_dataset< uint_fast32_t >(photon_stats, "HistoryTotalReemittedHelium", _history_reemitted_He);
+    HDF5Tools::write_dataset< uint_fast32_t >(photon_stats, "HistoryTotalAbsorbedDust", _history_absorbed_dust);
+    HDF5Tools::write_dataset< uint_fast32_t >(photon_stats, "HistoryTotalAbsorbedDense", _history_absorbed_dens);
+    HDF5Tools::write_dataset< uint_fast32_t >(photon_stats, "HistoryTotalAbsorbedDiffuse", _history_absorbed_dif);
 
-  HDF5Tools::close_group(photon_stats);
-  HDF5Tools::close_file(file);
+    // Write out the flat step-resolved spectra histories
+    HDF5Tools::write_dataset< uint_fast32_t >(photon_stats, "HistoryIngoingSpectrum", _history_ingoing_spectra);
+    HDF5Tools::write_dataset< uint_fast32_t >(photon_stats, "HistoryOutgoingSpectrum", _history_outgoing_spectra);
+
+    HDF5Tools::close_group(photon_stats);
+    HDF5Tools::close_file(file);
+
+    // Clear history cache containers so the next block doesn't accumulate leftovers
+    _history_absorbed.clear();
+    _history_escaped.clear();
+    _history_escaped_ionizing.clear();
+    _history_escaped_nonionizing.clear();
+    _history_absorbed_source.clear();
+    _history_absorbed_reemitted_H.clear();
+    _history_absorbed_reemitted_He.clear();
+    _history_escaped_source.clear();
+    _history_escaped_ionizing_source.clear();
+    _history_escaped_nonionizing_source.clear();
+    _history_reemitted_H.clear();
+    _history_reemitted_ionizing_H.clear();
+    _history_reemitted_nonionizing_H.clear();
+    _history_reemitted_ionizing_He.clear();
+    _history_reemitted_nonionizing_He.clear();
+    _history_reemitted_He.clear();
+    _history_absorbed_dust.clear();
+    _history_absorbed_dens.clear();
+    _history_absorbed_dif.clear();
+    _history_ingoing_spectra.clear();
+    _history_outgoing_spectra.clear();
+    _recorded_steps_count = 0;
 #else
     (void)filename;
 #endif
-}
+  }
+
+
+
 
 };
 
