@@ -2768,7 +2768,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                   diffuse_photon_source.get_photon_batch(isrc_d, PHOTONBUFFER_SIZE);
               if (number_of_diffuse_photons_this_batch > 0) {
                 const size_t new_diffuse_task = tasks->get_free_element();
-                (*tasks)[new_diffuse_task].set_type(TASKTYPE_SOURCE_DISCRETE_DIFFUSE_PHOTON);
+                (*tasks)[new_diffuse_task].set_type(TASKTYPE_SOURCE_DISCRETE_PHOTON);
                 (*tasks)[new_diffuse_task].set_subgrid(isrc_d);
                 (*tasks)[new_diffuse_task].set_buffer(number_of_diffuse_photons_this_batch);
                 pending_photon_tasks.pre_increment();
@@ -2804,7 +2804,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
 
           // DIFFUSE PHOTON LAUNCH
-          task_contexts[TASKTYPE_SOURCE_DISCRETE_DIFFUSE_PHOTON] = 
+          task_contexts[TASKTYPE_SOURCE_DISCRETE_PHOTON] = 
               new SourceDiscreteDiffusePhotonTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> >(
                   diffuse_photon_source, *buffers, random_generators, 1.,
                   abundances, *cross_sections, *grid_creator, *tasks,
@@ -2818,10 +2818,12 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                     num_photon_done, statistics); // mgb 22.09.2026 - add statistics
           }
 
+            const bool do_reemission =
+              reemission_handler != nullptr && !_time_dependent_diffuse_field_flag;
           task_contexts[TASKTYPE_PHOTON_TRAVERSAL] =
               new PhotonTraversalTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> >(
                   *buffers, *grid_creator, *tasks, num_photon_done, statistics, // mgb 22.09.2026 - add statistics
-                  reemission_handler != nullptr, _max_photon_distance);
+                do_reemission, _max_photon_distance);
 
           PrematureLaunchTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> > premature_launch(
               *buffers, *grid_creator, *tasks, queues, *shared_queue,
@@ -3261,7 +3263,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
               const size_t number_of_photons_this_batch = diffuse_photon_source.get_photon_batch(isrc, PHOTONBUFFER_SIZE);
               if (number_of_photons_this_batch > 0) {
                 const size_t new_task = tasks->get_free_element();
-                (*tasks)[new_task].set_type(TASKTYPE_SOURCE_DISCRETE_DIFFUSE_PHOTON);
+                (*tasks)[new_task].set_type(TASKTYPE_SOURCE_DISCRETE_PHOTON);
                 (*tasks)[new_task].set_subgrid(isrc);
                 (*tasks)[new_task].set_buffer(number_of_photons_this_batch);
                 pending_photon_tasks.pre_increment();
@@ -3272,7 +3274,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           }
 
           TaskContext *task_contexts[TASKTYPE_NUMBER] = {nullptr};
-          task_contexts[TASKTYPE_SOURCE_DISCRETE_DIFFUSE_PHOTON] =
+          task_contexts[TASKTYPE_SOURCE_DISCRETE_PHOTON] =
               new SourceDiscreteDiffusePhotonTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> >(
                   diffuse_photon_source, *buffers, random_generators, 1.,
                   abundances, *cross_sections, *grid_creator, *tasks,
@@ -3284,9 +3286,11 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                     *buffers, random_generators, *reemission_handler, abundances, *cross_sections, *grid_creator, *tasks, num_photon_done, statistics);
           }
 
+            const bool do_reemission =
+              reemission_handler != nullptr && !_time_dependent_diffuse_field_flag;
           task_contexts[TASKTYPE_PHOTON_TRAVERSAL] =
               new PhotonTraversalTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> >(
-                  *buffers, *grid_creator, *tasks, num_photon_done, statistics, reemission_handler != nullptr, _max_photon_distance);
+                *buffers, *grid_creator, *tasks, num_photon_done, statistics, do_reemission, _max_photon_distance);
 
           PrematureLaunchTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> > premature_launch(*buffers, *grid_creator, *tasks, queues, *shared_queue, &pending_photon_tasks);
           Scheduler scheduler(*tasks, queues, *shared_queue);
