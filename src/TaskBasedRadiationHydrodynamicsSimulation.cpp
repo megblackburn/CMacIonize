@@ -873,6 +873,8 @@ if (_do_FUV_heating) {
     const double fuv_cell_heating = volumetric_fuv_heating / inverse_volume;
 
     gain += fuv_cell_heating;
+
+    ionization_variables.set_FUV_heating_rate(fuv_cell_heating);
    // std::cout<< "Calculated gain from FUV heating!" << std::endl;
 
 

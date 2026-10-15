@@ -53,6 +53,7 @@ enum DensityGridField {
   DENSITYGRIDFIELD_HEATING_RATE,
 #endif
   DENSITYGRIDFIELD_COSMIC_RAY_FACTOR,
+  DENSITYGRIDFIELD_FUV_HEATING_RATE,
   DENSITYGRIDFIELD_DENSITY,
   DENSITYGRIDFIELD_VELOCITIES,
   DENSITYGRIDFIELD_PRESSURE,
@@ -114,6 +115,8 @@ public:
       return DENSITYGRIDFIELDTYPE_SCALAR_DOUBLE;
 #endif
     case DENSITYGRIDFIELD_COSMIC_RAY_FACTOR:
+      return DENSITYGRIDFIELDTYPE_SCALAR_DOUBLE;
+    case DENSITYGRIDFIELD_FUV_HEATING_RATE: 
       return DENSITYGRIDFIELDTYPE_SCALAR_DOUBLE;
     case DENSITYGRIDFIELD_DENSITY:
       return DENSITYGRIDFIELDTYPE_SCALAR_DOUBLE;
@@ -177,6 +180,8 @@ public:
 #endif
     case DENSITYGRIDFIELD_COSMIC_RAY_FACTOR:
       return "CosmicRayFactor";
+    case DENSITYGRIDFIELD_FUV_HEATING_RATE:
+      return "FUVHeatingRate";
     case DENSITYGRIDFIELD_DENSITY:
       return "Density";
     case DENSITYGRIDFIELD_VELOCITIES:
@@ -243,6 +248,8 @@ public:
 #endif
     case DENSITYGRIDFIELD_COSMIC_RAY_FACTOR:
       return false;
+    case DENSITYGRIDFIELD_FUV_HEATING_RATE:
+      return false;
     case DENSITYGRIDFIELD_DENSITY:
       return hydro;
     case DENSITYGRIDFIELD_VELOCITIES:
@@ -304,6 +311,8 @@ public:
       return false;
 #endif
     case DENSITYGRIDFIELD_COSMIC_RAY_FACTOR:
+      return false;
+    case DENSITYGRIDFIELD_FUV_HEATING_RATE:
       return false;
     case DENSITYGRIDFIELD_DENSITY:
       return false;
@@ -368,6 +377,8 @@ public:
 #endif
     case DENSITYGRIDFIELD_COSMIC_RAY_FACTOR:
       return false;
+    case DENSITYGRIDFIELD_FUV_HEATING_RATE:
+      return false;
     case DENSITYGRIDFIELD_DENSITY:
       return false;
     case DENSITYGRIDFIELD_VELOCITIES:
@@ -430,6 +441,8 @@ public:
 #endif
     case DENSITYGRIDFIELD_COSMIC_RAY_FACTOR:
       return false;
+    case DENSITYGRIDFIELD_FUV_HEATING_RATE:
+      return false;
     case DENSITYGRIDFIELD_DENSITY:
       return true;
     case DENSITYGRIDFIELD_VELOCITIES:
@@ -481,6 +494,8 @@ public:
       return it.get_ionization_variables().get_temperature();
     case DENSITYGRIDFIELD_COSMIC_RAY_FACTOR:
       return it.get_ionization_variables().get_cosmic_ray_factor();
+    case DENSITYGRIDFIELD_FUV_HEATING_RATE:
+      return it.get_ionization_variables().get_FUV_heating_rate();  
     case DENSITYGRIDFIELD_DENSITY: {
       if (hydro_units != nullptr) {
         return hydro_units->convert_to_SI_units< QUANTITY_DENSITY >(
@@ -558,6 +573,8 @@ public:
       return it.get_ionization_variables().get_temperature();
     case DENSITYGRIDFIELD_COSMIC_RAY_FACTOR:
       return it.get_ionization_variables().get_cosmic_ray_factor();
+    case DENSITYGRIDFIELD_FUV_HEATING_RATE:
+      return it.get_ionization_variables().get_FUV_heating_rate();
     case DENSITYGRIDFIELD_DENSITY: {
       if (hydro_units != nullptr) {
         cmac_error("Not implemented yet!");
