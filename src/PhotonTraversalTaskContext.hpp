@@ -256,7 +256,7 @@ public:
             } else {
               _statistics->absorb_source_photon(photon);
             }
-      //      _statistics->absorb_photon(photon); // mgb 15.10.2026 - edit to remove double counting
+        //    _statistics->absorb_photon(photon); // mgb 15.10.2026 - edit to remove double counting
           } else {
             if (photon.get_type() == PHOTONTYPE_DIFFUSE_HI) {
               _statistics->escape_reemitted_H_photon(photon);
@@ -265,7 +265,7 @@ public:
             } else {
               _statistics->escape_source_photon(photon);
             }
-       //     _statistics->escape_photon(photon);
+          //  _statistics->escape_photon(photon);
           }
         }
       }

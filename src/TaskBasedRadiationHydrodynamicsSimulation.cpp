@@ -2876,7 +2876,10 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
           buffers->reset();
 
+          
+
           if (iloop == nloop - 1) {
+            #pragma omp single
             if (statistics != nullptr) {
            //   statistics->print_stats();
               std::cout << "Number of photons escaped = " << statistics->get_num_escaped() << std::endl;
@@ -2889,9 +2892,10 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
               std::cout << "Number of photons escaped (ionizing) = " << statistics->get_num_escaped_ionizing() << std::endl;
               std::cout << "Number of photons escaped (non-ionizing) = " << statistics->get_num_escaped_nonionizing() << std::endl;
 
-              statistics->record_and_reset_radiation_step();
+            //  statistics->record_and_reset_radiation_step();
             }
           }
+          statistics->record_and_reset_radiation_step();
 
           // update copies
           grid_creator->update_original_counters();

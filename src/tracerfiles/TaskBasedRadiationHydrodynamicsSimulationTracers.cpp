@@ -2401,10 +2401,12 @@ int TaskBasedRadiationHydrodynamicsSimulationTracers::do_simulation(
                     num_photon_done,nullptr);
           }
 
+            const bool do_reemission =
+              reemission_handler != nullptr && !_time_dependent_diffuse_field_flag;
           task_contexts[TASKTYPE_PHOTON_TRAVERSAL] =
               new PhotonTraversalTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> >(
                   *buffers, *grid_creator, *tasks, num_photon_done, nullptr,
-                  reemission_handler != nullptr, _max_photon_distance);
+                do_reemission, _max_photon_distance);
 
           PrematureLaunchTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> > premature_launch(
               *buffers, *grid_creator, *tasks, queues, *shared_queue);
