@@ -54,25 +54,23 @@ public:
    *
    * @return Total luminosity (in s^-1).
    */
-  virtual double get_total_diffuse_luminosity() const = 0;
+  virtual double get_total_diffuse_luminosity_H() const = 0;
 
-  virtual double get_total_diffuse_photons() const = 0;
+  virtual double get_total_diffuse_photons_H() const = 0;
 
-  virtual photonsourcenumber_t get_number_of_diffuse_sources() const = 0;
+  virtual photonsourcenumber_t get_number_of_diffuse_sources_H() const = 0;
 
-  virtual double get_diffuse_photon_frequency(photonsourcenumber_t index) {
+  virtual double get_diffuse_photon_frequency_H(photonsourcenumber_t index) {
     return 0.0;
   };
 
-  virtual double get_diffuse_weight(photonsourcenumber_t index) const = 0;
+  virtual double get_diffuse_weight_H(photonsourcenumber_t index) const = 0;
 
-  virtual size_t get_diffuse_subgrid_index(photonsourcenumber_t index) const = 0;
+  virtual size_t get_diffuse_subgrid_index_H(photonsourcenumber_t index) const = 0;
 
-  virtual bool has_active_diffuse_sources() const {
+  virtual bool has_active_diffuse_sources_H() const {
     return false;
   }
-
-  
 
   /**
    * @brief Get the position of a diffuse photon source.
@@ -81,16 +79,60 @@ public:
    * get_number_of_sources().
    * @return CoordinateVector of a valid and photon source position (in m).
    */
-  virtual CoordinateVector<> get_diffuse_position(photonsourcenumber_t index) = 0;
+  virtual CoordinateVector<> get_diffuse_position_H(photonsourcenumber_t index) = 0;
 
   /**
-   * @brief Update the distribution after the system moved to the given time.
+   * @brief Get the total luminosity of all sources together.
+   *
+   * @return Total luminosity (in s^-1).
+   */
+  virtual double get_total_diffuse_luminosity_He() const = 0;
+
+  virtual double get_total_diffuse_photons_He() const = 0;
+
+  virtual photonsourcenumber_t get_number_of_diffuse_sources_He() const = 0;
+
+  virtual double get_diffuse_photon_frequency_He(photonsourcenumber_t index) {
+    return 0.0;
+  };
+
+  virtual double get_diffuse_weight_He(photonsourcenumber_t index) const = 0;
+
+  virtual size_t get_diffuse_subgrid_index_He(photonsourcenumber_t index) const = 0;
+
+  virtual bool has_active_diffuse_sources_He() const {
+    return false;
+  }
+
+  /**
+   * @brief Get the position of a diffuse photon source.
+   *
+   * @param index Index of the photon source, must be in between 0 and
+   * get_number_of_sources().
+   * @return CoordinateVector of a valid and photon source position (in m).
+   */
+  virtual CoordinateVector<> get_diffuse_position_He(photonsourcenumber_t index) = 0;
+
+
+  /**
+   * @brief Update the distribution for H diffuse emission after the system moved to the given time.
    *
    * @param simulation_time Current simulation time (in s).
    * @return True if the distribution changed, false otherwise.
    */
 
-  virtual bool update(DensitySubGridCreator< HydroDensitySubGrid > *grid_creator, double actual_timestep) {return false;}
+  virtual bool update_H(DensitySubGridCreator< HydroDensitySubGrid > *grid_creator, double actual_timestep) {return false;}
+
+    /**
+   * @brief Update the distribution for He diffuse emission after the system moved to the given time.
+   *
+   * @param simulation_time Current simulation time (in s).
+   * @return True if the distribution changed, false otherwise.
+   */
+
+  virtual bool update_He(DensitySubGridCreator< HydroDensitySubGrid > *grid_creator, double actual_timestep) {return false;}
+
+
 
 
   /**

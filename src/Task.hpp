@@ -38,8 +38,10 @@
 enum TaskType {
   /*! @brief Draw random photons from a discrete source. */
   TASKTYPE_SOURCE_DISCRETE_PHOTON = 0,
-  /*! @brief Draw random photons from a discrete diffuse source. */
-  TASKTYPE_SOURCE_DISCRETE_DIFFUSE_PHOTON,
+  /*! @brief Draw random photons from a discrete diffuse Hydrogen source. */
+  TASKTYPE_SOURCE_DISCRETE_DIFFUSE_HYDROGEN_PHOTON,
+  /*! @brief Draw random photons from a discrete diffuse Helium source. */
+  TASKTYPE_SOURCE_DISCRETE_DIFFUSE_HELIUM_PHOTON,
   /*! @brief Draw random photons from a continuous source. */
   TASKTYPE_SOURCE_CONTINUOUS_PHOTON,
   /*! @brief Propagate photons through a subgrid. */

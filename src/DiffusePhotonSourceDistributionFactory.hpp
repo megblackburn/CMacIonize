@@ -17,7 +17,7 @@
  ******************************************************************************/
 
 /**
- * @file DiffusePhotonSourceDistributionFactory.hpp
+ * @file HydrogenDiffusePhotonSourceDistributionFactory.hpp
  *
  * @brief Factory class for DiffusePhotonSourceDistribution instances.
  *
@@ -34,15 +34,15 @@
 #include "CrossSections.hpp"
 
 // non library dependent implementations
-#include "TimeDependentDiffusePhotonSourceDistribution.hpp"
+#include "TimeDependentHydrogenDiffusePhotonSourceDistribution.hpp"
 
 #include <string>
 #include <typeinfo>
 
 /**
- * @brief Factory class for DiffusePhotonSourceDistribution instances.
+ * @brief Factory class for HydrogenDiffusePhotonSourceDistribution instances.
  */
-class DiffusePhotonSourceDistributionFactory {
+class HydrogenDiffusePhotonSourceDistributionFactory {
 private:
   
 
@@ -66,7 +66,7 @@ public:
     if (type == "None") {
       return nullptr;
     } else if (type == "TimeDependent") {
-      return new TimeDependentDiffusePhotonSourceDistribution(params, recombination_rates, cross_sections, log);
+      return new TimeDependentHydrogenDiffusePhotonSourceDistribution(params, recombination_rates, cross_sections, log);
     } else {
       cmac_error("Unknown DiffusePhotonSourceDistribution type: \"%s\".",
                  type.c_str());
@@ -94,8 +94,8 @@ public:
       const bool use_tigress_like_injection = true) {
 
     const std::string tag = restart_reader.read< std::string >();
-    if (tag == typeid(TimeDependentDiffusePhotonSourceDistribution).name()) {
-      return new TimeDependentDiffusePhotonSourceDistribution(restart_reader, recombination_rates, cross_sections, log);
+    if (tag == typeid(TimeDependentHydrogenDiffusePhotonSourceDistribution).name()) {
+      return new TimeDependentHydrogenDiffusePhotonSourceDistribution(restart_reader, recombination_rates, cross_sections, log);
     } else {
       cmac_error("Restarting is not supported for distribution type: \"%s\".",
                  tag.c_str());

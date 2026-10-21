@@ -22,22 +22,28 @@
  * @brief Task context responsible for generating new photon packets that
  * originate from discrete sources.
  *
- * @author Bert Vandenbroucke (bert.vandenbroucke@ugent.be)
+ * @author Meg Blackburn (mgb27@st-andrews.ac.uk)
  */
 #ifndef SOURCEDISCRETEDIFFUSEPHOTONTASKCONTEXT_HPP
 #define SOURCEDISCRETEDIFFUSEPHOTONTASKCONTEXT_HPP
 
 #include "CrossSections.hpp"
 #include "DistributedPhotonSource.hpp"
-#include "DiffusePhotonSourceDistribution.hpp"
+#include "HydrogenDiffusePhotonSourceDistribution.hpp"
 #include "MemorySpace.hpp"
 #include "Task.hpp"
 #include "TaskContext.hpp"
 
 /**
  * @brief Task context responsible for generating new photon packets that
- * originate from discrete sources.
+ * originate from discrete time dependent recombination sources.
  */
+
+struct DiffusePhotonBatch {
+    size_t subgrid;
+    std::vector<size_t> sources;
+};
+
 template < typename _subgrid_type_, typename _creator_type >
 class SourceDiscreteDiffusePhotonTaskContext : public TaskContext {
 private:
@@ -66,24 +72,16 @@ private:
   /*! @brief Task space. */
   ThreadSafeVector< Task > &_tasks;
 
-  DiffusePhotonSourceDistribution &_photon_source_distribution;
+  HydrogenDiffusePhotonSourceDistribution &_photon_source_distribution;
 
   /*! @brief Statistical information about photon packets. */
   PhotonPacketStatistics *_statistics;
 
+  const std::vector<DiffusePhotonBatch> &_batches;
+
 public:
   /**
    * @brief Constructor.
-   *
-   * @param photon_source Discrete photon source.
-   * @param buffers Photon buffer array.
-   * @param random_generators Per thread random generator.
-   * @param discrete_photon_weight Weight of an individual discrete photon
-   * packet.
-   * @param abundances Abundances.
-   * @param cross_sections Cross sections for photoionization.
-   * @param grid_creator Grid creator.
-   * @param tasks Task space.
    */
    
   inline SourceDiscreteDiffusePhotonTaskContext(
@@ -91,11 +89,12 @@ public:
       MemorySpace &buffers, std::vector< RandomGenerator > &random_generators,
       const double discrete_photon_weight,
       const Abundances &abundances, CrossSections &cross_sections,
-      _creator_type &grid_creator, // mgb edit 24.04.2026
+      _creator_type &grid_creator,
       ThreadSafeVector< Task > &tasks,
-      DiffusePhotonSourceDistribution &photon_source_distribution,
+      HydrogenDiffusePhotonSourceDistribution &photon_source_distribution,
       PhotonPacketStatistics *statistics,
-      const double frequency_uniform_fraction = 0.)
+      const std::vector<DiffusePhotonBatch> &diffuse_batches, // ──> FIX 2: Moved BEFORE the parameter with default arg
+      const double frequency_uniform_fraction = 0.)          // ──> Kept strictly at the very end
       : _photon_source(photon_source), _buffers(buffers),
         _random_generators(random_generators),
         _discrete_photon_weight(discrete_photon_weight),
@@ -103,30 +102,22 @@ public:
         _abundances(abundances), _cross_sections(cross_sections),
         _grid_creator(grid_creator), _tasks(tasks),
         _photon_source_distribution(photon_source_distribution),
-        _statistics(statistics) {}
+        _statistics(statistics),
+        _batches(diffuse_batches) {}
 
   /**
    * @brief Execute a discrete photon source task.
-   *
-   * @param thread_id ID of the thread that executes the task.
-   * @param thread_context Thread specific context for the task.
-   * @param tasks_to_add Array with indices of newly created tasks.
-   * @param queues_to_add Array with target queue indices for the newly created
-   * tasks.
-   * @param task Task to execute.
-   * @return Number of new tasks created by the task.
    */
   virtual uint_fast32_t execute(const int_fast32_t thread_id,
                                 ThreadContext *thread_context,
                                 uint_fast32_t *tasks_to_add,
                                 int_fast32_t *queues_to_add, Task &task) {
 
-    const size_t source_index = task.get_subgrid();
-
-    const size_t num_photon_this_loop = task.get_buffer();
-    const size_t subgrid_index = _photon_source.get_subgrid(source_index);
-    const size_t diffuse_source_index = _photon_source.get_index(source_index);
-
+    const size_t batch_vector_index = task.get_buffer();                              
+    const DiffusePhotonBatch &batch = _batches[batch_vector_index];
+    const size_t num_photon_this_loop = batch.sources.size();
+    const size_t subgrid_index = batch.subgrid;
+    
     // get a free photon buffer in the central queue
     uint_fast32_t buffer_index = _buffers.get_free_buffer();
     PhotonBuffer &input_buffer = _buffers[buffer_index];
@@ -136,58 +127,45 @@ public:
     input_buffer.set_subgrid_index(subgrid_index);
     input_buffer.set_direction(TRAVELDIRECTION_INSIDE);
 
-    const CoordinateVector<> source_position =
-        _photon_source.get_position(source_index);
-
     // draw random photons and store them in the buffer
     for (uint_fast32_t i = 0; i < num_photon_this_loop; ++i) {
+
+      const size_t source_index = batch.sources[i];
+      const size_t diffuse_source_index = _photon_source.get_index(source_index);
+      const CoordinateVector<> source_position = _photon_source.get_position(source_index);
 
       PhotonPacket &photon = input_buffer[i];
 
       photon.set_type(PHOTONTYPE_DIFFUSE_HI);
       photon.set_scatter_counter(0);
       photon.set_distance_travelled(0.0);
-
-      // initial position: we currently assume a single source at the
-      // origin
       photon.set_position(source_position);
 
       // draw two pseudo random numbers
-      const double cost =
-          2. * _random_generators[thread_id].get_uniform_random_double() - 1.;
-      const double phi =
-          2. * M_PI * _random_generators[thread_id].get_uniform_random_double();
+      const double cost = 2. * _random_generators[thread_id].get_uniform_random_double() - 1.;
+      const double phi = 2. * M_PI * _random_generators[thread_id].get_uniform_random_double();
 
-      // now use them to get all directional angles
       const double sint = std::sqrt(std::max(1. - cost * cost, 0.));
       const double cosp = std::cos(phi);
       const double sinp = std::sin(phi);
 
-      // set the direction...
       const CoordinateVector<> direction(sint * cosp, sint * sinp, cost);
-
       photon.set_direction(direction);
 
-
-
       // target optical depth (exponential distribution)
-      photon.set_target_optical_depth(
-          -std::log(_random_generators[thread_id].get_uniform_random_double()));
+      photon.set_target_optical_depth(-std::log(_random_generators[thread_id].get_uniform_random_double()));
 
-        const double frequency =
-          _photon_source_distribution.get_diffuse_photon_frequency(
-            diffuse_source_index);
-        const double dust_opacity = _cross_sections.get_dust_opacity(frequency);
+      const double frequency = _photon_source_distribution.get_diffuse_photon_frequency(diffuse_source_index);
+      const double dust_opacity = _cross_sections.get_dust_opacity(frequency);
       
       photon.set_weight(_discrete_photon_weight);
-
-        photon.set_source_index(diffuse_source_index);
-
-
+      photon.set_source_index(diffuse_source_index);
       photon.set_energy(frequency);
+
       if (_statistics != nullptr) {
-          _statistics->injected_photon(photon);
-        }
+        _statistics->injected_photon(photon);
+      }
+
       for (int_fast32_t ion = 0; ion < NUMBER_OF_IONNAMES; ++ion) {
         double sigma = _cross_sections.get_cross_section(ion, frequency);
 #ifndef VARIABLE_ABUNDANCES
@@ -196,14 +174,11 @@ public:
         }
 #endif
         photon.set_photoionization_cross_section(ion, sigma);
-
-
-      photon.set_dust_opacity(dust_opacity);
+        photon.set_dust_opacity(dust_opacity);
       }
     }
 
-    // add to the queue of the corresponding thread
-    auto it_test= _grid_creator.get_subgrid(subgrid_index);
+    auto it_test = _grid_creator.get_subgrid(subgrid_index);
     _subgrid_type_ *subgrid_ptr = &(*it_test);
 
     if (subgrid_ptr == nullptr) {
@@ -211,19 +186,14 @@ public:
         return 0; 
     }
 
-    // 3. Now it is safe to use
     _subgrid_type_ &subgrid = *subgrid_ptr;
-   // _subgrid_type_ &subgrid = *_grid_creator.get_subgrid(subgrid_index);
+
     const size_t task_index = _tasks.get_free_element();
     Task &new_task = _tasks[task_index];
     new_task.set_type(TASKTYPE_PHOTON_TRAVERSAL);
     new_task.set_subgrid(subgrid_index);
     new_task.set_buffer(buffer_index);
 
-    // add dependency for task:
-    //  - subgrid
-    // (the output buffers belong to the subgrid and do not count as a
-    // dependency)
     new_task.set_dependency(subgrid.get_dependency());
 
     queues_to_add[0] = subgrid.get_owning_thread();

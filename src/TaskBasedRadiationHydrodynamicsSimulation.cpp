@@ -38,7 +38,8 @@
 #include "DensityFunctionFactory.hpp"
 #include "DensityGridWriterFactory.hpp"
 #include "DiffuseReemissionHandlerFactory.hpp"
-#include "DiffusePhotonSourceDistributionFactory.hpp"
+#include "HydrogenDiffusePhotonSourceDistributionFactory.hpp"
+#include "HeliumDiffusePhotonSourceDistributionFactory.hpp"
 #include "DistributedPhotonSource.hpp"
 #include "ExternalPotentialFactory.hpp"
 #include "HydroBoundaryManager.hpp"
@@ -66,6 +67,7 @@
 #include "SimulationBox.hpp"
 #include "SourceDiscretePhotonTaskContext.hpp"
 #include "SourceDiscreteDiffusePhotonTaskContext.hpp"
+#include "SourceDiscreteDiffuseHeliumPhotonTaskContext.hpp"
 #include "TaskQueue.hpp"
 #include "TemperatureCalculator.hpp"
 #include "TimeLine.hpp"
@@ -1861,15 +1863,24 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
             "SupernovaHandler:TIGRESS like injection", true));
   }
 
-  DiffusePhotonSourceDistribution *diffusesourcedistribution = nullptr;
+  HydrogenDiffusePhotonSourceDistribution *hydrogendiffusesourcedistribution = nullptr;
+  HeliumDiffusePhotonSourceDistribution *heliumdiffusesourcedistribution = nullptr;
 
   if (_time_dependent_diffuse_field_flag) {
     if (restart_reader == nullptr) {
-      diffusesourcedistribution =
-          DiffusePhotonSourceDistributionFactory::generate(*params, *recombination_rates, *cross_sections, log);
+      hydrogendiffusesourcedistribution =
+          HydrogenDiffusePhotonSourceDistributionFactory::generate(*params, *recombination_rates, *cross_sections, log);
+      #ifdef HAS_HELIUM
+      heliumdiffusesourcedistribution =
+          HeliumDiffusePhotonSourceDistributionFactory::generate(*params, *recombination_rates, *cross_sections, log);
+      #endif
     } else {
-      diffusesourcedistribution =
-          DiffusePhotonSourceDistributionFactory::restart(*restart_reader, *recombination_rates, *cross_sections, log);
+      hydrogendiffusesourcedistribution =
+          HydrogenDiffusePhotonSourceDistributionFactory::restart(*restart_reader, *recombination_rates, *cross_sections, log);
+      #ifdef HAS_HELIUM
+      heliumdiffusesourcedistribution =
+          HeliumDiffusePhotonSourceDistributionFactory::restart(*restart_reader, *recombination_rates, *cross_sections, log);
+      #endif
     }
   } else {
     if (restart_reader != nullptr) {
@@ -1892,7 +1903,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                  "ignored.");
   }
 
-  if (diffusesourcedistribution == nullptr && _time_dependent_diffuse_field_flag) {
+  if (hydrogendiffusesourcedistribution == nullptr && _time_dependent_diffuse_field_flag) {
     cmac_error("Diffuse photon source distribution is required for time-dependent diffuse field.");
   }
 
@@ -1957,21 +1968,43 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
   TemperatureCalculator *temperature_calculator;
 
   // mgb 24.09.2026 - Addition of diffuse photon field luminosity
-  if (sourcedistribution == nullptr && diffusesourcedistribution == nullptr) {
+  
+  if (sourcedistribution == nullptr && hydrogendiffusesourcedistribution == nullptr) { 
+    // NO DIFFUSE FIELD OR STELLAR FIELD
+
     temperature_calculator = new TemperatureCalculator(
         0.0, abundances, line_cooling_data,
         *recombination_rates, charge_transfer_rates, collisional_rates,radiative_cooling, *params, log);
-  } else if (sourcedistribution != nullptr && diffusesourcedistribution == nullptr) {
+
+  } else if (sourcedistribution != nullptr && hydrogendiffusesourcedistribution == nullptr) {
+    // NO DIFFUSE FIELD
+
     temperature_calculator = new TemperatureCalculator(
         sourcedistribution->get_total_luminosity(), abundances, line_cooling_data,
         *recombination_rates, charge_transfer_rates, collisional_rates,radiative_cooling, *params, log);
-  } else if (sourcedistribution == nullptr && diffusesourcedistribution != nullptr) {
+
+  } else if (sourcedistribution == nullptr && hydrogendiffusesourcedistribution != nullptr) {
+    // NO STELLAR FIELD
+
+    double diffuse_luminosity = hydrogendiffusesourcedistribution->get_total_diffuse_luminosity();
+    #ifdef HAS_HELIUM
+    diffuse_luminosity += heliumdiffusesourcedistribution->get_total_diffuse_luminosity();
+    #endif  
+
     temperature_calculator = new TemperatureCalculator(
-        diffusesourcedistribution->get_total_diffuse_luminosity(), abundances, line_cooling_data,
+        diffuse_luminosity, abundances, line_cooling_data,
         *recombination_rates, charge_transfer_rates, collisional_rates,radiative_cooling, *params, log);
+        
   } else {
+    // BOTH STELLAR AND DIFFUSE FIELD
+
+    double diffuse_luminosity = hydrogendiffusesourcedistribution->get_total_diffuse_luminosity();
+    #ifdef HAS_HELIUM
+    diffuse_luminosity += heliumdiffusesourcedistribution->get_total_diffuse_luminosity();
+    #endif  
+
     temperature_calculator = new TemperatureCalculator(
-        sourcedistribution->get_total_luminosity()+diffusesourcedistribution->get_total_diffuse_luminosity(), abundances, line_cooling_data,
+        sourcedistribution->get_total_luminosity()+diffuse_luminosity, abundances, line_cooling_data,
         *recombination_rates, charge_transfer_rates, collisional_rates,radiative_cooling, *params, log);
 
   }
@@ -2296,10 +2329,16 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         sourcedistribution->write_snapshot_metadata(
                 writer->get_snapshot_filename(_restart_iteration), _restart_time);
           }
-      if (diffusesourcedistribution != nullptr) {
-        diffusesourcedistribution->write_snapshot_diffuse_metadata(
+      if (hydrogendiffusesourcedistribution != nullptr) {
+        hydrogendiffusesourcedistribution->write_snapshot_diffuse_metadata(
                 writer->get_snapshot_filename(_restart_iteration), _restart_time);
           }
+      #ifdef HAS_HELIUM
+      if (heliumdiffusesourcedistribution != nullptr) {
+        heliumdiffusesourcedistribution->write_snapshot_diffuse_metadata(
+                writer->get_snapshot_filename(_restart_iteration), _restart_time);
+          }
+      #endif
       if (statistics != nullptr) {
         statistics->write_snapshot_photon_statistics(
                 writer->get_snapshot_filename(_restart_iteration));
@@ -2312,10 +2351,16 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         sourcedistribution->write_snapshot_metadata(
             writer->get_snapshot_filename(0), 0.);
       }
-      if (diffusesourcedistribution != nullptr) {
-        diffusesourcedistribution->write_snapshot_diffuse_metadata(
+      if (hydrogendiffusesourcedistribution != nullptr) {
+        hydrogendiffusesourcedistribution->write_snapshot_diffuse_metadata(
             writer->get_snapshot_filename(0), 0.);
       }
+      #ifdef HAS_HELIUM
+      if (heliumdiffusesourcedistribution != nullptr) {
+        heliumdiffusesourcedistribution->write_snapshot_diffuse_metadata(
+            writer->get_snapshot_filename(0), 0.);
+      }
+      #endif
       if (statistics != nullptr) {
         statistics->write_snapshot_photon_statistics(
             writer->get_snapshot_filename(0));
@@ -2403,18 +2448,18 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     }
     // DIFFUSE FIELD SOURCES
     {
-      photonsourcenumber_t number_of_diffuse_sources;
+      photonsourcenumber_t number_of_diffuse_H_sources;
 
-      if (diffusesourcedistribution == nullptr) {
-        number_of_diffuse_sources = 0;
+      if (hydrogendiffusesourcedistribution == nullptr) {
+        number_of_diffuse_H_sources = 0;
       } else {
-        number_of_diffuse_sources =
-            diffusesourcedistribution->get_number_of_diffuse_sources();
+        number_of_diffuse_H_sources =
+            hydrogendiffusesourcedistribution->get_number_of_diffuse_sources();
       }
-      for (photonsourcenumber_t diffuse_isource = 0; diffuse_isource < number_of_diffuse_sources;
+      for (photonsourcenumber_t diffuse_isource = 0; diffuse_isource < number_of_diffuse_H_sources;
            ++diffuse_isource) {
         const CoordinateVector<> diffuse_position =
-            diffusesourcedistribution->get_diffuse_position(diffuse_isource);
+            hydrogendiffusesourcedistribution->get_diffuse_position(diffuse_isource);
         if (!simulation_box.get_box().inside(diffuse_position)) {
           if (log) {
             log->write_warning("Ignoring diffuse photon source outside the simulation box.");
@@ -2426,6 +2471,34 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         levels[gridit.get_index()] = source_copy_level;
       }
     }
+
+
+    #ifdef HAS_HELIUM
+    {
+      photonsourcenumber_t number_of_diffuse_He_sources;
+
+      if (heliumdiffusesourcedistribution == nullptr) {
+        number_of_diffuse_He_sources = 0;
+      } else {
+        number_of_diffuse_He_sources =
+            heliumdiffusesourcedistribution->get_number_of_diffuse_sources();
+      }
+      for (photonsourcenumber_t diffuse_isource = 0; diffuse_isource < number_of_diffuse_He_sources;
+           ++diffuse_isource) {
+        const CoordinateVector<> diffuse_position =
+            heliumdiffusesourcedistribution->get_diffuse_position(diffuse_isource);
+        if (!simulation_box.get_box().inside(diffuse_position)) {
+          if (log) {
+            log->write_warning("Ignoring diffuse photon source outside the simulation box.");
+          }
+          continue;
+        }
+        DensitySubGridCreator< HydroDensitySubGrid >::iterator gridit =
+            grid_creator->get_subgrid(diffuse_position);
+        levels[gridit.get_index()] = source_copy_level;
+      }
+    }
+    #endif
 
     // impose copy restrictions
     {
@@ -2572,9 +2645,16 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
    //   log->write_status("Getting Total Luminosity: ", sourcedistribution->get_total_luminosity());
 
     const double stellar_luminosity = sourcedistribution->get_total_luminosity();
-    const double diffuse_luminosity =
-        diffusesourcedistribution != nullptr ?
-            diffusesourcedistribution->get_total_diffuse_luminosity() : 0.0;
+    const double diffuse_H_luminosity =
+        hydrogendiffusesourcedistribution != nullptr ?
+            hydrogendiffusesourcedistribution->get_total_diffuse_luminosity() : 0.0;
+    
+    double diffuse_He_luminosity = 0.0;
+    #ifdef HAS_HELIUM
+    diffuse_He_luminosity = heliumdiffusesourcedistribution != nullptr ?
+            heliumdiffusesourcedistribution->get_total_diffuse_luminosity() : 0.0;
+    #endif
+
     bool has_active_source = false;
     for (photonsourcenumber_t isource = 0;
          isource < sourcedistribution->get_number_of_sources(); ++isource) {
@@ -2584,21 +2664,36 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         break;
       }
     }
-    if (diffusesourcedistribution != nullptr) {
-      bool has_active_diffuse_sources = false;
-      for (photonsourcenumber_t diffuse_isource = 0;
-           diffuse_isource < diffusesourcedistribution->get_number_of_diffuse_sources();
-           ++diffuse_isource) {
+    if (hydrogendiffusesourcedistribution != nullptr) {
+      bool has_active_diffuse_H_sources = false;
+      for (photonsourcenumber_t diffuse_H_isource = 0;
+           diffuse_H_isource < hydrogendiffusesourcedistribution->get_number_of_diffuse_sources();
+           ++diffuse_H_isource) {
         if (simulation_box.get_box().inside(
-                diffusesourcedistribution->get_diffuse_position(diffuse_isource))) {
-          has_active_diffuse_sources = true;
+                hydrogendiffusesourcedistribution->get_diffuse_position(diffuse_H_isource))) {
+          has_active_diffuse_H_sources = true;
           break;
         }
       }
-      has_active_source = has_active_source || has_active_diffuse_sources;
+      has_active_source = has_active_source || has_active_diffuse_H_sources;
+    }
+    
+    if (heliumdiffusesourcedistribution != nullptr) {
+      bool has_active_diffuse_He_sources = false;
+      for (photonsourcenumber_t diffuse_He_isource = 0;
+           diffuse_He_isource < heliumdiffusesourcedistribution->get_number_of_diffuse_sources();
+           ++diffuse_He_isource) {
+        if (simulation_box.get_box().inside(
+                heliumdiffusesourcedistribution->get_diffuse_position(diffuse_He_isource))) {
+          has_active_diffuse_He_sources = true;
+          break;
+        }
+      }
+      has_active_source = has_active_source || has_active_diffuse_He_sources;
     }
 
-    if ((stellar_luminosity > 0. || diffuse_luminosity > 0.) && has_active_source) {
+
+    if ((stellar_luminosity > 0. || diffuse_H_luminosity > 0. || diffuse_He_luminosity > 0.) && has_active_source) {
         time_logger.start("radiation transfer");
 
         {
@@ -2631,20 +2726,27 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
         // WEIGHT THE PHOTON NUMBERS BASED ON LUMINOSITY 
 
-        const double total_system_luminosity = stellar_luminosity + diffuse_luminosity;
+        const double total_system_luminosity = stellar_luminosity + diffuse_H_luminosity + diffuse_He_luminosity;
 
         size_t stellar_packets = 0;
-        size_t diffuse_packets = 0;
+        size_t diffuse_H_packets = 0;
+        size_t diffuse_He_packets = 0;
 
 
         if (total_system_luminosity > 0.) {
           double stellar_weight = stellar_luminosity / total_system_luminosity;
+          double diffuse_H_weight = diffuse_H_luminosity / total_system_luminosity;
           stellar_packets = static_cast<size_t>(numphoton * stellar_weight);
-          diffuse_packets = numphoton - stellar_packets;
+          diffuse_H_packets = static_cast<size_t>(numphoton * diffuse_H_weight);
+          if (diffuse_He_luminosity > 0.) {
+            diffuse_He_packets = numphoton - stellar_packets - diffuse_H_packets;
+          } else {
+            diffuse_H_packets = numphoton - stellar_packets;
+          }
         }
 
-        log->write_status("Stellar Luminosity: ", stellar_luminosity, " Diffuse Luminosity: ", diffuse_luminosity, " Total Luminosity: ", total_system_luminosity);
-        log->write_status("Stellar Packets: ", stellar_packets, " Diffuse Packets: ", diffuse_packets, " Total Packets: ", stellar_packets + diffuse_packets);
+        log->write_status("Stellar Luminosity: ", stellar_luminosity, " Diffuse Hydrogen Luminosity: ", diffuse_H_luminosity, " Diffuse Helium Luminosity: ", diffuse_He_luminosity, " Total Luminosity: ", total_system_luminosity);
+        log->write_status("Stellar Packets: ", stellar_packets, " Diffuse Hydrogen Packets: ", diffuse_H_packets, " Diffuse Helium Packets: ", diffuse_He_packets, " Total Packets: ", stellar_packets + diffuse_H_packets + diffuse_He_packets);
 
         // DISTRIBUTE STELLAR PHOTON SOURCES
 
@@ -2654,7 +2756,12 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         // DISTRIBUTE DIFFUSE PHOTON SOURCES
 
         DistributedPhotonSource<HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> > diffuse_photon_source(
-            diffuse_packets, *diffusesourcedistribution, *grid_creator);
+            diffuse_H_packets, *hydrogendiffusesourcedistribution, *grid_creator);
+
+        #ifdef HAS_HELIUM
+        DistributedPhotonSource<HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> > helium_diffuse_photon_source(
+            diffuse_He_packets, *heliumdiffusesourcedistribution, *grid_creator);
+        #endif
 
         {
           AtomicValue< size_t > igrid(0);
@@ -2734,7 +2841,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
             stop_parallel_timing_block();
           }
 
-          // PROCESS & DISPATCH STELLAR SOURCE PHOTONS
+        // PROCESS & DISPATCH STELLAR SOURCE PHOTONS
 
           size_t number_of_stellar_photons_done = 0;
           while (number_of_stellar_photons_done < stellar_packets) {
@@ -2756,29 +2863,140 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           }
           cmac_assert(number_of_stellar_photons_done == stellar_packets);
 
-          // PROCESS & DISPATCH DIFFUSE SOURCE PHOTONS
+        // PROCESS & DISPATCH DIFFUSE SOURCE PHOTONS
+   
+          // HYDROGEN DIFFUSE FIELD SOURCES
 
-          size_t number_of_diffuse_photons_done = 0;
-        //  const size_t DIFFUSE_BUFFER_SIZE = 100 * PHOTONBUFFER_SIZE;
-          while (number_of_diffuse_photons_done < diffuse_packets) {
-            for (size_t isrc_d = 0; isrc_d < diffuse_photon_source.get_number_of_sources();
-                 ++isrc_d) {
+          std::map<size_t, std::vector<size_t>> sources_by_subgrid;
 
-              const size_t number_of_diffuse_photons_this_batch =
-                  diffuse_photon_source.get_photon_batch(isrc_d, PHOTONBUFFER_SIZE);
-              if (number_of_diffuse_photons_this_batch > 0) {
-                const size_t new_diffuse_task = tasks->get_free_element();
-                (*tasks)[new_diffuse_task].set_type(TASKTYPE_SOURCE_DISCRETE_PHOTON);
-                (*tasks)[new_diffuse_task].set_subgrid(isrc_d);
-                (*tasks)[new_diffuse_task].set_buffer(number_of_diffuse_photons_this_batch);
-                pending_photon_tasks.pre_increment();
-                shared_queue->add_task(new_diffuse_task);
-                number_of_diffuse_photons_done += number_of_diffuse_photons_this_batch;
-              }
+          for (size_t source = 0; source < diffuse_photon_source.get_number_of_sources(); ++source) {
+            if (diffuse_photon_source.get_number_of_batches(source, PHOTONBUFFER_SIZE) > 0) {
+              sources_by_subgrid[diffuse_photon_source.get_subgrid(source)].push_back(source);
             }
           }
-          cmac_assert(number_of_diffuse_photons_done == diffuse_packets);
 
+          std::vector<DiffusePhotonBatch> diffuse_batches;
+          uint_fast64_t number_of_diffuse_photons_done = 0;
+
+          for (const auto &group : sources_by_subgrid) {
+            DiffusePhotonBatch batch;
+
+            batch.subgrid = group.first;
+            batch.sources.reserve(PHOTONBUFFER_SIZE);
+
+            for (const size_t source : group.second) {
+              while (true) {
+                const size_t count = diffuse_photon_source.get_photon_batch
+                (source, PHOTONBUFFER_SIZE - batch.sources.size());
+
+                if (count == 0) {
+                  break;
+                }
+
+                batch.sources.insert(batch.sources.end(), count, source);
+                number_of_diffuse_photons_done += count;
+
+                if (batch.sources.size() == PHOTONBUFFER_SIZE) {
+                  diffuse_batches.push_back(std::move(batch));
+                  batch = DiffusePhotonBatch{};
+                  batch.subgrid = group.first;
+                  batch.sources.reserve(PHOTONBUFFER_SIZE);
+                }
+
+              }
+            }
+            if (!batch.sources.empty()) {
+              diffuse_batches.push_back(std::move(batch));
+            }
+
+          }
+
+          if (number_of_diffuse_photons_done != diffuse_H_packets) {
+            cmac_error("Diffuse photon batching lost assigned packets");
+          }
+          cmac_assert(number_of_diffuse_photons_done == diffuse_H_packets);
+
+          for (size_t batch = 0; batch < diffuse_batches.size(); ++batch) {
+            const size_t task_index = tasks->get_free_element();
+            Task &task = (*tasks)[task_index];
+
+            task.set_type(TASKTYPE_SOURCE_DISCRETE_DIFFUSE_HYDROGEN_PHOTON);
+            task.set_subgrid(diffuse_batches[batch].subgrid);
+           // task.set_buffer(diffuse_batches[batch].sources.size());
+
+            task.set_buffer(batch);
+
+            pending_photon_tasks.pre_increment();
+            shared_queue->add_task(task_index);
+
+          }
+          
+          // HELIUM DIFFUSE FIELD SOURCES
+
+          #ifdef HAS_HELIUM
+          std::map<size_t, std::vector<size_t>> He_sources_by_subgrid;
+
+          for (size_t source = 0; source < helium_diffuse_photon_source.get_number_of_sources(); ++source) {
+            if (helium_diffuse_photon_source.get_number_of_batches(source, PHOTONBUFFER_SIZE) > 0) {
+              He_sources_by_subgrid[helium_diffuse_photon_source.get_subgrid(source)].push_back(source);
+            }
+          }
+
+          std::vector<DiffuseHeliumPhotonBatch> helium_diffuse_batches;
+          uint_fast64_t number_of_diffuse_He_photons_done = 0;
+
+          for (const auto &group : sources_by_subgrid) {
+            DiffuseHeliumPhotonBatch batch;
+
+            batch.subgrid = group.first;
+            batch.sources.reserve(PHOTONBUFFER_SIZE);
+
+            for (const size_t source : group.second) {
+              while (true) {
+                const size_t count = helium_diffuse_photon_source.get_photon_batch
+                (source, PHOTONBUFFER_SIZE - batch.sources.size());
+
+                if (count == 0) {
+                  break;
+                }
+
+                batch.sources.insert(batch.sources.end(), count, source);
+                number_of_diffuse_He_photons_done += count;
+
+                if (batch.sources.size() == PHOTONBUFFER_SIZE) {
+                  helium_diffuse_batches.push_back(std::move(batch));
+                  batch = DiffuseHeliumPhotonBatch{};
+                  batch.subgrid = group.first;
+                  batch.sources.reserve(PHOTONBUFFER_SIZE);
+                }
+
+              }
+            }
+            if (!batch.sources.empty()) {
+              helium_diffuse_batches.push_back(std::move(batch));
+            }
+
+          }
+
+          if (number_of_diffuse_He_photons_done != diffuse_He_packets) {
+            cmac_error("Diffuse He photon batching lost assigned packets");
+          }
+          cmac_assert(number_of_diffuse_He_photons_done == diffuse_He_packets);
+
+          for (size_t batch = 0; batch < helium_diffuse_batches.size(); ++batch) {
+            const size_t task_index = tasks->get_free_element();
+            Task &task = (*tasks)[task_index];
+
+            task.set_type(TASKTYPE_SOURCE_DISCRETE_DIFFUSE_HYDROGEN_PHOTON);
+            task.set_subgrid(batch);
+            task.set_buffer(helium_diffuse_batches[batch].sources.size());
+
+            pending_photon_tasks.pre_increment();
+            shared_queue->add_task(task_index);
+
+          }
+          
+          #endif
 
           AtomicValue< bool > global_run_flag(true);
           AtomicValue< uint_fast64_t > num_photon_done(0);
@@ -2804,11 +3022,19 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
 
           // DIFFUSE PHOTON LAUNCH
-          task_contexts[TASKTYPE_SOURCE_DISCRETE_PHOTON] = 
+          task_contexts[TASKTYPE_SOURCE_DISCRETE_DIFFUSE_HYDROGEN_PHOTON] = 
               new SourceDiscreteDiffusePhotonTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> >(
                   diffuse_photon_source, *buffers, random_generators, 1.,
                   abundances, *cross_sections, *grid_creator, *tasks,
-                   *diffusesourcedistribution, statistics, frequency_uniform_fraction);
+                   *hydrogendiffusesourcedistribution, statistics, diffuse_batches, frequency_uniform_fraction);
+
+          #ifdef HAS_HELIUM
+          task_contexts[TASKTYPE_SOURCE_DISCRETE_DIFFUSE_HELIUM_PHOTON] = 
+              new SourceDiscreteDiffuseHeliumPhotonTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> >(
+                  helium_diffuse_photon_source, *buffers, random_generators, 1.,
+                  abundances, *cross_sections, *grid_creator, *tasks,
+                   *heliumdiffusesourcedistribution, statistics, helium_diffuse_batches, frequency_uniform_fraction);
+          #endif
 
           if (reemission_handler) {
             task_contexts[TASKTYPE_PHOTON_REEMIT] =
@@ -3203,8 +3429,9 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         // -------------------------------------------------------------------------
         // Check if diffuse radiation field is active
         // -------------------------------------------------------------------------
-        if (diffusesourcedistribution != nullptr &&
-            diffusesourcedistribution->get_total_diffuse_luminosity() > 0.0) {
+        if ((hydrogendiffusesourcedistribution != nullptr &&
+            hydrogendiffusesourcedistribution->get_total_diffuse_luminosity() > 0.0) || 
+            (heliumdiffusesourcedistribution != nullptr && heliumdiffusesourcedistribution->get_total_diffuse_luminosity() > 0.0)) {
           
           if (log) {
             log->write_status("No stellar sources found, but active diffuse field detected. Launching diffuse rays.");
@@ -3212,8 +3439,37 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
           const size_t diffuse_packets = numphoton; 
 
+          const double diffuse_H_luminosity = hydrogendiffusesourcedistribution->get_total_diffuse_luminosity();
+          double diffuse_He_luminosity = 0.0;
+
+          #ifdef HAS_HELIUM
+          diffuse_He_luminosity = heliumdiffusesourcedistribution->get_total_diffuse_luminosity();
+          #endif
+
+          const double total_diffuse_luminosity = diffuse_H_luminosity + diffuse_He_luminosity;
+
+          // weights for photon allocation
+          size_t diffuse_H_packets = static_cast<size_t>(diffuse_packets * (diffuse_H_luminosity / total_diffuse_luminosity));
+          
+          size_t diffuse_He_packets = 0;
+
+          if (diffuse_He_luminosity > 0.) {
+            diffuse_He_packets = diffuse_packets - diffuse_H_packets;
+          } else {
+            diffuse_H_packets = diffuse_packets;
+          }
+
+        log->write_status("Diffuse Hydrogen Luminosity: ", diffuse_H_luminosity, " Diffuse Helium Luminosity: ", diffuse_He_luminosity, " Total Luminosity: ", total_diffuse_luminosity);
+        log->write_status("Diffuse Hydrogen Packets: ", diffuse_H_packets, " Diffuse Helium Packets: ", diffuse_He_packets, " Total Packets: ",  diffuse_H_packets + diffuse_He_packets);
+
+
           DistributedPhotonSource<HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> > diffuse_photon_source( 
-              diffuse_packets, *diffusesourcedistribution, *grid_creator);
+              diffuse_packets, *hydrogendiffusesourcedistribution, *grid_creator);
+
+          #ifdef HAS_HELIUM
+          DistributedPhotonSource<HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> > helium_diffuse_photon_source( 
+              diffuse_He_packets, *heliumdiffusesourcedistribution, *grid_creator);
+          #endif
 
           {
             AtomicValue< size_t > igrid(0);
@@ -3255,36 +3511,164 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
             stop_parallel_timing_block();
           }
 
+          // PROCESS & DISPATCH DIFFUSE SOURCE PHOTONS
+   
+          // HYDROGEN DIFFUSE FIELD SOURCES
+
           AtomicValue< uint_fast64_t > num_photon_done(0);
-          size_t number_of_diffuse_photons_done = 0;
-          
-          while (number_of_diffuse_photons_done < diffuse_packets) {
-            for (size_t isrc = 0; isrc < diffuse_photon_source.get_number_of_sources(); ++isrc) {
-              const size_t number_of_photons_this_batch = diffuse_photon_source.get_photon_batch(isrc, PHOTONBUFFER_SIZE);
-              if (number_of_photons_this_batch > 0) {
-                const size_t new_task = tasks->get_free_element();
-                (*tasks)[new_task].set_type(TASKTYPE_SOURCE_DISCRETE_PHOTON);
-                (*tasks)[new_task].set_subgrid(isrc);
-                (*tasks)[new_task].set_buffer(number_of_photons_this_batch);
-                pending_photon_tasks.pre_increment();
-                shared_queue->add_task(new_task);
-                number_of_diffuse_photons_done += number_of_photons_this_batch;
-              }
+          std::map<size_t, std::vector<size_t>> sources_by_subgrid;
+
+          for (size_t source = 0; source < diffuse_photon_source.get_number_of_sources(); ++source) {
+            if (diffuse_photon_source.get_number_of_batches(source, PHOTONBUFFER_SIZE) > 0) {
+              sources_by_subgrid[diffuse_photon_source.get_subgrid(source)].push_back(source);
             }
           }
 
+          std::vector<DiffusePhotonBatch> diffuse_batches;
+          uint_fast64_t number_of_diffuse_photons_done = 0;
+
+          for (const auto &group : sources_by_subgrid) {
+            DiffusePhotonBatch batch;
+
+            batch.subgrid = group.first;
+            batch.sources.reserve(PHOTONBUFFER_SIZE);
+
+            for (const size_t source : group.second) {
+              while (true) {
+                const size_t count = diffuse_photon_source.get_photon_batch
+                (source, PHOTONBUFFER_SIZE - batch.sources.size());
+
+                if (count == 0) {
+                  break;
+                }
+
+                batch.sources.insert(batch.sources.end(), count, source);
+                number_of_diffuse_photons_done += count;
+
+                if (batch.sources.size() == PHOTONBUFFER_SIZE) {
+                  diffuse_batches.push_back(std::move(batch));
+                  batch = DiffusePhotonBatch{};
+                  batch.subgrid = group.first;
+                  batch.sources.reserve(PHOTONBUFFER_SIZE);
+                }
+
+              }
+            }
+            if (!batch.sources.empty()) {
+              diffuse_batches.push_back(std::move(batch));
+            }
+
+          }
+
+          if (number_of_diffuse_photons_done != diffuse_H_packets) {
+            cmac_error("Diffuse photon batching lost assigned packets");
+          }
+          cmac_assert(number_of_diffuse_photons_done == diffuse_H_packets);
+
+          for (size_t batch = 0; batch < diffuse_batches.size(); ++batch) {
+            const size_t task_index = tasks->get_free_element();
+            Task &task = (*tasks)[task_index];
+
+            task.set_type(TASKTYPE_SOURCE_DISCRETE_DIFFUSE_HYDROGEN_PHOTON);
+            task.set_subgrid(diffuse_batches[batch].subgrid);
+           // task.set_buffer(diffuse_batches[batch].sources.size());
+
+            task.set_buffer(batch);
+
+            pending_photon_tasks.pre_increment();
+            shared_queue->add_task(task_index);
+
+          }
+          
+          // HELIUM DIFFUSE FIELD SOURCES
+
+          #ifdef HAS_HELIUM
+          std::map<size_t, std::vector<size_t>> He_sources_by_subgrid;
+
+          for (size_t source = 0; source < helium_diffuse_photon_source.get_number_of_sources(); ++source) {
+            if (helium_diffuse_photon_source.get_number_of_batches(source, PHOTONBUFFER_SIZE) > 0) {
+              He_sources_by_subgrid[helium_diffuse_photon_source.get_subgrid(source)].push_back(source);
+            }
+          }
+
+          std::vector<DiffuseHeliumPhotonBatch> helium_diffuse_batches;
+          uint_fast64_t number_of_diffuse_He_photons_done = 0;
+
+          for (const auto &group : sources_by_subgrid) {
+            DiffuseHeliumPhotonBatch batch;
+
+            batch.subgrid = group.first;
+            batch.sources.reserve(PHOTONBUFFER_SIZE);
+
+            for (const size_t source : group.second) {
+              while (true) {
+                const size_t count = helium_diffuse_photon_source.get_photon_batch
+                (source, PHOTONBUFFER_SIZE - batch.sources.size());
+
+                if (count == 0) {
+                  break;
+                }
+
+                batch.sources.insert(batch.sources.end(), count, source);
+                number_of_diffuse_He_photons_done += count;
+
+                if (batch.sources.size() == PHOTONBUFFER_SIZE) {
+                  helium_diffuse_batches.push_back(std::move(batch));
+                  batch = DiffuseHeliumPhotonBatch{};
+                  batch.subgrid = group.first;
+                  batch.sources.reserve(PHOTONBUFFER_SIZE);
+                }
+
+              }
+            }
+            if (!batch.sources.empty()) {
+              helium_diffuse_batches.push_back(std::move(batch));
+            }
+
+          }
+
+          if (number_of_diffuse_He_photons_done != diffuse_He_packets) {
+            cmac_error("Diffuse He photon batching lost assigned packets");
+          }
+          cmac_assert(number_of_diffuse_He_photons_done == diffuse_He_packets);
+
+          for (size_t batch = 0; batch < helium_diffuse_batches.size(); ++batch) {
+            const size_t task_index = tasks->get_free_element();
+            Task &task = (*tasks)[task_index];
+
+            task.set_type(TASKTYPE_SOURCE_DISCRETE_DIFFUSE_HYDROGEN_PHOTON);
+            task.set_subgrid(batch);
+            task.set_buffer(helium_diffuse_batches[batch].sources.size());
+
+            pending_photon_tasks.pre_increment();
+            shared_queue->add_task(task_index);
+
+          }
+          
+          #endif
+
+
           TaskContext *task_contexts[TASKTYPE_NUMBER] = {nullptr};
-          task_contexts[TASKTYPE_SOURCE_DISCRETE_PHOTON] =
+          task_contexts[TASKTYPE_SOURCE_DISCRETE_DIFFUSE_HYDROGEN_PHOTON] =
               new SourceDiscreteDiffusePhotonTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> >(
                   diffuse_photon_source, *buffers, random_generators, 1.,
                   abundances, *cross_sections, *grid_creator, *tasks,
-                  *diffusesourcedistribution, statistics, frequency_uniform_fraction);
+                  *hydrogendiffusesourcedistribution, statistics, std::vector<DiffusePhotonBatch>{}, frequency_uniform_fraction);
+
+          #ifdef HAS_HELIUM
+          task_contexts[TASKTYPE_SOURCE_DISCRETE_DIFFUSE_HELIUM_PHOTON] = 
+              new SourceDiscreteDiffuseHeliumPhotonTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> >(
+                  helium_diffuse_photon_source, *buffers, random_generators, 1.,
+                  abundances, *cross_sections, *grid_creator, *tasks,
+                   *heliumdiffusesourcedistribution, statistics, helium_diffuse_batches, frequency_uniform_fraction);
+          #endif
 
           if (reemission_handler) {
             task_contexts[TASKTYPE_PHOTON_REEMIT] =
                 new PhotonReemitTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> >(
                     *buffers, random_generators, *reemission_handler, abundances, *cross_sections, *grid_creator, *tasks, num_photon_done, statistics);
           }
+
 
             const bool do_reemission =
               reemission_handler != nullptr && !_time_dependent_diffuse_field_flag;
@@ -4038,8 +4422,12 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
             sourcedistribution->write_snapshot_metadata(
                 writer->get_snapshot_filename(hydro_lastsnap_restart), current_time_restarted);
           }
-          if (diffusesourcedistribution != nullptr) {
-            diffusesourcedistribution->write_snapshot_diffuse_metadata(
+          if (hydrogendiffusesourcedistribution != nullptr) {
+            hydrogendiffusesourcedistribution->write_snapshot_diffuse_metadata(
+                    writer->get_snapshot_filename(hydro_lastsnap_restart), _restart_time);
+          }
+          if (heliumdiffusesourcedistribution != nullptr) {
+            heliumdiffusesourcedistribution->write_snapshot_diffuse_metadata(
                     writer->get_snapshot_filename(hydro_lastsnap_restart), _restart_time);
           }
           if (statistics != nullptr) {
@@ -4055,8 +4443,12 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
             sourcedistribution->write_snapshot_metadata(
                 writer->get_snapshot_filename(hydro_lastsnap), current_time);
           }
-          if (diffusesourcedistribution != nullptr) {
-            diffusesourcedistribution->write_snapshot_diffuse_metadata(
+          if (hydrogendiffusesourcedistribution != nullptr) {
+            hydrogendiffusesourcedistribution->write_snapshot_diffuse_metadata(
+                    writer->get_snapshot_filename(hydro_lastsnap), current_time);
+          }
+          if (heliumdiffusesourcedistribution != nullptr) {
+            heliumdiffusesourcedistribution->write_snapshot_diffuse_metadata(
                     writer->get_snapshot_filename(hydro_lastsnap), current_time);
           }
           if (statistics != nullptr) {
@@ -4111,7 +4503,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
       // update the PhotonSource
 
-      if (sourcedistribution != nullptr || diffusesourcedistribution != nullptr) {
+      if (sourcedistribution != nullptr || hydrogendiffusesourcedistribution != nullptr || heliumdiffusesourcedistribution != nullptr) {
 
         bool stellar_updated = false;
         if (sourcedistribution != nullptr) {
@@ -4119,12 +4511,17 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         }
 
         bool diffuse_updated = false;
-        if (diffusesourcedistribution != nullptr) {
-          diffuse_updated = diffusesourcedistribution->update(grid_creator, actual_timestep);
+        if (hydrogendiffusesourcedistribution != nullptr) {
+          diffuse_updated = hydrogendiffusesourcedistribution->update(grid_creator, actual_timestep);
+        }
+
+        bool helium_diffuse_updated = false;
+        if (heliumdiffusesourcedistribution != nullptr) {
+          helium_diffuse_updated = heliumdiffusesourcedistribution->update(grid_creator, actual_timestep);
         }
 
 
-      if (stellar_updated || diffuse_updated) {
+      if (stellar_updated || diffuse_updated || helium_diffuse_updated) {
 
         time_logger.start("source update");
 
@@ -4132,9 +4529,10 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           sourcedistribution->update_fuv_background_sources(grid_creator);
         }
         double total_stellar_lum = (sourcedistribution != nullptr) ? sourcedistribution->get_total_luminosity() : 0.0;
-        double total_diffuse_lum = (diffusesourcedistribution != nullptr) ? diffusesourcedistribution->get_total_diffuse_luminosity() : 0.0;
+        double total_diffuse_lum = (hydrogendiffusesourcedistribution != nullptr) ? hydrogendiffusesourcedistribution->get_total_diffuse_luminosity() : 0.0;
+        double total_helium_diffuse_lum = (heliumdiffusesourcedistribution != nullptr) ? heliumdiffusesourcedistribution->get_total_diffuse_luminosity() : 0.0;
 
-        temperature_calculator->update_luminosity(total_stellar_lum + total_diffuse_lum);
+        temperature_calculator->update_luminosity(total_stellar_lum + total_diffuse_lum + total_helium_diffuse_lum);
 
        // if (_moving_sources_flag == true) { // mgb edit
      // sourcedistribution->set_initial_velocity(grid_creator,actual_timestep);
@@ -4181,12 +4579,21 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         }
         // DIFFUSE SUBGRIDS
 
-        if (diffusesourcedistribution != nullptr) {
-          const photonsourcenumber_t number_of_diffuse = diffusesourcedistribution->get_number_of_diffuse_sources();
+        if (hydrogendiffusesourcedistribution != nullptr) {
+          const photonsourcenumber_t number_of_diffuse = hydrogendiffusesourcedistribution->get_number_of_diffuse_sources();
           for (photonsourcenumber_t isource_d = 0; isource_d < number_of_diffuse; ++isource_d) {
             const size_t diffuse_subgrid_index =
-                diffusesourcedistribution->get_diffuse_subgrid_index(isource_d);
+                hydrogendiffusesourcedistribution->get_diffuse_subgrid_index(isource_d);
             levels[diffuse_subgrid_index] = source_copy_level;
+          }
+        }
+
+        if (heliumdiffusesourcedistribution != nullptr) {
+          const photonsourcenumber_t number_of_helium_diffuse = heliumdiffusesourcedistribution->get_number_of_diffuse_sources();
+          for (photonsourcenumber_t isource_h = 0; isource_h < number_of_helium_diffuse; ++isource_h) {
+            const size_t helium_diffuse_subgrid_index =
+                heliumdiffusesourcedistribution->get_diffuse_subgrid_index(isource_h);
+            levels[helium_diffuse_subgrid_index] = source_copy_level;
           }
         }
 
@@ -4398,8 +4805,12 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
             sourcedistribution->write_snapshot_metadata(
                 writer->get_snapshot_filename(hydro_lastsnap_restart), current_time_restarted);
           }
-        if (diffusesourcedistribution != nullptr) {
-            diffusesourcedistribution->write_snapshot_diffuse_metadata(
+        if (hydrogendiffusesourcedistribution != nullptr) {
+            hydrogendiffusesourcedistribution->write_snapshot_diffuse_metadata(
+                writer->get_snapshot_filename(hydro_lastsnap_restart), current_time_restarted);
+        }
+        if (heliumdiffusesourcedistribution != nullptr) {
+            heliumdiffusesourcedistribution->write_snapshot_diffuse_metadata(
                 writer->get_snapshot_filename(hydro_lastsnap_restart), current_time_restarted);
         }
         if (statistics != nullptr) {
@@ -4415,8 +4826,12 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
             sourcedistribution->write_snapshot_metadata(
                 writer->get_snapshot_filename(hydro_lastsnap), current_time);
           }
-          if (diffusesourcedistribution != nullptr) {
-            diffusesourcedistribution->write_snapshot_diffuse_metadata(
+          if (hydrogendiffusesourcedistribution != nullptr) {
+            hydrogendiffusesourcedistribution->write_snapshot_diffuse_metadata(
+                writer->get_snapshot_filename(hydro_lastsnap), current_time);
+          }
+          if (heliumdiffusesourcedistribution != nullptr) {
+            heliumdiffusesourcedistribution->write_snapshot_diffuse_metadata(
                 writer->get_snapshot_filename(hydro_lastsnap), current_time);
           }
           if (statistics != nullptr) {
