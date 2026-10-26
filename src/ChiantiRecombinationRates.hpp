@@ -90,7 +90,10 @@ public:
   ChiantiRecombinationRates(ParameterFile &params)
       : ChiantiRecombinationRates(
         params.get_value< bool >(
-          "TaskBasedRadiationHydrodynamicsSimulation:diffuse field", true)
+          "DiffuseReemissionHandler:diffuse field", true) ||
+        params.get_value< bool >(
+      "DiffuseReemissionHandler:time dependent diffuse field",
+      false)
       ) {}
 };
 
