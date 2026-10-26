@@ -364,7 +364,7 @@ double PhysicalDiffuseReemissionHandler::reemit(
     AtomicValue<uint_fast32_t> &num_abs_dust) const {
 
   double new_frequency = 0.;
-  std::cout << "IM WORKING UNDER THE ASSUMPTION THIS NEVER GETS CALLED" << std::endl;
+  //std::cout << "IM WORKING UNDER THE ASSUMPTION THIS NEVER GETS CALLED" << std::endl;
 
   // Wood, Mathis & Ercolano (2004), section 3.3
 

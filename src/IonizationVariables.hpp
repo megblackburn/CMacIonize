@@ -123,6 +123,9 @@ private:
   /*! @brief Cosmic ray heating factor (in kg m A^-1 s^-4). */
   double _cosmic_ray_factor;
 
+  /*! @brief FUV field heating factor J s^-1*/
+  double _FUV_heating_rate = 0.;
+
   AtomicValue<uint_fast32_t> _dust_abs;
   AtomicValue<uint_fast32_t> _gas_abs;
 
@@ -339,6 +342,24 @@ public:
   inline void set_temperature(const double temperature) {
     _temperature = temperature;
   }
+
+  /**
+   * @brief Get the FUV field heating rate.
+   *
+   * @return FUV field heating rate (in J s^-1).
+   */
+  inline double get_FUV_heating_rate() const { return _FUV_heating_rate; }
+
+  /**
+   * @brief Set the FUV field heating rate.
+   *
+   * @param FUV_heating_rate New FUV field heating rate (in J s^-1).
+   */
+  inline void set_FUV_heating_rate(const double FUV_heating_rate) {
+    _FUV_heating_rate = FUV_heating_rate;
+  }
+
+
 
   /**
    * @brief Get the ionic fraction of the ion with the given name.

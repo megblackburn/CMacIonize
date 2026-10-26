@@ -1450,7 +1450,7 @@ public:
 
       if (_output_file_lum != nullptr) {
         double totallum = get_total_luminosity();
-        *_output_file_lum << _total_time << "\t" << totallum << "\t" << _num_sne << "\t" << ((star_formation_rate*unit_Myr)/(unit_Msol * area_kpc)) << "\t" << mass_to_generate << "\t" <<  (star_formation_rate/area_kpc) << "\t" << init_running_mass << "\t" << running_mass << "\n"; // output the SFR in Msol Myr^-1 kpc^-2 and in kg s^-1 kpc^-2
+        *_output_file_lum << _total_time << "\t" << totallum << "\t" << _num_sne << "\t" << ((star_formation_rate*unit_Myr)/(unit_Msol * area_kpc)) << "\t" << mass_to_generate << "\t" <<  (star_formation_rate/area_kpc) << "\t" << mass_to_generate << "\t" << _excess_mass<< "\t" << running_mass << "\n"; ; // output the SFR in Msol Myr^-1 kpc^-2 and in kg s^-1 kpc^-2
         _output_file_lum->flush();
 
       }

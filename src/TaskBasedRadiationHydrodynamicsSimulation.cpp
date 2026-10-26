@@ -877,6 +877,8 @@ if (_do_FUV_heating) {
     const double fuv_cell_heating = volumetric_fuv_heating / inverse_volume;
 
     gain += fuv_cell_heating;
+
+    ionization_variables.set_FUV_heating_rate(fuv_cell_heating);
    // std::cout<< "Calculated gain from FUV heating!" << std::endl;
 
 
@@ -2342,7 +2344,6 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
       if (statistics != nullptr) {
         statistics->write_snapshot_photon_statistics(
                 writer->get_snapshot_filename(_restart_iteration));
-        statistics->reset_counters();
       }
     } else {
       writer->write(*grid_creator, 0, *params, 0.);
@@ -3271,14 +3272,23 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
             buffers->reset();
 
             if (iloop == nloop - 1) {
-              if (statistics != nullptr) {
-            //   statistics->print_stats();
-                std::cout << "Number of photons escaped = " << statistics->get_num_escaped() << std::endl;
-                std::cout << "Number of photons absorbed (all gas) = " << statistics->get_num_absorbed() << std::endl;
-                std::cout << "Number of photons absorbed (dust) = " << statistics->get_num_abs_dust() << std::endl;
-                std::cout << "Number of H photons reemitted = " << statistics->get_num_reemitted_H() << std::endl;
-              }
+            #pragma omp single
+            if (statistics != nullptr) {
+           //   statistics->print_stats();
+              std::cout << "Number of photons escaped = " << statistics->get_num_escaped() << std::endl;
+              std::cout << "Number of photons absorbed (all gas) = " << statistics->get_num_absorbed() << std::endl;
+              std::cout << "Number of photons absorbed (dust) = " << statistics->get_num_abs_dust() << std::endl;
+              std::cout << "Number of H photons reemitted = " << statistics->get_num_reemitted_H() << std::endl;
+              
+              std::cout << "Number of photons absorbed (dense gas) = " << statistics->get_num_abs_dens() << std::endl;
+              std::cout << "Number of photons absorbed (diffuse gas) = " << statistics->get_num_abs_dif() << std::endl;
+              std::cout << "Number of photons escaped (ionizing) = " << statistics->get_num_escaped_ionizing() << std::endl;
+              std::cout << "Number of photons escaped (non-ionizing) = " << statistics->get_num_escaped_nonionizing() << std::endl;
+
+            //  statistics->record_and_reset_radiation_step();
             }
+          }
+          statistics->record_and_reset_radiation_step();
 
             // update copies
             grid_creator->update_original_counters();
@@ -3783,15 +3793,24 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
             buffers->reset();
 
-            if (iloop == nloop - 1) {
-              if (statistics != nullptr) {
-            //   statistics->print_stats();
-                std::cout << "Number of photons escaped = " << statistics->get_num_escaped() << std::endl;
-                std::cout << "Number of photons absorbed (all gas) = " << statistics->get_num_absorbed() << std::endl;
-                std::cout << "Number of photons absorbed (dust) = " << statistics->get_num_abs_dust() << std::endl;
-                std::cout << "Number of H photons reemitted = " << statistics->get_num_reemitted_H() << std::endl;
-              }
+          if (iloop == nloop - 1) {
+            #pragma omp single
+            if (statistics != nullptr) {
+           //   statistics->print_stats();
+              std::cout << "Number of photons escaped = " << statistics->get_num_escaped() << std::endl;
+              std::cout << "Number of photons absorbed (all gas) = " << statistics->get_num_absorbed() << std::endl;
+              std::cout << "Number of photons absorbed (dust) = " << statistics->get_num_abs_dust() << std::endl;
+              std::cout << "Number of H photons reemitted = " << statistics->get_num_reemitted_H() << std::endl;
+              
+              std::cout << "Number of photons absorbed (dense gas) = " << statistics->get_num_abs_dens() << std::endl;
+              std::cout << "Number of photons absorbed (diffuse gas) = " << statistics->get_num_abs_dif() << std::endl;
+              std::cout << "Number of photons escaped (ionizing) = " << statistics->get_num_escaped_ionizing() << std::endl;
+              std::cout << "Number of photons escaped (non-ionizing) = " << statistics->get_num_escaped_nonionizing() << std::endl;
+
+            //  statistics->record_and_reset_radiation_step();
             }
+          }
+          statistics->record_and_reset_radiation_step();
 
             // update copies
             grid_creator->update_original_counters();
@@ -4957,7 +4976,6 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           if (statistics != nullptr) {
             statistics->write_snapshot_photon_statistics(
                 writer->get_snapshot_filename(hydro_lastsnap_restart));
-            statistics->reset_counters();
           }
           time_logger.end("snapshot");
         } else {
@@ -4978,7 +4996,6 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           if (statistics != nullptr) {
             statistics->write_snapshot_photon_statistics(
                 writer->get_snapshot_filename(hydro_lastsnap));
-            statistics->reset_counters();
           }
           time_logger.end("snapshot");
         }
@@ -5340,7 +5357,6 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         if (statistics != nullptr) {
             statistics->write_snapshot_photon_statistics(
                 writer->get_snapshot_filename(hydro_lastsnap_restart));
-            statistics->reset_counters();
         }
         time_logger.end("snapshot");
       } else {
@@ -5361,7 +5377,6 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           if (statistics != nullptr) {
             statistics->write_snapshot_photon_statistics(
                 writer->get_snapshot_filename(hydro_lastsnap));
-            statistics->reset_counters();
           }
           time_logger.end("snapshot");
       }
