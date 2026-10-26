@@ -2645,6 +2645,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
    //   log->write_status("Getting Total Luminosity: ", sourcedistribution->get_total_luminosity());
 
     const double stellar_luminosity = sourcedistribution->get_total_luminosity();
+    
     const double diffuse_H_luminosity =
         hydrogendiffusesourcedistribution != nullptr ?
             hydrogendiffusesourcedistribution->get_total_diffuse_luminosity() : 0.0;
@@ -2693,690 +2694,1213 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     }
 
 
-    if ((stellar_luminosity > 0. || diffuse_H_luminosity > 0. || diffuse_He_luminosity > 0.) && has_active_source) {
-        time_logger.start("radiation transfer");
+    if (stellar_luminosity > 0.  && has_active_source) {
 
-        {
-          AtomicValue< size_t > igrid(0);
-          start_parallel_timing_block();
-#ifdef HAVE_OPENMP
-#pragma omp parallel default(shared)
-#endif
-          while (igrid.value() < grid_creator->number_of_original_subgrids()) {
-            const size_t this_igrid = igrid.post_increment();
-            if (this_igrid < grid_creator->number_of_original_subgrids()) {
-              HydroDensitySubGrid &subgrid =
-                  *grid_creator->get_subgrid(this_igrid);
-
-                for (auto cellit = subgrid.begin(); cellit != subgrid.end();
-                  ++cellit) {
-                  if (_throttle_ion_state || _time_dependent_ionization) {
-                    cellit.get_ionization_variables().copy_previous_fractions();
-                  } else {
-                    cellit.get_ionization_variables().set_prev_ionic_fraction(ION_H_n,-1.);
-                  }
-                    
-                }
-              subgrid.update_ionization_variables(hydro,
-                                                  maximum_neutral_fraction); 
-            }
-          }
-          stop_parallel_timing_block();
-        }
-
-        // WEIGHT THE PHOTON NUMBERS BASED ON LUMINOSITY 
-
-        const double total_system_luminosity = stellar_luminosity + diffuse_H_luminosity + diffuse_He_luminosity;
-
-        size_t stellar_packets = 0;
-        size_t diffuse_H_packets = 0;
-        size_t diffuse_He_packets = 0;
-
-
-        if (total_system_luminosity > 0.) {
-          double stellar_weight = stellar_luminosity / total_system_luminosity;
-          double diffuse_H_weight = diffuse_H_luminosity / total_system_luminosity;
-          stellar_packets = static_cast<size_t>(numphoton * stellar_weight);
-          diffuse_H_packets = static_cast<size_t>(numphoton * diffuse_H_weight);
-          if (diffuse_He_luminosity > 0.) {
-            diffuse_He_packets = numphoton - stellar_packets - diffuse_H_packets;
-          } else {
-            diffuse_H_packets = numphoton - stellar_packets;
-          }
-        }
-
-        log->write_status("Stellar Luminosity: ", stellar_luminosity, " Diffuse Hydrogen Luminosity: ", diffuse_H_luminosity, " Diffuse Helium Luminosity: ", diffuse_He_luminosity, " Total Luminosity: ", total_system_luminosity);
-        log->write_status("Stellar Packets: ", stellar_packets, " Diffuse Hydrogen Packets: ", diffuse_H_packets, " Diffuse Helium Packets: ", diffuse_He_packets, " Total Packets: ", stellar_packets + diffuse_H_packets + diffuse_He_packets);
-
-        // DISTRIBUTE STELLAR PHOTON SOURCES
-
-        DistributedPhotonSource<HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> > stellar_photon_source( 
-            stellar_packets, *sourcedistribution, *grid_creator);
-
-        // DISTRIBUTE DIFFUSE PHOTON SOURCES
-
-        DistributedPhotonSource<HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> > diffuse_photon_source(
-            diffuse_H_packets, *hydrogendiffusesourcedistribution, *grid_creator);
-
-        #ifdef HAS_HELIUM
-        DistributedPhotonSource<HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> > helium_diffuse_photon_source(
-            diffuse_He_packets, *heliumdiffusesourcedistribution, *grid_creator);
-        #endif
-
-        {
-          AtomicValue< size_t > igrid(0);
-          start_parallel_timing_block();
-#ifdef HAVE_OPENMP
-#pragma omp parallel default(shared)
-#endif
-          while (igrid.value() < grid_creator->number_of_actual_subgrids()) {
-            const size_t this_igrid = igrid.post_increment();
-            if (this_igrid < grid_creator->number_of_actual_subgrids()) {
-              HydroDensitySubGrid &subgrid =
-                  *grid_creator->get_subgrid(this_igrid);
-              for (int ingb = 0; ingb < TRAVELDIRECTION_NUMBER; ++ingb) {
-                subgrid.set_active_buffer(ingb, NEIGHBOUR_OUTSIDE);
-              }
-            }
-          }
-          stop_parallel_timing_block();
-        }
-
-
-        for (uint_fast32_t iloop = 0; iloop < nloop; ++iloop) {
-
-          if (log) {
-            log->write_status("Starting loop ", iloop, ".");
-          }
-
-          worktimer.start();
-
-          // reset mean intensity counters
-          {
-            AtomicValue< size_t > igrid(0);
-            start_parallel_timing_block();
-#ifdef HAVE_OPENMP
-#pragma omp parallel default(shared)
-#endif
-            while (igrid.value() < grid_creator->number_of_actual_subgrids()) {
-              const size_t this_igrid = igrid.post_increment();
-              if (this_igrid < grid_creator->number_of_actual_subgrids()) {
-                auto gridit = grid_creator->get_subgrid(this_igrid);
-                (*gridit).reset_intensities();
-              }
-            }
-            stop_parallel_timing_block();
-          }
-
-          // update copies
-          grid_creator->update_copy_properties();
-
-          // reset the photon source information
-          stellar_photon_source.reset();
-          diffuse_photon_source.reset();
-
-          // Count all photon tasks from creation until completion. This lets
-          // the scheduler distinguish real work from a stranded buffer or a
-          // permanently locked dependency at the end of an iteration.
-          AtomicValue< uint_fast64_t > pending_photon_tasks(0);
-
-          // reset the diffuse field variables
-          if (reemission_handler != nullptr) {
-            AtomicValue< size_t > igrid(0);
-            start_parallel_timing_block();
-#ifdef HAVE_OPENMP
-#pragma omp parallel default(shared)
-#endif
-            while (igrid.value() < grid_creator->number_of_actual_subgrids()) {
-              const size_t this_igrid = igrid.post_increment();
-              if (this_igrid < grid_creator->number_of_actual_subgrids()) {
-                auto gridit = grid_creator->get_subgrid(this_igrid);
-                for (auto cellit = (*gridit).begin(); cellit != (*gridit).end();
-                     ++cellit) {
-                  IonizationVariables &vars = cellit.get_ionization_variables();
-                  reemission_handler->set_reemission_probabilities(vars);
-                }
-              }
-            }
-            stop_parallel_timing_block();
-          }
-
-        // PROCESS & DISPATCH STELLAR SOURCE PHOTONS
-
-          size_t number_of_stellar_photons_done = 0;
-          while (number_of_stellar_photons_done < stellar_packets) {
-            for (size_t isrc = 0; isrc < stellar_photon_source.get_number_of_sources();
-                 ++isrc) {
-
-              const size_t number_of_photons_this_batch =
-                  stellar_photon_source.get_photon_batch(isrc, PHOTONBUFFER_SIZE);
-              if (number_of_photons_this_batch > 0) {
-                const size_t new_task = tasks->get_free_element();
-                (*tasks)[new_task].set_type(TASKTYPE_SOURCE_DISCRETE_PHOTON);
-                (*tasks)[new_task].set_subgrid(isrc);
-                (*tasks)[new_task].set_buffer(number_of_photons_this_batch);
-                pending_photon_tasks.pre_increment();
-                shared_queue->add_task(new_task);
-                number_of_stellar_photons_done += number_of_photons_this_batch;
-              }
-            }
-          }
-          cmac_assert(number_of_stellar_photons_done == stellar_packets);
-
-        // PROCESS & DISPATCH DIFFUSE SOURCE PHOTONS
-   
-          // HYDROGEN DIFFUSE FIELD SOURCES
-
-          std::map<size_t, std::vector<size_t>> sources_by_subgrid;
-
-          for (size_t source = 0; source < diffuse_photon_source.get_number_of_sources(); ++source) {
-            if (diffuse_photon_source.get_number_of_batches(source, PHOTONBUFFER_SIZE) > 0) {
-              sources_by_subgrid[diffuse_photon_source.get_subgrid(source)].push_back(source);
-            }
-          }
-
-          std::vector<DiffusePhotonBatch> diffuse_batches;
-          uint_fast64_t number_of_diffuse_photons_done = 0;
-
-          for (const auto &group : sources_by_subgrid) {
-            DiffusePhotonBatch batch;
-
-            batch.subgrid = group.first;
-            batch.sources.reserve(PHOTONBUFFER_SIZE);
-
-            for (const size_t source : group.second) {
-              while (true) {
-                const size_t count = diffuse_photon_source.get_photon_batch
-                (source, PHOTONBUFFER_SIZE - batch.sources.size());
-
-                if (count == 0) {
-                  break;
-                }
-
-                batch.sources.insert(batch.sources.end(), count, source);
-                number_of_diffuse_photons_done += count;
-
-                if (batch.sources.size() == PHOTONBUFFER_SIZE) {
-                  diffuse_batches.push_back(std::move(batch));
-                  batch = DiffusePhotonBatch{};
-                  batch.subgrid = group.first;
-                  batch.sources.reserve(PHOTONBUFFER_SIZE);
-                }
-
-              }
-            }
-            if (!batch.sources.empty()) {
-              diffuse_batches.push_back(std::move(batch));
-            }
-
-          }
-
-          if (number_of_diffuse_photons_done != diffuse_H_packets) {
-            cmac_error("Diffuse photon batching lost assigned packets");
-          }
-          cmac_assert(number_of_diffuse_photons_done == diffuse_H_packets);
-
-          for (size_t batch = 0; batch < diffuse_batches.size(); ++batch) {
-            const size_t task_index = tasks->get_free_element();
-            Task &task = (*tasks)[task_index];
-
-            task.set_type(TASKTYPE_SOURCE_DISCRETE_DIFFUSE_HYDROGEN_PHOTON);
-            task.set_subgrid(diffuse_batches[batch].subgrid);
-           // task.set_buffer(diffuse_batches[batch].sources.size());
-
-            task.set_buffer(batch);
-
-            pending_photon_tasks.pre_increment();
-            shared_queue->add_task(task_index);
-
-          }
-          
-          // HELIUM DIFFUSE FIELD SOURCES
-
-          #ifdef HAS_HELIUM
-          std::map<size_t, std::vector<size_t>> He_sources_by_subgrid;
-
-          for (size_t source = 0; source < helium_diffuse_photon_source.get_number_of_sources(); ++source) {
-            if (helium_diffuse_photon_source.get_number_of_batches(source, PHOTONBUFFER_SIZE) > 0) {
-              He_sources_by_subgrid[helium_diffuse_photon_source.get_subgrid(source)].push_back(source);
-            }
-          }
-
-          std::vector<DiffuseHeliumPhotonBatch> helium_diffuse_batches;
-          uint_fast64_t number_of_diffuse_He_photons_done = 0;
-
-          for (const auto &group : sources_by_subgrid) {
-            DiffuseHeliumPhotonBatch batch;
-
-            batch.subgrid = group.first;
-            batch.sources.reserve(PHOTONBUFFER_SIZE);
-
-            for (const size_t source : group.second) {
-              while (true) {
-                const size_t count = helium_diffuse_photon_source.get_photon_batch
-                (source, PHOTONBUFFER_SIZE - batch.sources.size());
-
-                if (count == 0) {
-                  break;
-                }
-
-                batch.sources.insert(batch.sources.end(), count, source);
-                number_of_diffuse_He_photons_done += count;
-
-                if (batch.sources.size() == PHOTONBUFFER_SIZE) {
-                  helium_diffuse_batches.push_back(std::move(batch));
-                  batch = DiffuseHeliumPhotonBatch{};
-                  batch.subgrid = group.first;
-                  batch.sources.reserve(PHOTONBUFFER_SIZE);
-                }
-
-              }
-            }
-            if (!batch.sources.empty()) {
-              helium_diffuse_batches.push_back(std::move(batch));
-            }
-
-          }
-
-          if (number_of_diffuse_He_photons_done != diffuse_He_packets) {
-            cmac_error("Diffuse He photon batching lost assigned packets");
-          }
-          cmac_assert(number_of_diffuse_He_photons_done == diffuse_He_packets);
-
-          for (size_t batch = 0; batch < helium_diffuse_batches.size(); ++batch) {
-            const size_t task_index = tasks->get_free_element();
-            Task &task = (*tasks)[task_index];
-
-            task.set_type(TASKTYPE_SOURCE_DISCRETE_DIFFUSE_HYDROGEN_PHOTON);
-            task.set_subgrid(batch);
-            task.set_buffer(helium_diffuse_batches[batch].sources.size());
-
-            pending_photon_tasks.pre_increment();
-            shared_queue->add_task(task_index);
-
-          }
-          
-          #endif
-
-          AtomicValue< bool > global_run_flag(true);
-          AtomicValue< uint_fast64_t > num_photon_done(0);
-          AtomicValue< uint_fast32_t > active_photon_tasks(0);
-          AtomicValue< uint_fast32_t > scheduler_calls(0);
-          AtomicValue< uint_fast64_t > stalled_polls(0);
-          AtomicValue< bool > recovery_requested(false);
-          AtomicValue< bool > recovery_lock(false);
-          AtomicValue< uint_fast32_t > dependency_recoveries(0);
-          const uint_fast64_t stalled_poll_limit =
-              1000000 * static_cast< uint_fast64_t >(num_thread);
-
-
-          // create task contexts
-         TaskContext *task_contexts[TASKTYPE_NUMBER] = {nullptr};
-
-         // STELLAR PHOTON LAUNCH
-          task_contexts[TASKTYPE_SOURCE_DISCRETE_PHOTON] =
-              new SourceDiscretePhotonTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> >(
-                  stellar_photon_source, *buffers, random_generators, 1., *spectrum,
-                  abundances, *cross_sections, *grid_creator, *tasks,
-                   *sourcedistribution, statistics, frequency_uniform_fraction); // mgb 22.09.2026 - add statistics
-
-
-          // DIFFUSE PHOTON LAUNCH
-          task_contexts[TASKTYPE_SOURCE_DISCRETE_DIFFUSE_HYDROGEN_PHOTON] = 
-              new SourceDiscreteDiffusePhotonTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> >(
-                  diffuse_photon_source, *buffers, random_generators, 1.,
-                  abundances, *cross_sections, *grid_creator, *tasks,
-                   *hydrogendiffusesourcedistribution, statistics, diffuse_batches, frequency_uniform_fraction);
-
-          #ifdef HAS_HELIUM
-          task_contexts[TASKTYPE_SOURCE_DISCRETE_DIFFUSE_HELIUM_PHOTON] = 
-              new SourceDiscreteDiffuseHeliumPhotonTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> >(
-                  helium_diffuse_photon_source, *buffers, random_generators, 1.,
-                  abundances, *cross_sections, *grid_creator, *tasks,
-                   *heliumdiffusesourcedistribution, statistics, helium_diffuse_batches, frequency_uniform_fraction);
-          #endif
-
-          if (reemission_handler) {
-            task_contexts[TASKTYPE_PHOTON_REEMIT] =
-                new PhotonReemitTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> >(
-                    *buffers, random_generators, *reemission_handler,
-                    abundances, *cross_sections, *grid_creator, *tasks,
-                    num_photon_done, statistics); // mgb 22.09.2026 - add statistics
-          }
-
-            const bool do_reemission =
-              reemission_handler != nullptr && !_time_dependent_diffuse_field_flag;
-          task_contexts[TASKTYPE_PHOTON_TRAVERSAL] =
-              new PhotonTraversalTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> >(
-                  *buffers, *grid_creator, *tasks, num_photon_done, statistics, // mgb 22.09.2026 - add statistics
-                do_reemission, _max_photon_distance);
-
-          PrematureLaunchTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> > premature_launch(
-              *buffers, *grid_creator, *tasks, queues, *shared_queue,
-              &pending_photon_tasks);
-
-          Scheduler scheduler(*tasks, queues, *shared_queue);
-
-          
-
-          start_parallel_timing_block();
-#ifdef HAVE_OPENMP
-#pragma omp parallel default(shared)
-#endif
-          {
-            // thread initialisation
-            const int_fast8_t thread_id = get_thread_index();
-            ThreadContext *thread_contexts[TASKTYPE_NUMBER] = {nullptr};
-            for (int_fast32_t itask = 0; itask < TASKTYPE_NUMBER; ++itask) {
-              if (task_contexts[itask]) {
-                thread_contexts[itask] =
-                    task_contexts[itask]->get_thread_context();
-              }
-            }
-
-            // Do not enter the scheduler while a stalled iteration is being
-            // inspected. A task returned here is counted as active before the
-            // scheduler call is published as complete, closing the small gap
-            // between removing a task from a queue and executing it.
-            const auto schedule_task = [&](const bool launch_partial) {
-              if (recovery_requested.value()) {
-                return static_cast< uint_fast32_t >(NO_TASK);
-              }
-              scheduler_calls.pre_increment();
-              if (recovery_requested.value()) {
-                scheduler_calls.pre_decrement();
-                return static_cast< uint_fast32_t >(NO_TASK);
-              }
-              if (launch_partial) {
-                premature_launch.execute();
-              }
-              const uint_fast32_t task_index = scheduler.get_task(thread_id);
-              if (task_index != NO_TASK) {
-                active_photon_tasks.pre_increment();
-              }
-              scheduler_calls.pre_decrement();
-              return task_index;
-            };
-
-            uint_fast32_t current_index = schedule_task(false);
-            while (global_run_flag.value()) {
-
-              if (current_index == NO_TASK) {
-                current_index = schedule_task(true);
-              }
-
-              while (current_index != NO_TASK) {
-
-                // execute task
-                uint_fast32_t num_tasks_to_add = 0;
-                uint_fast32_t tasks_to_add[TaskContext::MAX_CREATED_TASKS];
-                int_fast32_t queues_to_add[TaskContext::MAX_CREATED_TASKS];
-
-                Task &task = (*tasks)[current_index];
-                uint_fast64_t task_start, task_stop;
-                cpucycle_tick(task_start);
-
-                task.start(thread_id);
-
-                num_tasks_to_add = task_contexts[task.get_type()]->execute(
-                    thread_id, thread_contexts[task.get_type()], tasks_to_add,
-                    queues_to_add, task);
-
-                // Account for extra successors before making them visible.
-                // The current task already supplies the count for the common
-                // one-successor case.
-                if (num_tasks_to_add > 1) {
-                  pending_photon_tasks.pre_add(num_tasks_to_add - 1);
-                }
-
-                // log the end time of the task
-                task.stop();
-
-                task.unlock_dependency();
-
-                cpucycle_tick(task_stop);
-                active_time[thread_id] += task_stop - task_start;
-
-                if (task_plot_i >= task_plot_N) {
-                  tasks->free_element(current_index);
-                }
-
-                for (uint_fast32_t itask = 0; itask < num_tasks_to_add;
-                     ++itask) {
-                  if (queues_to_add[itask] < 0) {
-                    // general queue
-                    shared_queue->add_task(tasks_to_add[itask]);
-                  } else {
-                    queues[queues_to_add[itask]]->add_task(tasks_to_add[itask]);
-                  }
-                }
-
-                // With no successor, retire the current pending-task count.
-                if (num_tasks_to_add == 0) {
-                  pending_photon_tasks.pre_decrement();
-                }
-                active_photon_tasks.pre_decrement();
-                stalled_polls.set(0);
-                current_index = schedule_task(false);
-              }
-
-              if (buffers->is_empty() &&
-                  num_photon_done.value() == numphoton &&
-                  pending_photon_tasks.value() == 0) {
-                global_run_flag.set(false);
-              } else {
-                current_index = schedule_task(false);
-                if (current_index == NO_TASK &&
-                    active_photon_tasks.value() == 0 &&
-                    !recovery_requested.value()) {
-                  const uint_fast64_t stall_count =
-                      stalled_polls.pre_increment();
-
-                  // A transient gap between scheduler calls is normal. Only
-                  // inspect the global state after sustained zero progress.
-                  if (stall_count >= stalled_poll_limit &&
-                      recovery_lock.lock()) {
-                    recovery_requested.set(true);
-                    while (scheduler_calls.value() > 0 ||
-                           active_photon_tasks.value() > 0) {
-                    }
-
-                    // A task may have completed while recovery was being
-                    // requested. In that case progress is healthy: resume
-                    // scheduling without touching any dependency.
-                    if (stalled_polls.value() < stalled_poll_limit) {
-                      recovery_requested.set(false);
-                      recovery_lock.unlock();
-                      continue;
-                    }
-
-                    size_t queued_tasks = shared_queue->size();
-                    for (size_t iqueue = 0; iqueue < queues.size(); ++iqueue) {
-                      queued_tasks += queues[iqueue]->size();
-                    }
-                    const size_t active_buffers =
-                        buffers->get_number_of_active_buffers();
-                    const uint_fast64_t pending_tasks =
-                        pending_photon_tasks.value();
-                    const uint_fast64_t photons_done = num_photon_done.value();
-
-                    bool recovered = false;
-                    if (pending_tasks == 0 && active_buffers > 0) {
-                      // Normal partial buffers are recoverable: detach the
-                      // largest one and turn it into a traversal task.
-                      recovered = premature_launch.execute();
-                      if (recovered) {
-                        cmac_warning(
-                            "Recovered a stalled photon iteration %" PRIuFAST32
-                            " by launching a partial photon buffer "
-                            "(photons=%" PRIuFAST64 "/%" PRIuFAST64
-                            ", buffers=%zu).",
-                            iloop, photons_done, numphoton, active_buffers);
-                      }
-                    } else if (pending_tasks > 0 && queued_tasks > 0 &&
-                               dependency_recoveries.value() == 0) {
-                      // With every worker and scheduler call stopped, no grid
-                      // dependency can legitimately remain locked. Clear a
-                      // stale lock once and retry the queued work.
-                      for (auto gridit = grid_creator->begin();
-                           gridit != grid_creator->all_end(); ++gridit) {
-                        (*gridit).get_dependency()->unlock();
-                      }
-                      dependency_recoveries.pre_increment();
-                      recovered = true;
-                      cmac_warning(
-                          "Recovered stalled photon iteration %" PRIuFAST32
-                          " by releasing stale subgrid dependency locks once "
-                          "(photons=%" PRIuFAST64 "/%" PRIuFAST64
-                          ", buffers=%zu, pending tasks=%" PRIuFAST64
-                          ", queued tasks=%zu).",
-                          iloop, photons_done, numphoton, active_buffers,
-                          pending_tasks, queued_tasks);
-                    }
-
-                    if (!recovered) {
-                      cmac_error(
-                          "Photon iteration %" PRIuFAST32
-                          " cannot make progress: all "
-                          "workers are idle, photons=%" PRIuFAST64
-                          "/%" PRIuFAST64 ", buffers=%zu, pending tasks=%"
-                          PRIuFAST64 ", queued tasks=%zu, dependency "
-                          "recoveries=%" PRIuFAST32 ". No safe recovery is "
-                          "available; aborting instead of spinning forever.",
-                          iloop, photons_done, numphoton, active_buffers,
-                          pending_tasks, queued_tasks,
-                          dependency_recoveries.value());
-                    }
-
-                    stalled_polls.set(0);
-                    recovery_requested.set(false);
-                    recovery_lock.unlock();
-                  }
-                }
-              }
-            } // while(global_run_flag.value())
-
-            for (int_fast32_t itask = 0; itask < TASKTYPE_NUMBER; ++itask) {
-              delete thread_contexts[itask];
-            }
-          } // parallel region
-          stop_parallel_timing_block();
-
-          buffers->reset();
-
-          if (iloop == nloop - 1) {
-            if (statistics != nullptr) {
-           //   statistics->print_stats();
-              std::cout << "Number of photons escaped = " << statistics->get_num_escaped() << std::endl;
-              std::cout << "Number of photons absorbed (all gas) = " << statistics->get_num_absorbed() << std::endl;
-              std::cout << "Number of photons absorbed (dust) = " << statistics->get_num_abs_dust() << std::endl;
-              std::cout << "Number of H photons reemitted = " << statistics->get_num_reemitted_H() << std::endl;
-            }
-          }
-
-          // update copies
-          grid_creator->update_original_counters();
-
-          cmac_assert_message(buffers->is_empty(),
-                              "Number of active buffers: %zu",
-                              buffers->get_number_of_active_buffers());
+      if (_time_dependent_diffuse_field_flag) {
+          time_logger.start("radiation transfer");
 
           {
             AtomicValue< size_t > igrid(0);
             start_parallel_timing_block();
-    std::cout << "PHOTONS SHOT. UPDATING GRID" << std::endl;
-#ifdef HAVE_OPENMP
-#pragma omp parallel default(shared)
-#endif
-            while (igrid.value() <
-                   grid_creator->number_of_original_subgrids()) {
+  #ifdef HAVE_OPENMP
+  #pragma omp parallel default(shared)
+  #endif
+            while (igrid.value() < grid_creator->number_of_original_subgrids()) {
               const size_t this_igrid = igrid.post_increment();
               if (this_igrid < grid_creator->number_of_original_subgrids()) {
-                auto gridit = grid_creator->get_subgrid(this_igrid);
+                HydroDensitySubGrid &subgrid =
+                    *grid_creator->get_subgrid(this_igrid);
 
-                const size_t itask = tasks->get_free_element();
-                Task &task = (*tasks)[itask];
-
-                uint_fast64_t task_start, task_stop;
-                cpucycle_tick(task_start);
-
-                task.set_type(TASKTYPE_TEMPERATURE_STATE);
-                task.start(get_thread_index());
-
-#ifndef VARIABLE_ABUNDANCES
-                // correct the intensity counters for abundance factors
-                for (auto cellit = (*gridit).begin(); cellit != (*gridit).end();
-                     ++cellit) {
-                  IonizationVariables &vars = cellit.get_ionization_variables();
-                  for (int_fast32_t ion = 1; ion < NUMBER_OF_IONNAMES; ++ion) {
-                    const double abundance =
-                        abundances.get_abundance(get_element(ion));
-                    if (abundance > 0.) {
-                      vars.set_mean_intensity(
-                          ion, vars.get_mean_intensity(ion) / abundance);
+                  for (auto cellit = subgrid.begin(); cellit != subgrid.end();
+                    ++cellit) {
+                    if (_throttle_ion_state || _time_dependent_ionization) {
+                      cellit.get_ionization_variables().copy_previous_fractions();
+                    } else {
+                      cellit.get_ionization_variables().set_prev_ionic_fraction(ION_H_n,-1.);
                     }
-                  }
-                
-#endif
-#ifdef HAS_HELIUM
-                vars.set_heating(HEATINGTERM_He,
-                                vars.get_heating(HEATINGTERM_He) /
-                                   abundances.get_abundance(ELEMENT_He));
-#endif
-            }
-                if (chemistry_every_hydro_step) {
-                  size_t local_cell = 0;
-                  const double luminosity_per_packet =
-                    total_system_luminosity / numphoton;
-                  for (auto cell = (*gridit).begin(); cell != (*gridit).end(); ++cell, ++local_cell) {
-                    auto &vars = cell.get_ionization_variables();
-                    const double jfac = luminosity_per_packet / cell.get_volume();
-                    ChemistryDiagnostics::Scope diagnostic(chemistry_diagnostics,
-                        this_igrid*chemistry_cells_per_subgrid+local_cell,
-                        get_thread_index(), vars, actual_timestep, true, jfac);
-                    HydroStepChemistry::radiation_trial(vars, hydro_chemistry,
-                        jfac, actual_timestep, iloop == nloop-1);
-                  }
-                } else if (_time_dependent_ionization) {
-                  if (iloop == nloop -1) {
-                    temperature_calculator->calculate_temperature(
-                      iloop, numphoton, *gridit, current_time - lastrad_time, true, true);
                       
-                  } else {
-                  temperature_calculator->calculate_temperature(
-                      iloop, numphoton, *gridit, current_time - lastrad_time, true, false);
                   }
-                } else {
-                    temperature_calculator->calculate_temperature(iloop, numphoton,
-                                        *gridit, 0.0, false, true);
+                subgrid.update_ionization_variables(hydro,
+                                                    maximum_neutral_fraction); 
+              }
+            }
+            stop_parallel_timing_block();
+          }
 
-                }
+          // WEIGHT THE PHOTON NUMBERS BASED ON LUMINOSITY 
 
-                task.stop();
-                cpucycle_tick(task_stop);
-                active_time[get_thread_index()] += task_stop - task_start;
+          const double total_system_luminosity = stellar_luminosity + diffuse_H_luminosity + diffuse_He_luminosity;
 
-                // Retain completed tasks only while producing a task plot.
-                // Returning these timing-only tasks here lets the normal
-                // end-of-step task reset avoid scanning the full task pool.
-                if (task_plot_i >= task_plot_N) {
-                  tasks->free_element(itask);
+          size_t stellar_packets = 0;
+          size_t diffuse_H_packets = 0;
+          size_t diffuse_He_packets = 0;
+
+
+          if (total_system_luminosity > 0.) {
+            double stellar_weight = stellar_luminosity / total_system_luminosity;
+            double diffuse_H_weight = diffuse_H_luminosity / total_system_luminosity;
+            stellar_packets = static_cast<size_t>(numphoton * stellar_weight);
+            diffuse_H_packets = static_cast<size_t>(numphoton * diffuse_H_weight);
+            if (diffuse_He_luminosity > 0.) {
+              diffuse_He_packets = numphoton - stellar_packets - diffuse_H_packets;
+            } else {
+              diffuse_H_packets = numphoton - stellar_packets;
+            }
+          }
+
+          log->write_status("Stellar Luminosity: ", stellar_luminosity, " Diffuse Hydrogen Luminosity: ", diffuse_H_luminosity, " Diffuse Helium Luminosity: ", diffuse_He_luminosity, " Total Luminosity: ", total_system_luminosity);
+          log->write_status("Stellar Packets: ", stellar_packets, " Diffuse Hydrogen Packets: ", diffuse_H_packets, " Diffuse Helium Packets: ", diffuse_He_packets, " Total Packets: ", stellar_packets + diffuse_H_packets + diffuse_He_packets);
+
+          // DISTRIBUTE STELLAR PHOTON SOURCES
+
+          DistributedPhotonSource<HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> > stellar_photon_source( 
+              stellar_packets, *sourcedistribution, *grid_creator);
+
+          // DISTRIBUTE DIFFUSE PHOTON SOURCES
+
+          DistributedPhotonSource<HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> > diffuse_photon_source(
+              diffuse_H_packets, *hydrogendiffusesourcedistribution, *grid_creator);
+
+          #ifdef HAS_HELIUM
+          DistributedPhotonSource<HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> > helium_diffuse_photon_source(
+              diffuse_He_packets, *heliumdiffusesourcedistribution, *grid_creator);
+          #endif
+
+          {
+            AtomicValue< size_t > igrid(0);
+            start_parallel_timing_block();
+  #ifdef HAVE_OPENMP
+  #pragma omp parallel default(shared)
+  #endif
+            while (igrid.value() < grid_creator->number_of_actual_subgrids()) {
+              const size_t this_igrid = igrid.post_increment();
+              if (this_igrid < grid_creator->number_of_actual_subgrids()) {
+                HydroDensitySubGrid &subgrid =
+                    *grid_creator->get_subgrid(this_igrid);
+                for (int ingb = 0; ingb < TRAVELDIRECTION_NUMBER; ++ingb) {
+                  subgrid.set_active_buffer(ingb, NEIGHBOUR_OUTSIDE);
                 }
               }
             }
             stop_parallel_timing_block();
           }
 
-          for (int_fast32_t itask = 0; itask < TASKTYPE_NUMBER; ++itask) {
-            delete task_contexts[itask];
+
+          for (uint_fast32_t iloop = 0; iloop < nloop; ++iloop) {
+
+            if (log) {
+              log->write_status("Starting loop ", iloop, ".");
+            }
+
+            worktimer.start();
+
+            // reset mean intensity counters
+            {
+              AtomicValue< size_t > igrid(0);
+              start_parallel_timing_block();
+  #ifdef HAVE_OPENMP
+  #pragma omp parallel default(shared)
+  #endif
+              while (igrid.value() < grid_creator->number_of_actual_subgrids()) {
+                const size_t this_igrid = igrid.post_increment();
+                if (this_igrid < grid_creator->number_of_actual_subgrids()) {
+                  auto gridit = grid_creator->get_subgrid(this_igrid);
+                  (*gridit).reset_intensities();
+                }
+              }
+              stop_parallel_timing_block();
+            }
+
+            // update copies
+            grid_creator->update_copy_properties();
+
+            // reset the photon source information
+            stellar_photon_source.reset();
+            diffuse_photon_source.reset();
+            #ifdef HAS_HELIUM
+            helium_diffuse_photon_source.reset();
+            #endif
+
+            // Count all photon tasks from creation until completion. This lets
+            // the scheduler distinguish real work from a stranded buffer or a
+            // permanently locked dependency at the end of an iteration.
+            AtomicValue< uint_fast64_t > pending_photon_tasks(0);
+
+            // reset the diffuse field variables
+            if (reemission_handler != nullptr) {
+              AtomicValue< size_t > igrid(0);
+              start_parallel_timing_block();
+  #ifdef HAVE_OPENMP
+  #pragma omp parallel default(shared)
+  #endif
+              while (igrid.value() < grid_creator->number_of_actual_subgrids()) {
+                const size_t this_igrid = igrid.post_increment();
+                if (this_igrid < grid_creator->number_of_actual_subgrids()) {
+                  auto gridit = grid_creator->get_subgrid(this_igrid);
+                  for (auto cellit = (*gridit).begin(); cellit != (*gridit).end();
+                      ++cellit) {
+                    IonizationVariables &vars = cellit.get_ionization_variables();
+                    reemission_handler->set_reemission_probabilities(vars);
+                  }
+                }
+              }
+              stop_parallel_timing_block();
+            }
+
+          // PROCESS & DISPATCH STELLAR SOURCE PHOTONS
+
+            size_t number_of_stellar_photons_done = 0;
+            while (number_of_stellar_photons_done < stellar_packets) {
+              for (size_t isrc = 0; isrc < stellar_photon_source.get_number_of_sources();
+                  ++isrc) {
+
+                const size_t number_of_photons_this_batch =
+                    stellar_photon_source.get_photon_batch(isrc, PHOTONBUFFER_SIZE);
+                if (number_of_photons_this_batch > 0) {
+                  const size_t new_task = tasks->get_free_element();
+                  (*tasks)[new_task].set_type(TASKTYPE_SOURCE_DISCRETE_PHOTON);
+                  (*tasks)[new_task].set_subgrid(isrc);
+                  (*tasks)[new_task].set_buffer(number_of_photons_this_batch);
+                  pending_photon_tasks.pre_increment();
+                  shared_queue->add_task(new_task);
+                  number_of_stellar_photons_done += number_of_photons_this_batch;
+                }
+              }
+            }
+            cmac_assert(number_of_stellar_photons_done == stellar_packets);
+
+          // PROCESS & DISPATCH DIFFUSE SOURCE PHOTONS
+    
+            // HYDROGEN DIFFUSE FIELD SOURCES
+
+            std::map<size_t, std::vector<size_t>> sources_by_subgrid;
+
+            for (size_t source = 0; source < diffuse_photon_source.get_number_of_sources(); ++source) {
+              if (diffuse_photon_source.get_number_of_batches(source, PHOTONBUFFER_SIZE) > 0) {
+                sources_by_subgrid[diffuse_photon_source.get_subgrid(source)].push_back(source);
+              }
+            }
+
+            std::vector<DiffusePhotonBatch> diffuse_batches;
+            uint_fast64_t number_of_diffuse_photons_done = 0;
+
+            for (const auto &group : sources_by_subgrid) {
+              DiffusePhotonBatch batch;
+
+              batch.subgrid = group.first;
+              batch.sources.reserve(PHOTONBUFFER_SIZE);
+
+              for (const size_t source : group.second) {
+                while (true) {
+                  const size_t count = diffuse_photon_source.get_photon_batch
+                  (source, PHOTONBUFFER_SIZE - batch.sources.size());
+
+                  if (count == 0) {
+                    break;
+                  }
+
+                  batch.sources.insert(batch.sources.end(), count, source);
+                  number_of_diffuse_photons_done += count;
+
+                  if (batch.sources.size() == PHOTONBUFFER_SIZE) {
+                    diffuse_batches.push_back(std::move(batch));
+                    batch = DiffusePhotonBatch{};
+                    batch.subgrid = group.first;
+                    batch.sources.reserve(PHOTONBUFFER_SIZE);
+                  }
+
+                }
+              }
+              if (!batch.sources.empty()) {
+                diffuse_batches.push_back(std::move(batch));
+              }
+
+            }
+
+            if (number_of_diffuse_photons_done != diffuse_H_packets) {
+              cmac_error("Diffuse photon batching lost assigned packets");
+            }
+            cmac_assert(number_of_diffuse_photons_done == diffuse_H_packets);
+
+            for (size_t batch = 0; batch < diffuse_batches.size(); ++batch) {
+              const size_t task_index = tasks->get_free_element();
+              Task &task = (*tasks)[task_index];
+
+              task.set_type(TASKTYPE_SOURCE_DISCRETE_DIFFUSE_HYDROGEN_PHOTON);
+              task.set_subgrid(diffuse_batches[batch].subgrid);
+            // task.set_buffer(diffuse_batches[batch].sources.size());
+
+              task.set_buffer(batch);
+
+              pending_photon_tasks.pre_increment();
+              shared_queue->add_task(task_index);
+
+            }
+            
+            // HELIUM DIFFUSE FIELD SOURCES
+
+            #ifdef HAS_HELIUM
+            std::map<size_t, std::vector<size_t>> He_sources_by_subgrid;
+
+            for (size_t source = 0; source < helium_diffuse_photon_source.get_number_of_sources(); ++source) {
+              if (helium_diffuse_photon_source.get_number_of_batches(source, PHOTONBUFFER_SIZE) > 0) {
+                He_sources_by_subgrid[helium_diffuse_photon_source.get_subgrid(source)].push_back(source);
+              }
+            }
+
+            std::vector<DiffuseHeliumPhotonBatch> helium_diffuse_batches;
+            uint_fast64_t number_of_diffuse_He_photons_done = 0;
+
+            for (const auto &group : sources_by_subgrid) {
+              DiffuseHeliumPhotonBatch batch;
+
+              batch.subgrid = group.first;
+              batch.sources.reserve(PHOTONBUFFER_SIZE);
+
+              for (const size_t source : group.second) {
+                while (true) {
+                  const size_t count = helium_diffuse_photon_source.get_photon_batch
+                  (source, PHOTONBUFFER_SIZE - batch.sources.size());
+
+                  if (count == 0) {
+                    break;
+                  }
+
+                  batch.sources.insert(batch.sources.end(), count, source);
+                  number_of_diffuse_He_photons_done += count;
+
+                  if (batch.sources.size() == PHOTONBUFFER_SIZE) {
+                    helium_diffuse_batches.push_back(std::move(batch));
+                    batch = DiffuseHeliumPhotonBatch{};
+                    batch.subgrid = group.first;
+                    batch.sources.reserve(PHOTONBUFFER_SIZE);
+                  }
+
+                }
+              }
+              if (!batch.sources.empty()) {
+                helium_diffuse_batches.push_back(std::move(batch));
+              }
+
+            }
+
+            if (number_of_diffuse_He_photons_done != diffuse_He_packets) {
+              cmac_error("Diffuse He photon batching lost assigned packets");
+            }
+            cmac_assert(number_of_diffuse_He_photons_done == diffuse_He_packets);
+
+            for (size_t batch = 0; batch < helium_diffuse_batches.size(); ++batch) {
+              const size_t task_index = tasks->get_free_element();
+              Task &task = (*tasks)[task_index];
+
+              task.set_type(TASKTYPE_SOURCE_DISCRETE_DIFFUSE_HYDROGEN_PHOTON);
+              task.set_subgrid(batch);
+              task.set_buffer(helium_diffuse_batches[batch].sources.size());
+
+              pending_photon_tasks.pre_increment();
+              shared_queue->add_task(task_index);
+
+            }
+            
+            #endif
+
+            AtomicValue< bool > global_run_flag(true);
+            AtomicValue< uint_fast64_t > num_photon_done(0);
+            AtomicValue< uint_fast32_t > active_photon_tasks(0);
+            AtomicValue< uint_fast32_t > scheduler_calls(0);
+            AtomicValue< uint_fast64_t > stalled_polls(0);
+            AtomicValue< bool > recovery_requested(false);
+            AtomicValue< bool > recovery_lock(false);
+            AtomicValue< uint_fast32_t > dependency_recoveries(0);
+            const uint_fast64_t stalled_poll_limit =
+                1000000 * static_cast< uint_fast64_t >(num_thread);
+
+
+            // create task contexts
+          TaskContext *task_contexts[TASKTYPE_NUMBER] = {nullptr};
+
+          // STELLAR PHOTON LAUNCH
+            task_contexts[TASKTYPE_SOURCE_DISCRETE_PHOTON] =
+                new SourceDiscretePhotonTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> >(
+                    stellar_photon_source, *buffers, random_generators, 1., *spectrum,
+                    abundances, *cross_sections, *grid_creator, *tasks,
+                    *sourcedistribution, statistics, frequency_uniform_fraction); // mgb 22.09.2026 - add statistics
+
+
+            // DIFFUSE PHOTON LAUNCH
+            task_contexts[TASKTYPE_SOURCE_DISCRETE_DIFFUSE_HYDROGEN_PHOTON] = 
+                new SourceDiscreteDiffusePhotonTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> >(
+                    diffuse_photon_source, *buffers, random_generators, 1.,
+                    abundances, *cross_sections, *grid_creator, *tasks,
+                    *hydrogendiffusesourcedistribution, statistics, diffuse_batches, frequency_uniform_fraction);
+
+            #ifdef HAS_HELIUM
+            task_contexts[TASKTYPE_SOURCE_DISCRETE_DIFFUSE_HELIUM_PHOTON] = 
+                new SourceDiscreteDiffuseHeliumPhotonTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> >(
+                    helium_diffuse_photon_source, *buffers, random_generators, 1.,
+                    abundances, *cross_sections, *grid_creator, *tasks,
+                    *heliumdiffusesourcedistribution, statistics, helium_diffuse_batches, frequency_uniform_fraction);
+            #endif
+
+            if (reemission_handler) {
+              task_contexts[TASKTYPE_PHOTON_REEMIT] =
+                  new PhotonReemitTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> >(
+                      *buffers, random_generators, *reemission_handler,
+                      abundances, *cross_sections, *grid_creator, *tasks,
+                      num_photon_done, statistics); // mgb 22.09.2026 - add statistics
+            }
+
+              const bool do_reemission =
+                reemission_handler != nullptr && !_time_dependent_diffuse_field_flag;
+            task_contexts[TASKTYPE_PHOTON_TRAVERSAL] =
+                new PhotonTraversalTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> >(
+                    *buffers, *grid_creator, *tasks, num_photon_done, statistics, // mgb 22.09.2026 - add statistics
+                  do_reemission, _max_photon_distance);
+
+            PrematureLaunchTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> > premature_launch(
+                *buffers, *grid_creator, *tasks, queues, *shared_queue,
+                &pending_photon_tasks);
+
+            Scheduler scheduler(*tasks, queues, *shared_queue);
+
+            
+
+            start_parallel_timing_block();
+  #ifdef HAVE_OPENMP
+  #pragma omp parallel default(shared)
+  #endif
+            {
+              // thread initialisation
+              const int_fast8_t thread_id = get_thread_index();
+              ThreadContext *thread_contexts[TASKTYPE_NUMBER] = {nullptr};
+              for (int_fast32_t itask = 0; itask < TASKTYPE_NUMBER; ++itask) {
+                if (task_contexts[itask]) {
+                  thread_contexts[itask] =
+                      task_contexts[itask]->get_thread_context();
+                }
+              }
+
+              // Do not enter the scheduler while a stalled iteration is being
+              // inspected. A task returned here is counted as active before the
+              // scheduler call is published as complete, closing the small gap
+              // between removing a task from a queue and executing it.
+              const auto schedule_task = [&](const bool launch_partial) {
+                if (recovery_requested.value()) {
+                  return static_cast< uint_fast32_t >(NO_TASK);
+                }
+                scheduler_calls.pre_increment();
+                if (recovery_requested.value()) {
+                  scheduler_calls.pre_decrement();
+                  return static_cast< uint_fast32_t >(NO_TASK);
+                }
+                if (launch_partial) {
+                  premature_launch.execute();
+                }
+                const uint_fast32_t task_index = scheduler.get_task(thread_id);
+                if (task_index != NO_TASK) {
+                  active_photon_tasks.pre_increment();
+                }
+                scheduler_calls.pre_decrement();
+                return task_index;
+              };
+
+              uint_fast32_t current_index = schedule_task(false);
+              while (global_run_flag.value()) {
+
+                if (current_index == NO_TASK) {
+                  current_index = schedule_task(true);
+                }
+
+                while (current_index != NO_TASK) {
+
+                  // execute task
+                  uint_fast32_t num_tasks_to_add = 0;
+                  uint_fast32_t tasks_to_add[TaskContext::MAX_CREATED_TASKS];
+                  int_fast32_t queues_to_add[TaskContext::MAX_CREATED_TASKS];
+
+                  Task &task = (*tasks)[current_index];
+                  uint_fast64_t task_start, task_stop;
+                  cpucycle_tick(task_start);
+
+                  task.start(thread_id);
+
+                  num_tasks_to_add = task_contexts[task.get_type()]->execute(
+                      thread_id, thread_contexts[task.get_type()], tasks_to_add,
+                      queues_to_add, task);
+
+                  // Account for extra successors before making them visible.
+                  // The current task already supplies the count for the common
+                  // one-successor case.
+                  if (num_tasks_to_add > 1) {
+                    pending_photon_tasks.pre_add(num_tasks_to_add - 1);
+                  }
+
+                  // log the end time of the task
+                  task.stop();
+
+                  task.unlock_dependency();
+
+                  cpucycle_tick(task_stop);
+                  active_time[thread_id] += task_stop - task_start;
+
+                  if (task_plot_i >= task_plot_N) {
+                    tasks->free_element(current_index);
+                  }
+
+                  for (uint_fast32_t itask = 0; itask < num_tasks_to_add;
+                      ++itask) {
+                    if (queues_to_add[itask] < 0) {
+                      // general queue
+                      shared_queue->add_task(tasks_to_add[itask]);
+                    } else {
+                      queues[queues_to_add[itask]]->add_task(tasks_to_add[itask]);
+                    }
+                  }
+
+                  // With no successor, retire the current pending-task count.
+                  if (num_tasks_to_add == 0) {
+                    pending_photon_tasks.pre_decrement();
+                  }
+                  active_photon_tasks.pre_decrement();
+                  stalled_polls.set(0);
+                  current_index = schedule_task(false);
+                }
+
+                if (buffers->is_empty() &&
+                    num_photon_done.value() == numphoton &&
+                    pending_photon_tasks.value() == 0) {
+                  global_run_flag.set(false);
+                } else {
+                  current_index = schedule_task(false);
+                  if (current_index == NO_TASK &&
+                      active_photon_tasks.value() == 0 &&
+                      !recovery_requested.value()) {
+                    const uint_fast64_t stall_count =
+                        stalled_polls.pre_increment();
+
+                    // A transient gap between scheduler calls is normal. Only
+                    // inspect the global state after sustained zero progress.
+                    if (stall_count >= stalled_poll_limit &&
+                        recovery_lock.lock()) {
+                      recovery_requested.set(true);
+                      while (scheduler_calls.value() > 0 ||
+                            active_photon_tasks.value() > 0) {
+                      }
+
+                      // A task may have completed while recovery was being
+                      // requested. In that case progress is healthy: resume
+                      // scheduling without touching any dependency.
+                      if (stalled_polls.value() < stalled_poll_limit) {
+                        recovery_requested.set(false);
+                        recovery_lock.unlock();
+                        continue;
+                      }
+
+                      size_t queued_tasks = shared_queue->size();
+                      for (size_t iqueue = 0; iqueue < queues.size(); ++iqueue) {
+                        queued_tasks += queues[iqueue]->size();
+                      }
+                      const size_t active_buffers =
+                          buffers->get_number_of_active_buffers();
+                      const uint_fast64_t pending_tasks =
+                          pending_photon_tasks.value();
+                      const uint_fast64_t photons_done = num_photon_done.value();
+
+                      bool recovered = false;
+                      if (pending_tasks == 0 && active_buffers > 0) {
+                        // Normal partial buffers are recoverable: detach the
+                        // largest one and turn it into a traversal task.
+                        recovered = premature_launch.execute();
+                        if (recovered) {
+                          cmac_warning(
+                              "Recovered a stalled photon iteration %" PRIuFAST32
+                              " by launching a partial photon buffer "
+                              "(photons=%" PRIuFAST64 "/%" PRIuFAST64
+                              ", buffers=%zu).",
+                              iloop, photons_done, numphoton, active_buffers);
+                        }
+                      } else if (pending_tasks > 0 && queued_tasks > 0 &&
+                                dependency_recoveries.value() == 0) {
+                        // With every worker and scheduler call stopped, no grid
+                        // dependency can legitimately remain locked. Clear a
+                        // stale lock once and retry the queued work.
+                        for (auto gridit = grid_creator->begin();
+                            gridit != grid_creator->all_end(); ++gridit) {
+                          (*gridit).get_dependency()->unlock();
+                        }
+                        dependency_recoveries.pre_increment();
+                        recovered = true;
+                        cmac_warning(
+                            "Recovered stalled photon iteration %" PRIuFAST32
+                            " by releasing stale subgrid dependency locks once "
+                            "(photons=%" PRIuFAST64 "/%" PRIuFAST64
+                            ", buffers=%zu, pending tasks=%" PRIuFAST64
+                            ", queued tasks=%zu).",
+                            iloop, photons_done, numphoton, active_buffers,
+                            pending_tasks, queued_tasks);
+                      }
+
+                      if (!recovered) {
+                        cmac_error(
+                            "Photon iteration %" PRIuFAST32
+                            " cannot make progress: all "
+                            "workers are idle, photons=%" PRIuFAST64
+                            "/%" PRIuFAST64 ", buffers=%zu, pending tasks=%"
+                            PRIuFAST64 ", queued tasks=%zu, dependency "
+                            "recoveries=%" PRIuFAST32 ". No safe recovery is "
+                            "available; aborting instead of spinning forever.",
+                            iloop, photons_done, numphoton, active_buffers,
+                            pending_tasks, queued_tasks,
+                            dependency_recoveries.value());
+                      }
+
+                      stalled_polls.set(0);
+                      recovery_requested.set(false);
+                      recovery_lock.unlock();
+                    }
+                  }
+                }
+              } // while(global_run_flag.value())
+
+              for (int_fast32_t itask = 0; itask < TASKTYPE_NUMBER; ++itask) {
+                delete thread_contexts[itask];
+              }
+            } // parallel region
+            stop_parallel_timing_block();
+
+            buffers->reset();
+
+            if (iloop == nloop - 1) {
+              if (statistics != nullptr) {
+            //   statistics->print_stats();
+                std::cout << "Number of photons escaped = " << statistics->get_num_escaped() << std::endl;
+                std::cout << "Number of photons absorbed (all gas) = " << statistics->get_num_absorbed() << std::endl;
+                std::cout << "Number of photons absorbed (dust) = " << statistics->get_num_abs_dust() << std::endl;
+                std::cout << "Number of H photons reemitted = " << statistics->get_num_reemitted_H() << std::endl;
+              }
+            }
+
+            // update copies
+            grid_creator->update_original_counters();
+
+            cmac_assert_message(buffers->is_empty(),
+                                "Number of active buffers: %zu",
+                                buffers->get_number_of_active_buffers());
+
+            {
+              AtomicValue< size_t > igrid(0);
+              start_parallel_timing_block();
+      std::cout << "PHOTONS SHOT. UPDATING GRID" << std::endl;
+  #ifdef HAVE_OPENMP
+  #pragma omp parallel default(shared)
+  #endif
+              while (igrid.value() <
+                    grid_creator->number_of_original_subgrids()) {
+                const size_t this_igrid = igrid.post_increment();
+                if (this_igrid < grid_creator->number_of_original_subgrids()) {
+                  auto gridit = grid_creator->get_subgrid(this_igrid);
+
+                  const size_t itask = tasks->get_free_element();
+                  Task &task = (*tasks)[itask];
+
+                  uint_fast64_t task_start, task_stop;
+                  cpucycle_tick(task_start);
+
+                  task.set_type(TASKTYPE_TEMPERATURE_STATE);
+                  task.start(get_thread_index());
+
+  #ifndef VARIABLE_ABUNDANCES
+                  // correct the intensity counters for abundance factors
+                  for (auto cellit = (*gridit).begin(); cellit != (*gridit).end();
+                      ++cellit) {
+                    IonizationVariables &vars = cellit.get_ionization_variables();
+                    for (int_fast32_t ion = 1; ion < NUMBER_OF_IONNAMES; ++ion) {
+                      const double abundance =
+                          abundances.get_abundance(get_element(ion));
+                      if (abundance > 0.) {
+                        vars.set_mean_intensity(
+                            ion, vars.get_mean_intensity(ion) / abundance);
+                      }
+                    }
+                  
+  #endif
+  #ifdef HAS_HELIUM
+                  vars.set_heating(HEATINGTERM_He,
+                                  vars.get_heating(HEATINGTERM_He) /
+                                    abundances.get_abundance(ELEMENT_He));
+  #endif
+              }
+                  if (chemistry_every_hydro_step) {
+                    size_t local_cell = 0;
+                    const double luminosity_per_packet =
+                      total_system_luminosity / numphoton;
+                    for (auto cell = (*gridit).begin(); cell != (*gridit).end(); ++cell, ++local_cell) {
+                      auto &vars = cell.get_ionization_variables();
+                      const double jfac = luminosity_per_packet / cell.get_volume();
+                      ChemistryDiagnostics::Scope diagnostic(chemistry_diagnostics,
+                          this_igrid*chemistry_cells_per_subgrid+local_cell,
+                          get_thread_index(), vars, actual_timestep, true, jfac);
+                      HydroStepChemistry::radiation_trial(vars, hydro_chemistry,
+                          jfac, actual_timestep, iloop == nloop-1);
+                    }
+                  } else if (_time_dependent_ionization) {
+                    if (iloop == nloop -1) {
+                      temperature_calculator->calculate_temperature(
+                        iloop, numphoton, *gridit, current_time - lastrad_time, true, true);
+                        
+                    } else {
+                    temperature_calculator->calculate_temperature(
+                        iloop, numphoton, *gridit, current_time - lastrad_time, true, false);
+                    }
+                  } else {
+                      temperature_calculator->calculate_temperature(iloop, numphoton,
+                                          *gridit, 0.0, false, true);
+
+                  }
+
+                  task.stop();
+                  cpucycle_tick(task_stop);
+                  active_time[get_thread_index()] += task_stop - task_start;
+
+                  // Retain completed tasks only while producing a task plot.
+                  // Returning these timing-only tasks here lets the normal
+                  // end-of-step task reset avoid scanning the full task pool.
+                  if (task_plot_i >= task_plot_N) {
+                    tasks->free_element(itask);
+                  }
+                }
+              }
+              stop_parallel_timing_block();
+            }
+
+            for (int_fast32_t itask = 0; itask < TASKTYPE_NUMBER; ++itask) {
+              delete task_contexts[itask];
+            }
+
+            worktimer.stop();
           }
 
-          worktimer.stop();
-        }
+          time_logger.end("radiation transfer"); 
 
-        time_logger.end("radiation transfer"); 
 
       } else {
+
+        //--------------------------------------------------------------
+        // TIME DEPENDENT DIFFUSE FIELD IS DISABLED
+        //--------------------------------------------------------------
+
+        time_logger.start("radiation transfer");
+
+          {
+            AtomicValue< size_t > igrid(0);
+            start_parallel_timing_block();
+  #ifdef HAVE_OPENMP
+  #pragma omp parallel default(shared)
+  #endif
+            while (igrid.value() < grid_creator->number_of_original_subgrids()) {
+              const size_t this_igrid = igrid.post_increment();
+              if (this_igrid < grid_creator->number_of_original_subgrids()) {
+                HydroDensitySubGrid &subgrid =
+                    *grid_creator->get_subgrid(this_igrid);
+
+                  for (auto cellit = subgrid.begin(); cellit != subgrid.end();
+                    ++cellit) {
+                    if (_throttle_ion_state || _time_dependent_ionization) {
+                      cellit.get_ionization_variables().copy_previous_fractions();
+                    } else {
+                      cellit.get_ionization_variables().set_prev_ionic_fraction(ION_H_n,-1.);
+                    }
+                      
+                  }
+                subgrid.update_ionization_variables(hydro,
+                                                    maximum_neutral_fraction); 
+              }
+            }
+            stop_parallel_timing_block();
+          }
+
+          // WEIGHT THE PHOTON NUMBERS BASED ON LUMINOSITY 
+
+          const double total_system_luminosity = stellar_luminosity;
+
+          size_t stellar_packets = numphoton;
+
+          // DISTRIBUTE STELLAR PHOTON SOURCES
+
+          DistributedPhotonSource<HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> > stellar_photon_source( 
+              stellar_packets, *sourcedistribution, *grid_creator);
+
+         
+
+          {
+            AtomicValue< size_t > igrid(0);
+            start_parallel_timing_block();
+  #ifdef HAVE_OPENMP
+  #pragma omp parallel default(shared)
+  #endif
+            while (igrid.value() < grid_creator->number_of_actual_subgrids()) {
+              const size_t this_igrid = igrid.post_increment();
+              if (this_igrid < grid_creator->number_of_actual_subgrids()) {
+                HydroDensitySubGrid &subgrid =
+                    *grid_creator->get_subgrid(this_igrid);
+                for (int ingb = 0; ingb < TRAVELDIRECTION_NUMBER; ++ingb) {
+                  subgrid.set_active_buffer(ingb, NEIGHBOUR_OUTSIDE);
+                }
+              }
+            }
+            stop_parallel_timing_block();
+          }
+
+
+          for (uint_fast32_t iloop = 0; iloop < nloop; ++iloop) {
+
+            if (log) {
+              log->write_status("Starting loop ", iloop, ".");
+            }
+
+            worktimer.start();
+
+            // reset mean intensity counters
+            {
+              AtomicValue< size_t > igrid(0);
+              start_parallel_timing_block();
+  #ifdef HAVE_OPENMP
+  #pragma omp parallel default(shared)
+  #endif
+              while (igrid.value() < grid_creator->number_of_actual_subgrids()) {
+                const size_t this_igrid = igrid.post_increment();
+                if (this_igrid < grid_creator->number_of_actual_subgrids()) {
+                  auto gridit = grid_creator->get_subgrid(this_igrid);
+                  (*gridit).reset_intensities();
+                }
+              }
+              stop_parallel_timing_block();
+            }
+
+            // update copies
+            grid_creator->update_copy_properties();
+
+            // reset the photon source information
+            stellar_photon_source.reset();
+
+            // Count all photon tasks from creation until completion. This lets
+            // the scheduler distinguish real work from a stranded buffer or a
+            // permanently locked dependency at the end of an iteration.
+            AtomicValue< uint_fast64_t > pending_photon_tasks(0);
+
+            // reset the diffuse field variables
+            if (reemission_handler != nullptr) {
+              AtomicValue< size_t > igrid(0);
+              start_parallel_timing_block();
+  #ifdef HAVE_OPENMP
+  #pragma omp parallel default(shared)
+  #endif
+              while (igrid.value() < grid_creator->number_of_actual_subgrids()) {
+                const size_t this_igrid = igrid.post_increment();
+                if (this_igrid < grid_creator->number_of_actual_subgrids()) {
+                  auto gridit = grid_creator->get_subgrid(this_igrid);
+                  for (auto cellit = (*gridit).begin(); cellit != (*gridit).end();
+                      ++cellit) {
+                    IonizationVariables &vars = cellit.get_ionization_variables();
+                    reemission_handler->set_reemission_probabilities(vars);
+                  }
+                }
+              }
+              stop_parallel_timing_block();
+            }
+
+          // PROCESS & DISPATCH STELLAR SOURCE PHOTONS
+
+            size_t number_of_stellar_photons_done = 0;
+            while (number_of_stellar_photons_done < stellar_packets) {
+              for (size_t isrc = 0; isrc < stellar_photon_source.get_number_of_sources();
+                  ++isrc) {
+
+                const size_t number_of_photons_this_batch =
+                    stellar_photon_source.get_photon_batch(isrc, PHOTONBUFFER_SIZE);
+                if (number_of_photons_this_batch > 0) {
+                  const size_t new_task = tasks->get_free_element();
+                  (*tasks)[new_task].set_type(TASKTYPE_SOURCE_DISCRETE_PHOTON);
+                  (*tasks)[new_task].set_subgrid(isrc);
+                  (*tasks)[new_task].set_buffer(number_of_photons_this_batch);
+                  pending_photon_tasks.pre_increment();
+                  shared_queue->add_task(new_task);
+                  number_of_stellar_photons_done += number_of_photons_this_batch;
+                }
+              }
+            }
+            cmac_assert(number_of_stellar_photons_done == stellar_packets);
+
+        
+
+            AtomicValue< bool > global_run_flag(true);
+            AtomicValue< uint_fast64_t > num_photon_done(0);
+            AtomicValue< uint_fast32_t > active_photon_tasks(0);
+            AtomicValue< uint_fast32_t > scheduler_calls(0);
+            AtomicValue< uint_fast64_t > stalled_polls(0);
+            AtomicValue< bool > recovery_requested(false);
+            AtomicValue< bool > recovery_lock(false);
+            AtomicValue< uint_fast32_t > dependency_recoveries(0);
+            const uint_fast64_t stalled_poll_limit =
+                1000000 * static_cast< uint_fast64_t >(num_thread);
+
+
+            // create task contexts
+          TaskContext *task_contexts[TASKTYPE_NUMBER] = {nullptr};
+
+          // STELLAR PHOTON LAUNCH
+            task_contexts[TASKTYPE_SOURCE_DISCRETE_PHOTON] =
+                new SourceDiscretePhotonTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> >(
+                    stellar_photon_source, *buffers, random_generators, 1., *spectrum,
+                    abundances, *cross_sections, *grid_creator, *tasks,
+                    *sourcedistribution, statistics, frequency_uniform_fraction); // mgb 22.09.2026 - add statistics
+
+            if (reemission_handler) {
+              task_contexts[TASKTYPE_PHOTON_REEMIT] =
+                  new PhotonReemitTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> >(
+                      *buffers, random_generators, *reemission_handler,
+                      abundances, *cross_sections, *grid_creator, *tasks,
+                      num_photon_done, statistics); // mgb 22.09.2026 - add statistics
+            }
+
+              const bool do_reemission =
+                reemission_handler != nullptr && !_time_dependent_diffuse_field_flag;
+            task_contexts[TASKTYPE_PHOTON_TRAVERSAL] =
+                new PhotonTraversalTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> >(
+                    *buffers, *grid_creator, *tasks, num_photon_done, statistics, // mgb 22.09.2026 - add statistics
+                  do_reemission, _max_photon_distance);
+
+            PrematureLaunchTaskContext< HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> > premature_launch(
+                *buffers, *grid_creator, *tasks, queues, *shared_queue,
+                &pending_photon_tasks);
+
+            Scheduler scheduler(*tasks, queues, *shared_queue);
+
+            
+
+            start_parallel_timing_block();
+  #ifdef HAVE_OPENMP
+  #pragma omp parallel default(shared)
+  #endif
+            {
+              // thread initialisation
+              const int_fast8_t thread_id = get_thread_index();
+              ThreadContext *thread_contexts[TASKTYPE_NUMBER] = {nullptr};
+              for (int_fast32_t itask = 0; itask < TASKTYPE_NUMBER; ++itask) {
+                if (task_contexts[itask]) {
+                  thread_contexts[itask] =
+                      task_contexts[itask]->get_thread_context();
+                }
+              }
+
+              // Do not enter the scheduler while a stalled iteration is being
+              // inspected. A task returned here is counted as active before the
+              // scheduler call is published as complete, closing the small gap
+              // between removing a task from a queue and executing it.
+              const auto schedule_task = [&](const bool launch_partial) {
+                if (recovery_requested.value()) {
+                  return static_cast< uint_fast32_t >(NO_TASK);
+                }
+                scheduler_calls.pre_increment();
+                if (recovery_requested.value()) {
+                  scheduler_calls.pre_decrement();
+                  return static_cast< uint_fast32_t >(NO_TASK);
+                }
+                if (launch_partial) {
+                  premature_launch.execute();
+                }
+                const uint_fast32_t task_index = scheduler.get_task(thread_id);
+                if (task_index != NO_TASK) {
+                  active_photon_tasks.pre_increment();
+                }
+                scheduler_calls.pre_decrement();
+                return task_index;
+              };
+
+              uint_fast32_t current_index = schedule_task(false);
+              while (global_run_flag.value()) {
+
+                if (current_index == NO_TASK) {
+                  current_index = schedule_task(true);
+                }
+
+                while (current_index != NO_TASK) {
+
+                  // execute task
+                  uint_fast32_t num_tasks_to_add = 0;
+                  uint_fast32_t tasks_to_add[TaskContext::MAX_CREATED_TASKS];
+                  int_fast32_t queues_to_add[TaskContext::MAX_CREATED_TASKS];
+
+                  Task &task = (*tasks)[current_index];
+                  uint_fast64_t task_start, task_stop;
+                  cpucycle_tick(task_start);
+
+                  task.start(thread_id);
+
+                  num_tasks_to_add = task_contexts[task.get_type()]->execute(
+                      thread_id, thread_contexts[task.get_type()], tasks_to_add,
+                      queues_to_add, task);
+
+                  // Account for extra successors before making them visible.
+                  // The current task already supplies the count for the common
+                  // one-successor case.
+                  if (num_tasks_to_add > 1) {
+                    pending_photon_tasks.pre_add(num_tasks_to_add - 1);
+                  }
+
+                  // log the end time of the task
+                  task.stop();
+
+                  task.unlock_dependency();
+
+                  cpucycle_tick(task_stop);
+                  active_time[thread_id] += task_stop - task_start;
+
+                  if (task_plot_i >= task_plot_N) {
+                    tasks->free_element(current_index);
+                  }
+
+                  for (uint_fast32_t itask = 0; itask < num_tasks_to_add;
+                      ++itask) {
+                    if (queues_to_add[itask] < 0) {
+                      // general queue
+                      shared_queue->add_task(tasks_to_add[itask]);
+                    } else {
+                      queues[queues_to_add[itask]]->add_task(tasks_to_add[itask]);
+                    }
+                  }
+
+                  // With no successor, retire the current pending-task count.
+                  if (num_tasks_to_add == 0) {
+                    pending_photon_tasks.pre_decrement();
+                  }
+                  active_photon_tasks.pre_decrement();
+                  stalled_polls.set(0);
+                  current_index = schedule_task(false);
+                }
+
+                if (buffers->is_empty() &&
+                    num_photon_done.value() == numphoton &&
+                    pending_photon_tasks.value() == 0) {
+                  global_run_flag.set(false);
+                } else {
+                  current_index = schedule_task(false);
+                  if (current_index == NO_TASK &&
+                      active_photon_tasks.value() == 0 &&
+                      !recovery_requested.value()) {
+                    const uint_fast64_t stall_count =
+                        stalled_polls.pre_increment();
+
+                    // A transient gap between scheduler calls is normal. Only
+                    // inspect the global state after sustained zero progress.
+                    if (stall_count >= stalled_poll_limit &&
+                        recovery_lock.lock()) {
+                      recovery_requested.set(true);
+                      while (scheduler_calls.value() > 0 ||
+                            active_photon_tasks.value() > 0) {
+                      }
+
+                      // A task may have completed while recovery was being
+                      // requested. In that case progress is healthy: resume
+                      // scheduling without touching any dependency.
+                      if (stalled_polls.value() < stalled_poll_limit) {
+                        recovery_requested.set(false);
+                        recovery_lock.unlock();
+                        continue;
+                      }
+
+                      size_t queued_tasks = shared_queue->size();
+                      for (size_t iqueue = 0; iqueue < queues.size(); ++iqueue) {
+                        queued_tasks += queues[iqueue]->size();
+                      }
+                      const size_t active_buffers =
+                          buffers->get_number_of_active_buffers();
+                      const uint_fast64_t pending_tasks =
+                          pending_photon_tasks.value();
+                      const uint_fast64_t photons_done = num_photon_done.value();
+
+                      bool recovered = false;
+                      if (pending_tasks == 0 && active_buffers > 0) {
+                        // Normal partial buffers are recoverable: detach the
+                        // largest one and turn it into a traversal task.
+                        recovered = premature_launch.execute();
+                        if (recovered) {
+                          cmac_warning(
+                              "Recovered a stalled photon iteration %" PRIuFAST32
+                              " by launching a partial photon buffer "
+                              "(photons=%" PRIuFAST64 "/%" PRIuFAST64
+                              ", buffers=%zu).",
+                              iloop, photons_done, numphoton, active_buffers);
+                        }
+                      } else if (pending_tasks > 0 && queued_tasks > 0 &&
+                                dependency_recoveries.value() == 0) {
+                        // With every worker and scheduler call stopped, no grid
+                        // dependency can legitimately remain locked. Clear a
+                        // stale lock once and retry the queued work.
+                        for (auto gridit = grid_creator->begin();
+                            gridit != grid_creator->all_end(); ++gridit) {
+                          (*gridit).get_dependency()->unlock();
+                        }
+                        dependency_recoveries.pre_increment();
+                        recovered = true;
+                        cmac_warning(
+                            "Recovered stalled photon iteration %" PRIuFAST32
+                            " by releasing stale subgrid dependency locks once "
+                            "(photons=%" PRIuFAST64 "/%" PRIuFAST64
+                            ", buffers=%zu, pending tasks=%" PRIuFAST64
+                            ", queued tasks=%zu).",
+                            iloop, photons_done, numphoton, active_buffers,
+                            pending_tasks, queued_tasks);
+                      }
+
+                      if (!recovered) {
+                        cmac_error(
+                            "Photon iteration %" PRIuFAST32
+                            " cannot make progress: all "
+                            "workers are idle, photons=%" PRIuFAST64
+                            "/%" PRIuFAST64 ", buffers=%zu, pending tasks=%"
+                            PRIuFAST64 ", queued tasks=%zu, dependency "
+                            "recoveries=%" PRIuFAST32 ". No safe recovery is "
+                            "available; aborting instead of spinning forever.",
+                            iloop, photons_done, numphoton, active_buffers,
+                            pending_tasks, queued_tasks,
+                            dependency_recoveries.value());
+                      }
+
+                      stalled_polls.set(0);
+                      recovery_requested.set(false);
+                      recovery_lock.unlock();
+                    }
+                  }
+                }
+              } // while(global_run_flag.value())
+
+              for (int_fast32_t itask = 0; itask < TASKTYPE_NUMBER; ++itask) {
+                delete thread_contexts[itask];
+              }
+            } // parallel region
+            stop_parallel_timing_block();
+
+            buffers->reset();
+
+            if (iloop == nloop - 1) {
+              if (statistics != nullptr) {
+            //   statistics->print_stats();
+                std::cout << "Number of photons escaped = " << statistics->get_num_escaped() << std::endl;
+                std::cout << "Number of photons absorbed (all gas) = " << statistics->get_num_absorbed() << std::endl;
+                std::cout << "Number of photons absorbed (dust) = " << statistics->get_num_abs_dust() << std::endl;
+                std::cout << "Number of H photons reemitted = " << statistics->get_num_reemitted_H() << std::endl;
+              }
+            }
+
+            // update copies
+            grid_creator->update_original_counters();
+
+            cmac_assert_message(buffers->is_empty(),
+                                "Number of active buffers: %zu",
+                                buffers->get_number_of_active_buffers());
+
+            {
+              AtomicValue< size_t > igrid(0);
+              start_parallel_timing_block();
+      std::cout << "PHOTONS SHOT. UPDATING GRID" << std::endl;
+  #ifdef HAVE_OPENMP
+  #pragma omp parallel default(shared)
+  #endif
+              while (igrid.value() <
+                    grid_creator->number_of_original_subgrids()) {
+                const size_t this_igrid = igrid.post_increment();
+                if (this_igrid < grid_creator->number_of_original_subgrids()) {
+                  auto gridit = grid_creator->get_subgrid(this_igrid);
+
+                  const size_t itask = tasks->get_free_element();
+                  Task &task = (*tasks)[itask];
+
+                  uint_fast64_t task_start, task_stop;
+                  cpucycle_tick(task_start);
+
+                  task.set_type(TASKTYPE_TEMPERATURE_STATE);
+                  task.start(get_thread_index());
+
+  #ifndef VARIABLE_ABUNDANCES
+                  // correct the intensity counters for abundance factors
+                  for (auto cellit = (*gridit).begin(); cellit != (*gridit).end();
+                      ++cellit) {
+                    IonizationVariables &vars = cellit.get_ionization_variables();
+                    for (int_fast32_t ion = 1; ion < NUMBER_OF_IONNAMES; ++ion) {
+                      const double abundance =
+                          abundances.get_abundance(get_element(ion));
+                      if (abundance > 0.) {
+                        vars.set_mean_intensity(
+                            ion, vars.get_mean_intensity(ion) / abundance);
+                      }
+                    }
+                  
+  #endif
+  #ifdef HAS_HELIUM
+                  vars.set_heating(HEATINGTERM_He,
+                                  vars.get_heating(HEATINGTERM_He) /
+                                    abundances.get_abundance(ELEMENT_He));
+  #endif
+              }
+                  if (chemistry_every_hydro_step) {
+                    size_t local_cell = 0;
+                    const double luminosity_per_packet =
+                      total_system_luminosity / numphoton;
+                    for (auto cell = (*gridit).begin(); cell != (*gridit).end(); ++cell, ++local_cell) {
+                      auto &vars = cell.get_ionization_variables();
+                      const double jfac = luminosity_per_packet / cell.get_volume();
+                      ChemistryDiagnostics::Scope diagnostic(chemistry_diagnostics,
+                          this_igrid*chemistry_cells_per_subgrid+local_cell,
+                          get_thread_index(), vars, actual_timestep, true, jfac);
+                      HydroStepChemistry::radiation_trial(vars, hydro_chemistry,
+                          jfac, actual_timestep, iloop == nloop-1);
+                    }
+                  } else if (_time_dependent_ionization) {
+                    if (iloop == nloop -1) {
+                      temperature_calculator->calculate_temperature(
+                        iloop, numphoton, *gridit, current_time - lastrad_time, true, true);
+                        
+                    } else {
+                    temperature_calculator->calculate_temperature(
+                        iloop, numphoton, *gridit, current_time - lastrad_time, true, false);
+                    }
+                  } else {
+                      temperature_calculator->calculate_temperature(iloop, numphoton,
+                                          *gridit, 0.0, false, true);
+
+                  }
+
+                  task.stop();
+                  cpucycle_tick(task_stop);
+                  active_time[get_thread_index()] += task_stop - task_start;
+
+                  // Retain completed tasks only while producing a task plot.
+                  // Returning these timing-only tasks here lets the normal
+                  // end-of-step task reset avoid scanning the full task pool.
+                  if (task_plot_i >= task_plot_N) {
+                    tasks->free_element(itask);
+                  }
+                }
+              }
+              stop_parallel_timing_block();
+            }
+
+            for (int_fast32_t itask = 0; itask < TASKTYPE_NUMBER; ++itask) {
+              delete task_contexts[itask];
+            }
+
+            worktimer.stop();
+          }
+
+          time_logger.end("radiation transfer"); 
+      }
+
+      } else {
+
+        // ---------------------------------------------------
+        // NO IONIZING SOURCES
+        // ---------------------------------------------------
 
         if (log) {
           log->write_status("No ionising sources!");

@@ -334,7 +334,9 @@ public:
             const double alphaH = _recombination_rates.get_recombination_rate(ION_H_n, temperature);
             const double cell_volume = it.get_volume();
 
-            const double diffuse_photon_rate = n_e * n_Hp * alphaH * cell_volume; 
+            const double P_LyC = it.get_ionization_variables().get_reemission_probability(REEMISSIONPROBABILITY_HYDROGEN);
+
+            const double diffuse_photon_rate = n_e * n_Hp * alphaH * P_LyC * cell_volume; 
             const double number_of_diffuse_photons = diffuse_photon_rate * delta_time;
 
             if (number_of_diffuse_photons < EPSILON_PHOTONS) continue;

@@ -339,6 +339,11 @@ public:
             const double diffuse_photon_rate = n_He_e * n_He_p * alphaHe * cell_volume; 
             const double number_of_diffuse_photons = diffuse_photon_rate * delta_time;
 
+            // replace probabilities with diffuse photon rates for each emission channel using recomb rates in wood et al 2003 3.3.2
+            // for 2PC - * 0.56 to represent only ionising photons
+            // Lyalpha - n(He+) * n(e) * alpha_21P * cell_vol
+
+
             if (number_of_diffuse_photons < EPSILON_PHOTONS) continue;
 
             // emission probabilities

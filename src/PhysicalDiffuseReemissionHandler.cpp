@@ -263,7 +263,7 @@ double PhysicalDiffuseReemissionHandler::reemit(
               random_generator, ionization_variables.get_temperature());
           type = PHOTONTYPE_DIFFUSE_HI;
 
-          // mgb 22.09.2026 - only tracking hydrogen reemission
+         
           if (statistics != nullptr) {
             statistics->reemit_H_photon();
           }
