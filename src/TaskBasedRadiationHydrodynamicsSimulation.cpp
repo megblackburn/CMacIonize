@@ -1558,7 +1558,6 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     external_potential = ExternalPotentialFactory::generate(*params, log);
   }
 
-  std::cout<< "Potential and box setup" << std::endl;
   HydroMask *hydro_mask = nullptr;
   if (params->get_value< bool >(
           "TaskBasedRadiationHydrodynamicsSimulation:use mask", false)) {
@@ -1913,7 +1912,6 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
   const double _max_velocity = params->get_physical_value< QUANTITY_VELOCITY >(
       "Hydro:maximum velocity", "1.e99 m s^-1");
 
-  std::cout<< "All params read in" << std::endl;
 
   Hydro hydro(abundances, *params);
   HydroBoundaryManager hydro_boundary_manager(*params);
@@ -3789,7 +3787,6 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           uint_fast32_t hydro_lastsnap_restart = hydro_lastsnap + _restart_iteration;
           std::cout<<"Writing file: "<< hydro_lastsnap_restart << std::endl;
           writer->write(*grid_creator, hydro_lastsnap_restart, *params, current_time_restarted);
-          std::cout<<"Written file: "<< hydro_lastsnap_restart << std::endl;
           std::cout<<"Writing photon source meta data: " << hydro_lastsnap_restart << std::endl;
           if (sourcedistribution != nullptr) {
             sourcedistribution->write_snapshot_metadata(
