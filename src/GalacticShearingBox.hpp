@@ -178,7 +178,7 @@ public:
     if (_enabled && log) {
       log->write_status("Enabled local Galactic rotation with Omega = ", _omega,
                         " s^-1 and q = ", _shear_parameter, ".");
-      if (_initialize_background_shead) {
+      if (_initialize_background_shear) {
         log->write_status(
             "Initializing background shear velocity field u_y = q Omega x.");
       } else {
