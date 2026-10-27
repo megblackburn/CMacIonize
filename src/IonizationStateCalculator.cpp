@@ -1229,7 +1229,9 @@ void IonizationStateCalculator::compute_time_dependent_hydrogen_helium(
     double &h0, double &he0, double &hep, const double gammaH, const double gammaHe1,
     const double gammaHe2, double ts) {
 
-
+  // McCallum et al. (2024b)
+  // Equations 1-3
+  
   SafeGslOde::set_element(0);
   // The implicit He++ fraction must be non-negative, including after advection.
   if (he0 + hep > 1.) {
@@ -1239,6 +1241,9 @@ void IonizationStateCalculator::compute_time_dependent_hydrogen_helium(
     SafeGslOde::diagnostic(sum > 1. + 1.e-8 ? SafeGslOde::SIMPLEX_CORRECTED :
         SafeGslOde::OUTPUT_CLAMPED, "input helium sum above one");
   }
+  
+  // Wood, Mathis & Ercolano (2004), sections 3.3 and 7
+  // Equation 25
   double alpha_e_2sP = 4.17e-20 * std::pow(T * 1.e-4, -0.861);
   double sqrtT = std::sqrt(T);
 
