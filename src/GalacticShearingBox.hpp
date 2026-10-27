@@ -178,6 +178,13 @@ public:
     if (_enabled && log) {
       log->write_status("Enabled local Galactic rotation with Omega = ", _omega,
                         " s^-1 and q = ", _shear_parameter, ".");
+      if (_initialize_background_shear) {
+        log->write_status(
+            "Enabled initial background shear in the velocity field.");
+      } else {
+        log->write_warning(
+            "GalacticShearingBox:initialize background shear is false. Should only be false if restarting.");
+      }
       if (_shearing_periodic_boundaries) {
         log->write_status(
             "Enabled conservative hydrodynamic shearing-periodic x "
