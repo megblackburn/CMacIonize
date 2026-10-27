@@ -94,9 +94,9 @@ public:
     // Wood, Mathis & Ercolano (2004), sections 3.3 and 7
     // equation (25)
     const double alpha_1_He = 1.54e-13 * std::pow(T4, -0.486);
-    const double alpha_e_2tS = 2.1e-13 * std::pow(T4, -0.381);
-    const double alpha_e_2sS = 2.06e-14 * std::pow(T4, -0.451);
-    const double alpha_e_2sP = 4.17e-14 * std::pow(T4, -0.695);
+    const double alpha_e_2tS = 2.1e-13 * std::pow(T4, -0.778);
+    const double alpha_e_2sS = 2.06e-14 * std::pow(T4, -0.676);
+    const double alpha_e_2sP = 4.17e-14 * std::pow(T4, -0.861);
     // We make sure the sum of all probabilities is 1...
     const double alphaHe = alpha_1_He + alpha_e_2tS + alpha_e_2sS + alpha_e_2sP;
 

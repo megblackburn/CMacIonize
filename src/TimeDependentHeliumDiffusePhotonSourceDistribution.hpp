@@ -334,8 +334,20 @@ public:
             const double n_He_p = number_density * ionic_fraction; // number of He+ ions available for recombination
 
             const double alphaHe = _recombination_rates.get_recombination_rate(ION_He_n, temperature);
+            
+            // Wood, Mathis & Ercolano (2004), sections 3.3 and 7
+            // Equation 25
+/*
+            const double T4 = temperature * 1.e-4;
+
+            const double alpha_1_He = 1.54e-13 * std::pow(T4, -0.486);
+            const double alpha_e_2tS = 2.1e-13 * std::pow(T4, -0.778);
+            const double alpha_e_2sS = 2.06e-14 * std::pow(T4, -0.676);
+            const double alpha_e_2sP = 4.17e-14 * std::pow(T4, -0.861);
+*/
             const double cell_volume = it.get_volume();
 
+            // mgb note 27.10.2026 - unsure if can use alpha vals as need 1 uniform frequency for each cell so has to be probability based?
             const double diffuse_photon_rate = n_He_e * n_He_p * alphaHe * cell_volume; 
             const double number_of_diffuse_photons = diffuse_photon_rate * delta_time;
 
@@ -346,36 +358,30 @@ public:
 
             if (number_of_diffuse_photons < EPSILON_PHOTONS) continue;
 
-            // emission probabilities
+            // emission probabilities (contain sums)
             const double He_LyC_probability = it.get_ionization_variables().get_reemission_probability(REEMISSIONPROBABILITY_HELIUM_LYC);
             const double He_2PC_probability = it.get_ionization_variables().get_reemission_probability(REEMISSIONPROBABILITY_HELIUM_TPC);
             const double He_Lyalpha_probability = it.get_ionization_variables().get_reemission_probability(REEMISSIONPROBABILITY_HELIUM_LYA);
             const double He_NPEEV_probability = it.get_ionization_variables().get_reemission_probability(REEMISSIONPROBABILITY_HELIUM_NPEEV);
-
-            // emission thresholds 
-            const double thres_LyC = He_LyC_probability;
-            const double thres_NPEEV = thres_LyC + He_NPEEV_probability;
-            const double thres_2PC = thres_NPEEV + He_2PC_probability;
-            const double thres_Lyalpha = thres_2PC + He_Lyalpha_probability;
 
             double x = _random_generator.get_uniform_random_double();
             
 
             double photon_frequency = 0.0;
 
-            if (x <= thres_LyC) {
+            if (x <= He_LyC_probability) {
               // He I Lyman continuum
               photon_frequency = _HeLyc_spectrum.get_random_frequency(local_rng, temperature);
 
-            } else if (x <= thres_NPEEV) {
+            } else if (x <= He_NPEEV_probability) {
               // He 2^3S to 1^1S line emission at 19.8 eV
               photon_frequency =  4.788e15;
 
-            } else if (x <= thres_2PC) {
+            } else if (x <= He_2PC_probability) {
               // He two-photon continuum
               photon_frequency = _He2pc_spectrum.get_random_frequency(local_rng, temperature);
               
-            } else if (x <= thres_Lyalpha) {
+            } else if (x <= He_Lyalpha_probability) {
               // He I Lyman alpha
               photon_frequency = 5.1305e15; // 21.2 eV
 

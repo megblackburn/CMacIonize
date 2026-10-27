@@ -331,12 +331,20 @@ public:
             const double n_e = number_density * ionic_fraction;
             const double n_Hp = number_density * ionic_fraction; 
 
-            const double alphaH = _recombination_rates.get_recombination_rate(ION_H_n, temperature);
+           // const double alphaH = _recombination_rates.get_recombination_rate(ION_H_n, temperature);
+
+           //------------------------------------------------------
+           // Find the recombination rate for H I Lyman Continuum 
+           // -----------------------------------------------------
+           // Wood, Mathis & Ercolano (2004), sections 3.3 and 7
+           // Equation 24
+            const double T4 = temperature * 1.e-4;
+            const double alpha_1_H = 1.58e-13 * std::pow(T4, -0.53);
             const double cell_volume = it.get_volume();
 
-            const double P_LyC = it.get_ionization_variables().get_reemission_probability(REEMISSIONPROBABILITY_HYDROGEN);
+           // const double P_LyC = it.get_ionization_variables().get_reemission_probability(REEMISSIONPROBABILITY_HYDROGEN);
 
-            const double diffuse_photon_rate = n_e * n_Hp * alphaH * P_LyC * cell_volume; 
+            const double diffuse_photon_rate = n_e * n_Hp * alpha_1_H * cell_volume; 
             const double number_of_diffuse_photons = diffuse_photon_rate * delta_time;
 
             if (number_of_diffuse_photons < EPSILON_PHOTONS) continue;
