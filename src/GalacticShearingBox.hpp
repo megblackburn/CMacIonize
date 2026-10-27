@@ -183,7 +183,7 @@ public:
             "Initializing background shear velocity field u_y = q Omega x.");
       } else {
         log->write_warning(
-            "Not initializing background shear velocity field. Should only be used in restart. ");
+            "Not initializing background shear velocity field. Should only be false if restarting. ");
       }
       if (_shearing_periodic_boundaries) {
         log->write_status(
