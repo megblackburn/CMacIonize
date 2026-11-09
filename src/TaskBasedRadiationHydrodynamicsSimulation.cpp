@@ -1531,22 +1531,26 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
   DensityFunction *density_function =
       DensityFunctionFactory::generate(*params, log);
   time_logger.end("density function creation");
+
+  
+  
   CrossSections *cross_sections = CrossSectionsFactory::generate(*params, log);
+
+  DiffuseReemissionHandler *reemission_handler =  DiffuseReemissionHandlerFactory::generate(
+        *cross_sections, *params, log);
+
   RecombinationRates *recombination_rates =
       RecombinationRatesFactory::generate(*params, log);
-  DiffuseReemissionHandler *reemission_handler = nullptr;
 
-  const bool _diffuse_field_flag = params->get_value< bool >(
-      "DiffuseReemissionHandler:diffuse field", false);
 
   const bool _time_dependent_diffuse_field_flag = params->get_value< bool >(
       "DiffuseReemissionHandler:time dependent diffuse field",
       false);
 
-  if (_diffuse_field_flag || _time_dependent_diffuse_field_flag) {
-    reemission_handler = DiffuseReemissionHandlerFactory::generate(
-        *cross_sections, *params, log);
-  }
+  const bool _skip_hydro_step = params->get_value< bool >(
+      "TaskBasedRadiationHydrodynamicsSimulation:skip hydro step", false);
+
+  
 
   // mgb 22.09.2026 - Track Photon Statistics
   PhotonPacketStatistics *statistics = nullptr;
@@ -1969,23 +1973,27 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
   // mgb 24.09.2026 - Addition of diffuse photon field luminosity
   
-  if (sourcedistribution == nullptr && hydrogendiffusesourcedistribution == nullptr) { 
+  if (sourcedistribution == nullptr && hydrogendiffusesourcedistribution == nullptr && heliumdiffusesourcedistribution == nullptr) { 
     // NO DIFFUSE FIELD OR STELLAR FIELD
+
+    std::cout<< "No stellar or diffuse photon sources provided. Temperature will be calculated assuming no photoionization heating." << std::endl;
 
     temperature_calculator = new TemperatureCalculator(
         0.0, abundances, line_cooling_data,
         *recombination_rates, charge_transfer_rates, collisional_rates,radiative_cooling, *params, log);
 
-  } else if (sourcedistribution != nullptr && hydrogendiffusesourcedistribution == nullptr) {
+  } else if (sourcedistribution != nullptr && hydrogendiffusesourcedistribution == nullptr && heliumdiffusesourcedistribution == nullptr) {
     // NO DIFFUSE FIELD
 
+    std::cout<< "No diffuse photon sources provided. Temperature will be calculated assuming no photoionization heating. "  << std::endl;
     temperature_calculator = new TemperatureCalculator(
         sourcedistribution->get_total_luminosity(), abundances, line_cooling_data,
         *recombination_rates, charge_transfer_rates, collisional_rates,radiative_cooling, *params, log);
 
-  } else if (sourcedistribution == nullptr && hydrogendiffusesourcedistribution != nullptr) {
+  } else if (sourcedistribution == nullptr && (hydrogendiffusesourcedistribution != nullptr || heliumdiffusesourcedistribution != nullptr)) {
     // NO STELLAR FIELD
 
+    std::cout<< "No stellar photon sources provided. Temperature will be calculated assuming no photoionization heating. " << std::endl;
     double diffuse_luminosity = hydrogendiffusesourcedistribution->get_total_diffuse_luminosity();
     #ifdef HAS_HELIUM
     diffuse_luminosity += heliumdiffusesourcedistribution->get_total_diffuse_luminosity();
@@ -1997,6 +2005,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         
   } else {
     // BOTH STELLAR AND DIFFUSE FIELD
+    std::cout<< "Both stellar and diffuse photon sources provided. Temperature will be calculated assuming no photoionization heating. "  << std::endl;
 
     double diffuse_luminosity = hydrogendiffusesourcedistribution->get_total_diffuse_luminosity();
     #ifdef HAS_HELIUM
@@ -2569,7 +2578,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     has_next_step = restart_reader->read< bool >();
     actual_timestep = restart_reader->read< double >();
     current_time = restart_reader->read< double >();
-    lastrad_time = TaskBasedRadiationRestart::read_last_radiation_time( // taken out to fix restart bug
+    lastrad_time = TaskBasedRadiationRestart::read_last_radiation_time( 
         *restart_reader, current_time, actual_timestep, hydro_lastrad,
         hydro_radtime);
     if (log) {
@@ -2583,7 +2592,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     restart_reader = nullptr;
   }
 
-  double current_time_restarted = current_time + _restart_time; //current_time + _restart_time; // mgb edit 10.11.2025
+  double current_time_restarted = current_time + _restart_time; // // mgb edit 10.11.2025
 
   time_logger.end("initialization");
 
@@ -2648,7 +2657,8 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     const double diffuse_H_luminosity =
         hydrogendiffusesourcedistribution != nullptr ?
             hydrogendiffusesourcedistribution->get_total_diffuse_luminosity() : 0.0;
-    
+    std::cout<< "Diffuse Hydrogen Luminosity: " << diffuse_H_luminosity << std::endl;
+    std::cout<<"Diffuse Hydrogen number of sources: " << (hydrogendiffusesourcedistribution != nullptr ? hydrogendiffusesourcedistribution->get_number_of_diffuse_sources() : 0) << std::endl;
     double diffuse_He_luminosity = 0.0;
     #ifdef HAS_HELIUM
     diffuse_He_luminosity = heliumdiffusesourcedistribution != nullptr ?
@@ -2936,7 +2946,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
             }
             
-            // HELIUM DIFFUSE FIELD SOURCES
+              // HELIUM DIFFUSE FIELD SOURCES
 
             #ifdef HAS_HELIUM
             std::map<size_t, std::vector<size_t>> He_sources_by_subgrid;
@@ -2950,7 +2960,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
             std::vector<DiffuseHeliumPhotonBatch> helium_diffuse_batches;
             uint_fast64_t number_of_diffuse_He_photons_done = 0;
 
-            for (const auto &group : sources_by_subgrid) {
+            for (const auto &group : He_sources_by_subgrid) {
               DiffuseHeliumPhotonBatch batch;
 
               batch.subgrid = group.first;
@@ -2958,8 +2968,8 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
               for (const size_t source : group.second) {
                 while (true) {
-                  const size_t count = helium_diffuse_photon_source.get_photon_batch
-                  (source, PHOTONBUFFER_SIZE - batch.sources.size());
+                  const size_t count = helium_diffuse_photon_source.get_photon_batch(
+                      source, PHOTONBUFFER_SIZE - batch.sources.size());
 
                   if (count == 0) {
                     break;
@@ -2974,13 +2984,11 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                     batch.subgrid = group.first;
                     batch.sources.reserve(PHOTONBUFFER_SIZE);
                   }
-
                 }
               }
               if (!batch.sources.empty()) {
                 helium_diffuse_batches.push_back(std::move(batch));
               }
-
             }
 
             if (number_of_diffuse_He_photons_done != diffuse_He_packets) {
@@ -2992,16 +3000,16 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
               const size_t task_index = tasks->get_free_element();
               Task &task = (*tasks)[task_index];
 
-              task.set_type(TASKTYPE_SOURCE_DISCRETE_DIFFUSE_HYDROGEN_PHOTON);
-              task.set_subgrid(batch);
-              task.set_buffer(helium_diffuse_batches[batch].sources.size());
+              // FIXED: Setting correct Helium task enum types and properties
+              task.set_type(TASKTYPE_SOURCE_DISCRETE_DIFFUSE_HELIUM_PHOTON);
+              task.set_subgrid(helium_diffuse_batches[batch].subgrid);
+              task.set_buffer(batch);
 
               pending_photon_tasks.pre_increment();
               shared_queue->add_task(task_index);
-
             }
-            
             #endif
+
 
             AtomicValue< bool > global_run_flag(true);
             AtomicValue< uint_fast64_t > num_photon_done(0);
@@ -4319,6 +4327,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
 
 
+  if (!_skip_hydro_step) {
 
     time_logger.start("hydro"); 
 
@@ -4605,13 +4614,18 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
       sourcedistribution->accrete_gas(grid_creator,hydro);
     }
 
-    cpucycle_tick(iteration_end);
-
+    
+  
     if (log) {
       log->write_status("Done with hydro step.");
     }
 
     time_logger.end("hydro"); 
+  } // hydro step has run, if _skip_hydro_step true, this section is skipped
+
+    cpucycle_tick(iteration_end);
+
+  
 
     if (log && false) {
       const uint_fast64_t total_interval = iteration_end - iteration_start;
@@ -4622,6 +4636,8 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         log->write_status("Thread ", ithread, ": ", percentage, "%.");
       }
     }
+
+   
 
     if (do_rad_cool || do_explicit_temp_calc) { 
       time_logger.start("cooling");
@@ -5043,6 +5059,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
       if (sourcedistribution != nullptr || hydrogendiffusesourcedistribution != nullptr || heliumdiffusesourcedistribution != nullptr) {
 
+      std::cout<< "Updating Photon Sources at time: " << current_time << std::endl;
         bool stellar_updated = false;
         if (sourcedistribution != nullptr) {
           stellar_updated = sourcedistribution->update(grid_creator, actual_timestep);
@@ -5051,6 +5068,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         bool diffuse_updated = false;
         if (hydrogendiffusesourcedistribution != nullptr) {
           diffuse_updated = hydrogendiffusesourcedistribution->update(grid_creator, actual_timestep);
+          std::cout<< "Diffuse Sources Updated: " << diffuse_updated << std::endl;
         }
 
         bool helium_diffuse_updated = false;
@@ -5427,6 +5445,13 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
   if (sourcedistribution != nullptr) {
     delete sourcedistribution;
   }
+  if (hydrogendiffusesourcedistribution != nullptr) {
+    delete hydrogendiffusesourcedistribution;
+  }
+  if (heliumdiffusesourcedistribution != nullptr) {
+    delete heliumdiffusesourcedistribution;
+  }
+
   if (continuoussource != nullptr) {
     delete continuoussource;
   }

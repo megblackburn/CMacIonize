@@ -763,47 +763,38 @@ void TemperatureCalculator::calculate_temperature(
  //   j[ion] = jfac * ionization_variables.get_mean_intensity(ion);
  // }
 
-  double j[13] = {
+  double j[NUMBER_OF_IONNAMES];
+  
 #ifdef HAS_CARBON
-        jfac*ionization_variables.get_mean_intensity(ION_C_p1),
-        jfac*ionization_variables.get_mean_intensity(ION_C_p2),
-#else
-        0., 0.,
+  j[ION_C_p1]  = jfac * ionization_variables.get_mean_intensity(ION_C_p1);
+  j[ION_C_p2]  = jfac * ionization_variables.get_mean_intensity(ION_C_p2);
 #endif
+
 #ifdef HAS_NITROGEN
-        jfac*ionization_variables.get_mean_intensity(ION_N_n),
-        jfac*ionization_variables.get_mean_intensity(ION_N_p1),
-        jfac*ionization_variables.get_mean_intensity(ION_N_p2),
-#else
-        0., 0.,
-        0.,
+  j[ION_N_n]   = jfac * ionization_variables.get_mean_intensity(ION_N_n);
+  j[ION_N_p1]  = jfac * ionization_variables.get_mean_intensity(ION_N_p1);
+  j[ION_N_p2]  = jfac * ionization_variables.get_mean_intensity(ION_N_p2);
 #endif
+
 #ifdef HAS_OXYGEN
-        jfac*ionization_variables.get_mean_intensity(ION_O_n),
-        jfac*ionization_variables.get_mean_intensity(ION_O_p1),
-#else
-        0., 0.,
+  j[ION_O_n]   = jfac * ionization_variables.get_mean_intensity(ION_O_n);
+  j[ION_O_p1]  = jfac * ionization_variables.get_mean_intensity(ION_O_p1);
 #endif
+
 #ifdef HAS_NEON
-        jfac*ionization_variables.get_mean_intensity(ION_Ne_n),
-        jfac*ionization_variables.get_mean_intensity(ION_Ne_p1),
-#else
-        0., 0.,
+  j[ION_Ne_n]  = jfac * ionization_variables.get_mean_intensity(ION_Ne_n);
+  j[ION_Ne_p1] = jfac * ionization_variables.get_mean_intensity(ION_Ne_p1);
 #endif
+
 #ifdef HAS_SULPHUR
-        jfac*ionization_variables.get_mean_intensity(ION_S_p1),
-        jfac*ionization_variables.get_mean_intensity(ION_S_p2),
-        jfac*ionization_variables.get_mean_intensity(ION_S_p3),
-#else
-        0., 0.,
-        0.,
+  j[ION_S_p1]  = jfac * ionization_variables.get_mean_intensity(ION_S_p1);
+  j[ION_S_p2]  = jfac * ionization_variables.get_mean_intensity(ION_S_p2);
+  j[ION_S_p3]  = jfac * ionization_variables.get_mean_intensity(ION_S_p3);
 #endif
+
 #ifdef HAS_MAGNESIUM
-        jfac*ionization_variables.get_mean_intensity(ION_Mg_p1)
-#else
-        0.
+  j[ION_Mg_p1] = jfac * ionization_variables.get_mean_intensity(ION_Mg_p1);
 #endif
-    };
 
   // normalize the heating integrals
   double h[NUMBER_OF_HEATINGTERMS];
