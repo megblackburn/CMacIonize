@@ -60,37 +60,7 @@ public:
   generate(const CrossSections &cross_sections, ParameterFile &params,
            Log *log = nullptr) {
 
-    if (!params.has_value("DiffuseReemissionHandler:type") &&
-        params.has_value("DiffuseReemissionHandler:diffuse field")) {
-      if (log) {
-        log->write_warning(
-            "Could not find DiffuseReemissionHandler parameter block, but "
-            "detected deprecated DiffuseReemissionHandler parameter block.");
-        log->write_warning("\"DiffuseReemissionHandler:diffuse field\" was replaced by "
-                           "\"DiffuseReemissionHandler\".");
-        log->write_warning("Automatically converting to new parameters.");
-      }
-      const bool has_diffuse_field =
-          params.steal_value< bool >("DiffuseReemissionHandler:diffuse field", false);
-      const bool has_time_dependent_diffuse_field =
-          params.steal_value< bool >("DiffuseReemissionHandler:time dependent diffuse field",
-                                    false);
-      if (has_diffuse_field) {
-        params.add_value("DiffuseReemissionHandler:type", "Physical");
-      } else if (has_time_dependent_diffuse_field) {
-        params.add_value("DiffuseReemissionHandler:type", "TimeDependent");
-      } else {
-        params.add_value("DiffuseReemissionHandler:type", "None");
-      }
-
-      // this only works because TaskBasedIonizationSimulation parameters
-      // are read before this function is called
-      if (params.has_value("TaskBasedIonizationSimulation:random seed")) {
-        params.add_value("TaskBasedIonizationSimulation:diffuse field",
-                         Utilities::to_string(has_diffuse_field));
-      }
-    }
-
+    // 1. Fetch the type from the parameters
     const std::string type = params.get_value< std::string >(
         "DiffuseReemissionHandler:type", "None");
 
@@ -98,8 +68,21 @@ public:
       log->write_info("Requested DiffuseReemissionHandler type: ", type);
     }
     
-    std::cout<<"Diffuse Reemission Handler type: "<<type<<std::endl;
+    std::cout << "Diffuse Reemission Handler type: " << type << std::endl;
 
+    // 2. Direct condition: Set the global simulation flags under the Hydrodynamics block
+    if (type == "TimeDependent") {
+      params.add_value("DiffuseReemissionHandler:time dependent diffuse field", "true");
+      params.add_value("DiffuseReemissionHandler:diffuse field", "true");
+    } else if (type == "Physical" || type == "FixedValue") {
+      params.add_value("DiffuseReemissionHandler:time dependent diffuse field", "false");
+      params.add_value("DiffuseReemissionHandler:diffuse field", "true");
+    } else {
+      params.add_value("DiffuseReemissionHandler:time dependent diffuse field", "false");
+      params.add_value("DiffuseReemissionHandler:diffuse field", "false");
+    }
+
+    // 3. Factory returns - allocating the actual handler classes based on type
     if (type == "FixedValue") {
       return new FixedValueDiffuseReemissionHandler(params);
     } else if (type == "Physical") {
