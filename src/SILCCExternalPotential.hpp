@@ -36,7 +36,7 @@
 /**
  * @brief Disc patch external potential.
  *
- * The potential is based on Rathjen et al. 2021 and Li et al. 2017 - consists of a stellar component and NFW dark matter component.
+ * The potential is based on Rathjen et al. 2021 and Li et al. 2017 - consists of a stellar component and NFW dark matter component. Contains an extra factor f_* to account for the lack of self gravity in the simulation if required.
  */
 class SILCCExternalPotential : public ExternalPotential {
 private:
@@ -52,6 +52,8 @@ private:
   const double _concentration;
   const double _R_sol;
 
+  const bool _do_self_gravity;
+
   
   CoordinateVector<double> get_stellar_acceleration(const CoordinateVector<> position) const {
 
@@ -60,7 +62,12 @@ private:
     const double dz = position.z() - _disc_z;
     const double f_star = _stellar_surface_density / (_stellar_surface_density + _gas_surface_density);
 
-    const double az = - 1/f_star * 2 * M_PI * G * _stellar_surface_density * std::tanh(dz / _stellar_scale_height);
+    double az = 0.;
+    if (_do_self_gravity) {
+        az = - 1/f_star * 2 * M_PI * G * _stellar_surface_density * std::tanh(dz / _stellar_scale_height);
+    } else {
+        az = - 2 * M_PI * G * _stellar_surface_density * std::tanh(dz / _stellar_scale_height);
+    }
     return CoordinateVector<>(0., 0., az);
   }
 
@@ -105,8 +112,9 @@ public:
                                     const double R_vir,
                                     const double rho_dm,
                                     const double concentration,
-                                    const double R_sol)
-      : _disc_z(disc_z), _stellar_surface_density(stellar_surface_density), _gas_surface_density(gas_surface_density), _stellar_scale_height(stellar_scale_height), _R_vir(R_vir), _rho_dm(rho_dm), _concentration(concentration), _R_sol(R_sol) {}
+                                    const double R_sol,
+                                    const bool do_self_gravity)
+      : _disc_z(disc_z), _stellar_surface_density(stellar_surface_density), _gas_surface_density(gas_surface_density), _stellar_scale_height(stellar_scale_height), _R_vir(R_vir), _rho_dm(rho_dm), _concentration(concentration), _R_sol(R_sol), _do_self_gravity(do_self_gravity) {}
 
   /**
    * @brief ParameterFile constructor.
@@ -136,7 +144,8 @@ public:
             params.get_value< double >(
                 "ExternalPotential:concentration", 12.0), 
             params.get_physical_value< QUANTITY_LENGTH >(
-                "ExternalPotential:solar radius", "8.0 kpc")) {}
+                "ExternalPotential:solar radius", "8.0 kpc"), 
+            params.get_value< bool >("TaskBasedRadiationHydrodynamicsSimulation:do self gravity", false)) {}
 
   /**
    * @brief Virtual destructor.
