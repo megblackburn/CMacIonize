@@ -41,7 +41,6 @@
 #include "DiscPatchDensityFunction.hpp"
 #include "DiscPatchHydroEquilibriumDensityFunction.hpp"
 #include "DiscPatchDIGDensityFunction.hpp"
-#include "SolarNeighborhoodDensityFunction.hpp"
 #include "ArepoTallboxSnapshotDensityFunction.hpp"
 #include "StarburstDensityFunction.hpp" // mgb edit 09.07.2026
 #include "HomogeneousDensityFunction.hpp"

@@ -32,11 +32,23 @@ Then go through tutorials:
 
 Notes:
 
-- Lewis uses MixedDriving as photon source for tallbox - this is a combination of peak driving and random driving for sources
-- I've added Bursty, BursyAsymmetric and StationarySFR
-- Bursty works the same as MixedDriving as long as 'bursty sfr flag = false' in param file
-- all of my comments and edits have 'mgb' noted in them, others are likely from Lewis
-- all files controlling simulation are in src
+Basics of CMacIonize:
+
+- Density structure:
+  -> DensityFunction:
+       type: Homogeneous
+       * this will give a homogeneous grid of whatever temperature, density and neutral fraction H you set *
+  -> some common options:
+      => DiscPatch: The density setup described in McCallum et al 2024
+      => HydroEquilibrium: Set up to be in equilibrium with the SILCC & Li et al. 2019 potential
+      => DiscPatchHydroEquilibrium: Set up to be in equilibrium with the McCallum et al 2024, Vandenbroucke & Wood potential used
+      => SILCC: Set up to match the 
+- External potential
+- Photon source
+- 
+
+
+- all files controlling simulation are in src folder
 
 Example parameter files are here:
 
@@ -52,6 +64,40 @@ Important for Ionizing Spectra:
 - PhotonSourceSpectrumFactory.hpp
 - PlanckPhotonSourceSpectrum.cpp and *.hpp are probably good templates for form - can use whichever <keyword>PhotonSourceSpectrum.cpp/.hpp file fits the spectra you want to implement best 
 - keywords are all displayed in PhotonSourceSpectrumFactory.hpp - these are all options to set in the param file
+
+
+Temperature Calculations:
+
+- the static ionisation codes take the 'do temperature calculation' parameter within the TemperatureCalculator section 
+- the task-based RHD code has 2 options: 
+                => split the calculation into heating and cooling seperately
+                    ==> Hydro:
+                          do explicit heating: true
+                    ==> TaskBasedRadiationHydrodynamicsSimulation:
+                          do radiative cooling: true
+
+                => do the computation together
+                  ==> TaskBasedRadiationHydrodynamicsSimulation:
+                        do explicit temperature calculation: true
+
+              ** if one way is being used the other parameters for the other way must be set to false! **
+
+              ** if metals are not included, in hydrogen only mode:
+                ==> TaskBasedRadiationHydrodynamicsSimulation:
+                      use cooling tables: true
+
+
+
+Restarting Simulations:
+=> DensityFunction:
+     type: CMacIonizeSnapshot
+     filename: /path/to/file/string_****.hdf5
+=> TaskBasedRadiationHydrodynamicsSimulation:
+     restart flag: true
+     restart time: 0.0 Myr
+     restart iteration: 0
+
+
 
 Only modules I have loaded are:
   1) slurm/23.02.6 (S)   2) lmod
