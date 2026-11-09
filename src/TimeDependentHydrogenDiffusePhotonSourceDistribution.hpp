@@ -127,7 +127,7 @@ public:
       : TimeDependentHydrogenDiffusePhotonSourceDistribution(recombination_rates, cross_sections, 
         params.get_value< bool >("TaskBasedRadiationHydrodynamicsSimulation:restart flag", false),
         params.get_physical_value< QUANTITY_TIME >("PhotonSourceDistribution:restart time", "0. Myr"),
-        params.get_physical_value< QUANTITY_TIME >("PhotonSourceDistribution:update interval", "0.1 Myr"),
+        params.get_physical_value< QUANTITY_TIME >("TaskBasedRadiationHydrodynamicsSimulation:radiation time", "0.1 Myr"),
         log) {}
 
 
@@ -339,7 +339,7 @@ public:
            // Wood, Mathis & Ercolano (2004), sections 3.3 and 7
            // Equation 24
             const double T4 = temperature * 1.e-4;
-            const double alpha_1_H = 1.58e-13 * std::pow(T4, -0.53);
+            const double alpha_1_H = 1.e-6 * 1.58e-13 * std::pow(T4, -0.53); // convert from cm^-3 s^-1 to m^-3 s^-1
             const double cell_volume = it.get_volume();
 
            // const double P_LyC = it.get_ionization_variables().get_reemission_probability(REEMISSIONPROBABILITY_HYDROGEN);
@@ -347,10 +347,12 @@ public:
             const double diffuse_photon_rate = n_e * n_Hp * alpha_1_H * cell_volume; 
             const double number_of_diffuse_photons = diffuse_photon_rate * delta_time;
 
+   
+
             if (number_of_diffuse_photons < EPSILON_PHOTONS) continue;
 
-            const double photon_frequency =
-                _HLyc_spectrum.get_random_frequency(local_rng, temperature);
+            const double photon_frequency = 3.28847e15;// 13.6 eV
+              //    _HLyc_spectrum.get_random_frequency(local_rng, temperature);
             const CoordinateVector<> cell_position = it.get_cell_midpoint();
 
             local_lums.push_back(diffuse_photon_rate);

@@ -771,7 +771,7 @@ public:
             params.get_value< bool >("PhotonSourceDistribution:type1 flag", true), // edit mgb 12.11.2025
             params.get_value< double >("PhotonSourceDistribution:kennicutt schmidt index", 1.4), // mgb edit 12.11.2025
             params.get_value< bool >("TaskBasedRadiationHydrodynamicsSimulation:restart flag", false), // mgb edit 21.11.2025
-            params.get_physical_value< QUANTITY_TIME >("PhotonSourceDistribution:restart time myr", "0.0 Myr"), // mgb edit 08.12.2025
+            params.get_physical_value< QUANTITY_TIME >("TaskBasedRadiationHydrodynamicsSimulation:restart time", "0.0 Myr"), // mgb edit 08.12.2025
             params.get_physical_value< QUANTITY_MASS >("PhotonSourceDistribution:initial mass", "0.0 Msol"), // mgb edit 27.01.2026
          //   params.get_value< bool >("PhotonSourceDistribution: moving sources flag", false),
             params.get_value< int_fast32_t >(

@@ -36,6 +36,7 @@ typedef uint_fast32_t photonsourcenumber_t;
 class RandomGenerator;
 class HeliumLymanContinuumSpectrum;
 class HeliumTwoPhotonContinuumSpectrum;
+class HydrogenLymanContinuumSpectrum;
 class RecombinationRates;
 class CrossSections;
 

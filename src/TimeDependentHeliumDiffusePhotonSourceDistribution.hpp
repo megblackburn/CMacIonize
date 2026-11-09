@@ -33,6 +33,7 @@
 #include "RandomGenerator.hpp"
 #include "HeliumLymanContinuumSpectrum.hpp"
 #include "HeliumTwoPhotonContinuumSpectrum.hpp"
+#include "HydrogenLymanContinuumSpectrum.hpp"
 #include "RecombinationRates.hpp"
 #include "CrossSections.hpp"
 
@@ -80,6 +81,7 @@ private:
   /*! @brief Helium Lyman continuum spectrum. */
   const HeliumLymanContinuumSpectrum _HeLyc_spectrum;
   const HeliumTwoPhotonContinuumSpectrum _He2pc_spectrum;
+  const HydrogenLymanContinuumSpectrum _HLyc_spectrum;
 
   const bool _restart_flag;
   const double _restart_time;
@@ -102,7 +104,7 @@ public:
       const bool restart_flag, const double restart_time,
       const double update_interval,
       Log *log = nullptr)
-      : _recombination_rates(recombination_rates), _cross_sections(cross_sections), _HeLyc_spectrum(cross_sections), _He2pc_spectrum(), _restart_flag(restart_flag), _restart_time(restart_time), _update_interval(update_interval), _log(log){
+      : _recombination_rates(recombination_rates), _cross_sections(cross_sections), _HeLyc_spectrum(cross_sections), _He2pc_spectrum(), _HLyc_spectrum(cross_sections), _restart_flag(restart_flag), _restart_time(restart_time), _update_interval(update_interval), _log(log){
 
     
     if (_restart_flag == true) {
@@ -127,7 +129,7 @@ public:
       : TimeDependentHeliumDiffusePhotonSourceDistribution(recombination_rates, cross_sections, 
         params.get_value< bool >("TaskBasedRadiationHydrodynamicsSimulation:restart flag", false),
         params.get_physical_value< QUANTITY_TIME >("PhotonSourceDistribution:restart time", "0. Myr"),
-        params.get_physical_value< QUANTITY_TIME >("PhotonSourceDistribution:update interval", "0.1 Myr"),
+        params.get_physical_value< QUANTITY_TIME >("TaskBasedRadiationHydrodynamicsSimulation:radiation time", "0.1 Myr"),
         log) {}
 
 
@@ -333,22 +335,23 @@ public:
             const double n_He_e = number_density * ionic_fraction; // number of electrons free for He recombination
             const double n_He_p = number_density * ionic_fraction; // number of He+ ions available for recombination
 
-            const double alphaHe = _recombination_rates.get_recombination_rate(ION_He_n, temperature);
+            
             
             // Wood, Mathis & Ercolano (2004), sections 3.3 and 7
             // Equation 25
-/*
+
             const double T4 = temperature * 1.e-4;
 
             const double alpha_1_He = 1.54e-13 * std::pow(T4, -0.486);
             const double alpha_e_2tS = 2.1e-13 * std::pow(T4, -0.778);
             const double alpha_e_2sS = 2.06e-14 * std::pow(T4, -0.676);
             const double alpha_e_2sP = 4.17e-14 * std::pow(T4, -0.861);
-*/
+            // We make sure the sum of all probabilities is 1...
+            const double alphaHe = alpha_1_He + alpha_e_2tS + alpha_e_2sS + alpha_e_2sP;
+
             const double cell_volume = it.get_volume();
 
-            // mgb note 27.10.2026 - unsure if can use alpha vals as need 1 uniform frequency for each cell so has to be probability based?
-            const double diffuse_photon_rate = n_He_e * n_He_p * alphaHe * cell_volume; 
+            const double diffuse_photon_rate = n_He_e * n_He_p * alphaHe * 1.e-6 * cell_volume; // convert from cm^-3 s^-1 to m^-3 s^-1
             const double number_of_diffuse_photons = diffuse_photon_rate * delta_time;
 
             // replace probabilities with diffuse photon rates for each emission channel using recomb rates in wood et al 2003 3.3.2
@@ -363,6 +366,8 @@ public:
             const double He_2PC_probability = it.get_ionization_variables().get_reemission_probability(REEMISSIONPROBABILITY_HELIUM_TPC);
             const double He_Lyalpha_probability = it.get_ionization_variables().get_reemission_probability(REEMISSIONPROBABILITY_HELIUM_LYA);
             const double He_NPEEV_probability = it.get_ionization_variables().get_reemission_probability(REEMISSIONPROBABILITY_HELIUM_NPEEV);
+
+            const double H_LyC_probability = it.get_ionization_variables().get_reemission_probability(REEMISSIONPROBABILITY_HYDROGEN);
 
             double x = _random_generator.get_uniform_random_double();
             
@@ -379,14 +384,60 @@ public:
 
             } else if (x <= He_2PC_probability) {
               // He two-photon continuum
-              photon_frequency = _He2pc_spectrum.get_random_frequency(local_rng, temperature);
+              // 28% of photons have energies capable of ionizing hydrogen, so 56% probability in 2 photons.
+              double x_emit = _random_generator.get_uniform_random_double();
+
+              if (x_emit < 0.56) {
+                // emit as He two-photon continuum
+                photon_frequency = _He2pc_spectrum.get_random_frequency(local_rng, temperature);
+              } else {
+                // photon absorbed, no re-emitted photon for this cell
+                continue;
+              }
               
             } else if (x <= He_Lyalpha_probability) {
               // He I Lyman alpha
               photon_frequency = 5.1305e15; // 21.2 eV
 
+              // He I Lyman alpha can be absorbed on the spot or converted to He 2-photon continuum emission
+
+              const double sqrtTnH0 = std::sqrt(temperature) * it.get_ionization_variables().get_ionic_fraction(ION_H_n);
+              const double pHots = sqrtTnH0 / (sqrtTnH0 + 77. * it.get_ionization_variables().get_ionic_fraction(ION_He_n));
+
+              double x = _random_generator.get_uniform_random_double();
+
+              if (x < pHots) {
+                // photon absorbed on the spot by hydrogen, decide whether to re-emit as H LyC or absorb
+
+                double x_emit = _random_generator.get_uniform_random_double();
+
+                if (x_emit <= H_LyC_probability) {
+                  // photon is emitted as Hydrogen Lyman continuum
+                  
+                  photon_frequency = _HLyc_spectrum.get_random_frequency(local_rng, temperature);
+                  
+                } else {
+                  // photon absorbed, no re-emitted photon for this cell
+                  continue;
+                }
+              } else {
+                // photon is converted to He 2-photon continuum emission
+
+                double x_emit = _random_generator.get_uniform_random_double();
+
+                if (x_emit < 0.56) {
+                  photon_frequency = _He2pc_spectrum.get_random_frequency(local_rng, temperature);
+                } else {
+                  // photon absorbed, no re-emitted photon for this cell
+                  continue;
+                }
+              }
+
+
+
+
             } else {
-              std::cout << "No emission for this cell, x = " << x << ", thres_LyC = " << thres_LyC << ", thres_NPEEV = " << thres_NPEEV << ", thres_2PC = " << thres_2PC << ", thres_Lyalpha = " << thres_Lyalpha << std::endl;
+              std::cout << "No emission for this cell, x = " << x << ", thres_LyC = " << He_LyC_probability << ", thres_NPEEV = " << He_NPEEV_probability << ", thres_2PC = " << He_2PC_probability << ", thres_Lyalpha = " << He_Lyalpha_probability << std::endl;
               continue; // No emission for this cell
             }
 
@@ -467,6 +518,7 @@ public:
         _cross_sections(cross_sections),
         _HeLyc_spectrum(cross_sections),
         _He2pc_spectrum(),
+        _HLyc_spectrum(cross_sections),
         _restart_flag(restart_reader.read< bool >()),      // FIXED: const initialized here!
         _restart_time(restart_reader.read< double >()),    // FIXED: const initialized here!
         _update_interval(restart_reader.read< double >()),  // FIXED: const initialized here!
