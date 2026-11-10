@@ -42,6 +42,9 @@
 #include "Pegase3PhotonSourceSpectrum.hpp"
 #include "PhotonSourceSpectrum.hpp"
 #include "ReadFUVLumToMass.hpp"
+#include "PhysicalConstants.hpp"
+#include "RecombinationRates.hpp"
+#include "CrossSections.hpp"
 
 #include <algorithm>
 #include <cinttypes>
@@ -125,6 +128,7 @@ private:
   std::vector< double > _source_lifetimes;
   std::vector< double > _source_masses;
   std::vector< double > _source_luminosities;
+  std::vector< double > _source_escaping_luminosities;
   std::vector< double > _source_ages;
 
   /*! @brief Supernovae that occurred since the preceding HDF5 snapshot. */
@@ -193,6 +197,7 @@ private:
   const double unit_Msol = 1.988e30;
 
   const double _lum_adjust;
+  const bool _calculate_physical_luminosity_adjust;
 
   double _excess_mass = 0;
 
@@ -211,6 +216,7 @@ private:
   double _holmes_lum;
   uint_fast32_t _number_of_holmes;
 
+  const double _gamma;
 
   bool _read_file;
   std::string _read_filename;
@@ -244,6 +250,9 @@ private:
   SupernovaHandler *novahandler;
 
   ReadFUVLumToMass *fuvlumtomass;
+
+  RecombinationRates *_recombination_rates;
+  CrossSections *_cross_sections;
 
   Log *_log;
 
@@ -346,7 +355,6 @@ size_t findClosestIndex(double value, const std::vector<double>& values) {
       if (mass > tablemasses.front()){
         lum = tablelums.front();
         lum = std::pow(10,lum);
-        lum = lum*_lum_adjust;
         return lum;
       } else if (mass < tablemasses.back()) {
         return 0.0;
@@ -366,14 +374,13 @@ size_t findClosestIndex(double value, const std::vector<double>& values) {
       }
 
       lum = std::pow(10,lum);
-      lum = lum*_lum_adjust;
       return lum;
 
     }
 
     /** Recover a best available mass for sources in legacy restart files. */
     double mass_from_luminosity(const double luminosity) const {
-      if (luminosity <= 0. || _lum_adjust <= 0. ||
+      if (luminosity <= 0. ||
           (_holmes_lum > 0. &&
            std::abs(luminosity - _holmes_lum) < 1.e-12 * _holmes_lum)) {
         return 0.;
@@ -385,10 +392,12 @@ size_t findClosestIndex(double value, const std::vector<double>& values) {
           {49.64, 49.44, 49.22, 49.10, 48.99, 48.88, 48.75, 48.61,
            48.44, 48.27, 48.06, 47.88};
       const double log_luminosity =
-          std::log10(std::max(luminosity / _lum_adjust, 1.e-99));
+          std::log10(std::max(luminosity, 1.e-99));
       if (log_luminosity >= log_luminosities.front()) {
         return masses.front();
       }
+
+
       for (size_t i = 0; i + 1 < masses.size(); ++i) {
         if (log_luminosities[i] >= log_luminosity &&
             log_luminosity >= log_luminosities[i + 1]) {
@@ -430,7 +439,86 @@ size_t findClosestIndex(double value, const std::vector<double>& values) {
                               avail_temps);
     }
 
- 
+    double get_mean_particle_mass(const double neutral_fraction) {
+      return 0.5 *
+            PhysicalConstants::get_physical_constant(
+                PHYSICALCONSTANT_PROTON_MASS) *
+            (1. + neutral_fraction);
+    }
+
+
+    double find_stromgren_radius(double cell_number_density, double source_ionizing_luminosity, double temperature, double source_age, double sound_speed){
+
+      double alpha_B = _recombination_rates->get_recombination_rate(ION_H_n, temperature);
+      double recombination_time = 1.0/(alpha_B * cell_number_density);
+
+      double R_ST = std::pow((3.0 * source_ionizing_luminosity)/(4.0 * M_PI * alpha_B * std::pow(cell_number_density, 2.0)), 1.0/3.0);
+
+
+      // radiation phase of the stromgren volume
+      double R_ST_rad_phase = R_ST * std::pow((1 - std::exp(-source_age/recombination_time)), 1.0/3.0);
+
+      double transition_threshold = 3.5 * recombination_time; // time at which radius is 0.99 R_ST
+
+      // D-type expansion phase of the stromgren volume
+      if (source_age >= transition_threshold) {
+        R_ST = R_ST * std::pow(1.0 + (7./4.) * ((sound_speed * (source_age - transition_threshold) /R_ST)), 4.0/7.0);
+      } else {
+        R_ST = R_ST_rad_phase;
+      }
+
+      return R_ST;
+
+    }
+
+    double get_luminosity_adjust(const HydroVariables &state, double cell_number_density, double source_ionizing_luminosity, double temperature, double source_age, double cell_neutral_fraction, double cell_dx, double cell_volume) {
+
+      double mean_molecular_mass = get_mean_particle_mass(cell_neutral_fraction);
+
+      const double dvxdx = state.primitive_gradients(1).x();
+      const double dvxdy = state.primitive_gradients(1).y();
+      const double dvxdz = state.primitive_gradients(1).z();
+
+      const double dvydx = state.primitive_gradients(2).x();
+      const double dvydy = state.primitive_gradients(2).y();
+      const double dvydz = state.primitive_gradients(2).z();
+
+      const double dvzdx = state.primitive_gradients(3).x();
+      const double dvzdy = state.primitive_gradients(3).y();
+      const double dvzdz = state.primitive_gradients(3).z(); 
+
+      double velocity_dispersion = cell_dx * std::sqrt(1.0/3.0 * 
+                        (dvxdx*dvxdx + dvxdy*dvxdy + dvxdz*dvxdz + 
+                          dvydx*dvydx + dvydy*dvydy + dvydz*dvydz +
+                          dvzdx*dvzdx + dvzdy*dvzdy + dvzdz*dvzdz));  
+                          
+
+      double sound_speed = std::sqrt(PhysicalConstants::get_physical_constant(PHYSICALCONSTANT_BOLTZMANN) * temperature * _gamma / mean_molecular_mass);
+
+      double b = 0.35; // proportionality constant: Li et al. 2003, Federrath et al. 2008 - pure hydro sims 
+
+      double Mach = velocity_dispersion/sound_speed;
+      double turbulence_factor = std::sqrt(std::log(1.0 + b*b * Mach*Mach));
+
+      double R_ST = find_stromgren_radius(cell_number_density, source_ionizing_luminosity, temperature, source_age, sound_speed);
+
+      double cross_section = _cross_sections->get_cross_section(ION_H_n, 3.28847e15); // cross section for H at 13.6 eV
+
+      double critical_density = 1 / (cross_section * R_ST);
+
+      double density_threshold = std::log(critical_density/cell_number_density);
+
+      double minimum_escape_frac = 0.5 * ( 1. + std::erf((density_threshold + (turbulence_factor*turbulence_factor/2.))/(std::sqrt(2.0) * turbulence_factor)));
+
+      double ionized_volume = 4./3. * M_PI * std::pow(R_ST, 3.0);
+      double ionized_fraction = ionized_volume / cell_volume;       
+
+      double escape_scale_factor = 1./(1. - minimum_escape_frac);
+      
+      double luminosity_adjust_factor = 1.0 - std::exp(-ionized_fraction * escape_scale_factor);
+
+      return luminosity_adjust_factor;
+    }
 
 public:
   /**
@@ -475,12 +563,14 @@ public:
       const double starting_time, bool output_sources = false,
       const double sne_energy = 1.e44,
       const double lum_adjust=1.0,
+      const bool calculate_physical_luminosity_adjust=false,
       const double scale_height=0.0,
       const double peak_fraction=0.5,
       const double holmes_time=0.0,
       const double holmes_sh=3e18,
       const double holmes_lum=5e46,
       const uint_fast32_t number_of_holmes=200,
+      const double gamma=5./3.,
       const bool read_file=false,
       const std::string read_filename="sources.txt",
       const std::string source_filename="Bursty_source_positions.txt",
@@ -497,9 +587,10 @@ public:
         _M_init(M_init),
         _update_interval(update_interval),
         _output_file_source(nullptr),  _output_file_lum(nullptr), _output_file_fuv(nullptr), _number_of_updates(1), _next_index(0),
-        _sne_energy(sne_energy), _lum_adjust(lum_adjust), _scale_height(scale_height),
+        _sne_energy(sne_energy), _lum_adjust(lum_adjust), _calculate_physical_luminosity_adjust(calculate_physical_luminosity_adjust), _scale_height(scale_height),
         _peak_fraction(peak_fraction),_holmes_time(holmes_time),
         _holmes_sh(holmes_sh),_holmes_lum(holmes_lum),_number_of_holmes(number_of_holmes),
+        _gamma(gamma),
         _read_file(read_file), _read_filename(read_filename), _source_filename(source_filename), _total_luminosity_filename(total_luminosity_filename), _fuv_filename(fuv_filename), _read_fuv_filename(read_fuv_filename), _fuv_LtoM_filename(fuv_LtoM_filename), _time(time),
         _random_generator(seed), _log(log){
 
@@ -581,11 +672,110 @@ public:
                 *_output_file_fuv << "# Restarted Simulation \n";
                 _output_file_fuv->flush();
               }
-    
-
     }
 
-    if (_read_file) {
+
+    #ifdef HAVE_HDF5
+    bool loaded_stellar_from_hdf5 = false;
+    bool loaded_fuv_from_hdf5 = false;
+    if (_read_file && !_read_filename.empty() && _read_filename.find(".h5") != std::string::npos) {
+        HDF5Tools::HDF5File file = HDF5Tools::open_file(_read_filename, HDF5Tools::HDF5FILEMODE_READ);
+
+        if (HDF5Tools::group_exists(file, "PhotonSources")) {
+            std::cout << "Loading data natively from HDF5 snapshot..." << std::endl;
+            HDF5Tools::HDF5Group sources = HDF5Tools::open_group(file, "PhotonSources");
+
+            uint32_t num_sources = HDF5Tools::read_attribute<uint32_t>(sources, "NumberOfSources");
+           // double snapshot_sim_time = HDF5Tools::read_attribute<double>(sources, "SimulationTime");
+
+            if (num_sources > 0) {
+                std::vector<CoordinateVector<>> read_positions;
+                std::vector<double> read_luminosities;
+                std::vector<double> read_masses;
+                std::vector<double> read_ages;
+
+                read_positions = HDF5Tools::read_dataset<CoordinateVector<>>(sources, "Coordinates");
+                read_luminosities = HDF5Tools::read_dataset<double>(sources, "IonizingLuminosity");
+                read_masses = HDF5Tools::read_dataset<double>(sources, "Mass");
+                read_ages = HDF5Tools::read_dataset<double>(sources, "Age");
+
+                double a0z = 9.955209529401348; 
+                double a1z = -3.3370109454102326;
+                double a2z = 0.8116654874025604;
+
+                for (size_t i = 0; i < num_sources; ++i) {
+                    double mass = read_masses[i];
+                    double current_age = read_ages[i];
+                    
+                    double lifetime = a0z + a1z * std::log10(mass) + a2z * (std::log10(mass) * std::log10(mass));
+                    lifetime = std::pow(10.0, lifetime) * unit_yr; 
+                    
+                    double remaining_lifetime = lifetime - current_age;
+
+                    if (remaining_lifetime <= 0.0) continue;
+
+                    _source_positions.push_back(read_positions[i]);
+                    _source_luminosities.push_back(lum_from_mass(mass)); 
+                    _source_lifetimes.push_back(remaining_lifetime);
+                    _source_ages.push_back(current_age);
+                    _source_indices.push_back(_next_index);
+                    _source_masses.push_back(mass);
+                    _source_velocities.push_back(CoordinateVector<double>()); 
+
+                    double interpolatedTemp = interpolate(mass, stellarMasses, temperatures);
+                    size_t closestIndex = findClosestIndex(interpolatedTemp, avail_temps);
+                    _spectrum_index.push_back(closestIndex);
+
+                    if (_output_file_source != nullptr && !source_file_existed_at_start) {
+                        *_output_file_source << _total_time << "\t" << read_positions[i].x() << "\t" << read_positions[i].y()
+                                             << "\t" << read_positions[i].z() << "\t1\t"
+                                             << _source_indices.back() << "\t"
+                                             << _source_luminosities.back() << "\t"
+                                             << mass << "\t"
+                                             << "OSTAR\n";
+                    }
+                    ++_next_index;
+                }
+            }
+            HDF5Tools::close_group(sources);
+            _initialize_imported_source_velocities = true;
+            std::cout << "Successfully read HDF5 snapshot! Loaded active stars: " << _source_masses.size() << std::endl;
+            loaded_stellar_from_hdf5 = true;
+        }
+
+        if (HDF5Tools::group_exists(file, "FUVSources")) {
+            HDF5Tools::HDF5Group fuv_group = HDF5Tools::open_group(file, "FUVSources");
+            uint32_t num_fuv = HDF5Tools::read_attribute<uint32_t>(fuv_group, "NumberOfSources");
+
+            if (num_fuv > 0) {
+                std::vector<double> read_fuv_times;
+                std::vector<double> read_fuv_masses;
+                read_fuv_times = HDF5Tools::read_dataset<double>(fuv_group, "BirthTime");
+                read_fuv_masses = HDF5Tools::read_dataset<double>(fuv_group, "Mass");
+
+                for (size_t i = 0; i < num_fuv; ++i) {
+                    double cluster_time = read_fuv_times[i];
+                    double cluster_mass = read_fuv_masses[i];
+                    double min_time_limit = _total_time - (110. * unit_Myr);
+                    if ((cluster_time > min_time_limit) && (cluster_time < _total_time)) {
+                        _fuv_source_birth_time.push_back(cluster_time);
+                        _fuv_source_masses.push_back(cluster_mass);
+                    }
+                }
+            }
+            HDF5Tools::close_group(fuv_group);
+            std::cout << "HDF5 FUV clusters loaded: " << _fuv_source_birth_time.size() << std::endl;
+            loaded_fuv_from_hdf5 = true;
+        }
+
+        HDF5Tools::close_file(file);
+    }
+  #endif
+
+
+
+
+    if (_read_file && !loaded_fuv_from_hdf5) {
       std::cout<<"Reading FUV sources!"<<std::endl;
       std::ifstream fuv_file;
       fuv_file.open(_read_fuv_filename);
@@ -618,7 +808,7 @@ public:
       fuv_file.close();
     }
 
-     if (_read_file){
+     if (_read_file && !loaded_stellar_from_hdf5) {
       std::ifstream file;
       file.open(_read_filename);
       if (!file.is_open()) {
@@ -785,6 +975,7 @@ public:
             params.get_physical_value< QUANTITY_ENERGY > (
                 "PhotonSourceDistribution:supernova energy", "1.e51 erg"),
             params.get_value< double >("PhotonSourceDistribution:luminosity adjust",1.0),
+            params.get_value< bool >("PhotonSourceDistribution:calculate physical luminosity adjust",false),
             params.get_physical_value<QUANTITY_LENGTH> (
               "PhotonSourceDistribution:scale height","0.0 m"),
             params.get_value< double >("PhotonSourceDistribution:peak fraction",0.5),
@@ -795,6 +986,7 @@ public:
             params.get_physical_value<QUANTITY_FREQUENCY>(
                 "PhotonSourceDistribution:holmes luminosity","5e46 s^-1"),
             params.get_value<double>("PhotonSourceDistribution:number of holmes",200),
+            params.get_value<double>("Hydro:polytropic index", 5./3.),
             params.get_value<bool>("PhotonSourceDistribution:read file",false),
             params.get_value<std::string>("PhotonSourceDistribution:filename","SourceFile.txt"),
             params.get_value<std::string>("PhotonSourceDistribution:source filename","Bursty_source_positions.txt"),
@@ -888,7 +1080,7 @@ public:
   /**
    * @brief Append live stars and supernovae since the previous snapshot.
    */
-  virtual void write_snapshot_metadata(const std::string &filename,
+    virtual void write_snapshot_metadata(const std::string &filename,
                                        const double simulation_time) override {
 #ifdef HAVE_HDF5
     if (filename.empty()) {
@@ -929,10 +1121,32 @@ public:
           sources, "Coordinates", _source_positions);
       HDF5Tools::write_dataset< double >(
           sources, "IonizingLuminosity", _source_luminosities);
+      HDF5Tools::write_dataset< double >(sources, "EscapingIonizingLuminosity", _source_escaping_luminosities);
       HDF5Tools::write_dataset< double >(sources, "Mass", _source_masses);
       HDF5Tools::write_dataset< double >(sources, "Age", _source_ages);
     }
     HDF5Tools::close_group(sources);
+
+    HDF5Tools::HDF5Group fuv_sources =
+        HDF5Tools::create_group(file, "FUVSources");
+    uint32_t number_of_fuv_sources = _fuv_source_birth_time.size();
+    std::string fuv_time_units = "s";
+    std::string fuv_mass_units = "Msol";
+    HDF5Tools::write_attribute< uint32_t >(
+        fuv_sources, "NumberOfSources", number_of_fuv_sources);
+    HDF5Tools::write_attribute< std::string >(
+        fuv_sources, "TimeUnits", fuv_time_units);
+    HDF5Tools::write_attribute< std::string >(
+        fuv_sources, "MassUnits", fuv_mass_units);
+    HDF5Tools::write_attribute< double >(
+        fuv_sources, "SnapshotTime", snapshot_time);
+    if (!_fuv_source_birth_time.empty()) {
+      HDF5Tools::write_dataset< double >(
+          fuv_sources, "BirthTime", _fuv_source_birth_time);
+      HDF5Tools::write_dataset< double >(
+          fuv_sources, "Mass", _fuv_source_masses);
+    }
+    HDF5Tools::close_group(fuv_sources);
 
     HDF5Tools::HDF5Group supernovae =
         HDF5Tools::create_group(file, "SupernovaEvents");
@@ -958,7 +1172,6 @@ public:
     HDF5Tools::close_group(supernovae);
     HDF5Tools::close_file(file);
 
-    // Only clear after the HDF5 file was closed successfully.
     _snapshot_supernova_positions.clear();
     _snapshot_supernova_times.clear();
     _snapshot_supernova_types.clear();
@@ -967,6 +1180,7 @@ public:
     (void)simulation_time;
 #endif
   }
+
 
 
 
@@ -990,7 +1204,7 @@ public:
    * emitted from this particular source.
    */
   virtual double get_weight(photonsourcenumber_t index) const {
-    return _source_luminosities[index] / get_total_luminosity();
+    return _source_escaping_luminosities[index] / get_total_luminosity();
   }
 
   /**
@@ -1002,8 +1216,8 @@ public:
 
   virtual double get_total_luminosity() const {
     double tot_lum = 0.0;
-    for (uint_fast32_t i=0;i<_source_luminosities.size();++i) {
-      tot_lum += _source_luminosities[i];
+    for (uint_fast32_t i=0;i<_source_escaping_luminosities.size();++i) {
+      tot_lum += _source_escaping_luminosities[i];
     }
     return tot_lum;
   }
@@ -1130,7 +1344,7 @@ public:
           *_output_file_source<< _total_time << "\t" << pos.x() << "\t" << pos.y()
                       << "\t" << pos.z() << "\t2\t"
                       << _source_indices[i] << "\t" 
-                      << _source_luminosities[i] << "\t"
+                      << _source_escaping_luminosities[i] << "\t"
                       << _source_masses[i] << "\t"
                       << "SNeII" << "\n";
                     
@@ -1143,6 +1357,7 @@ public:
         _source_lifetimes.erase(_source_lifetimes.begin() + i);
         _source_ages.erase(_source_ages.begin() + i);
         _source_luminosities.erase(_source_luminosities.begin() + i);
+        _source_escaping_luminosities.erase(_source_escaping_luminosities.begin() + i);
         _spectrum_index.erase(_spectrum_index.begin() + i);
         _source_indices.erase(_source_indices.begin() + i);
         _source_masses.erase(_source_masses.begin() + i);
@@ -1161,6 +1376,10 @@ public:
         ++i;
       }
     }
+
+
+
+
 ///   Type Ia supernovae implementation - up to 325 pc scale height
     double _anchor_x = grid_creator->get_box().get_anchor()[0];
     double _anchor_y = grid_creator->get_box().get_anchor()[1];
@@ -1224,7 +1443,7 @@ public:
     }
 
 
-
+    // Add HOLMES sources
     if ((_total_time > _holmes_time) && (!_holmes_added)) {
 
       for (uint_fast32_t i=0; i<_number_of_holmes; ++i) {
@@ -1254,6 +1473,7 @@ public:
 
         _source_lifetimes.push_back(lifetime);
         _source_luminosities.push_back(_holmes_lum);
+        _source_escaping_luminosities.push_back(_holmes_lum);
         _source_ages.push_back(0.);
 
         _source_masses.push_back(0.);
@@ -1273,7 +1493,7 @@ public:
       updated = true;
     }
 
-// Stellar Sources
+    //  Add Stellar Sources
     if (_total_time - _last_sf >= _update_interval) {
 
       const double star_formation_interval = _total_time - _last_sf;
@@ -1477,7 +1697,10 @@ public:
               _random_generator.get_uniform_random_double() * _update_interval;
         _source_lifetimes.push_back(lifetime-offset);
         _source_ages.push_back(offset);
-        _source_luminosities.push_back(lum_from_mass(m_cur));
+
+        double stellar_luminosity = lum_from_mass(m_cur);
+        _source_luminosities.push_back(stellar_luminosity);
+        _source_escaping_luminosities.push_back(stellar_luminosity * _lum_adjust);
         _source_indices.push_back(_next_index);
         _source_masses.push_back(m_cur);
         ++_next_index;
@@ -1485,18 +1708,42 @@ public:
         size_t closestIndex = findClosestIndex(interpolatedTemp, avail_temps);
         _spectrum_index.push_back(closestIndex);
         std::cout << "MAKING STAR OF MASS " << m_cur << " temp = " << interpolatedTemp << " specindex = " << closestIndex <<  std::endl;
-        if (_output_file_source!= nullptr) {
+
+        mass_generated += m_cur;
+      }
+
+
+      // update the luminosity adjust factor of all sources
+      if (_calculate_physical_luminosity_adjust) {
+        for (size_t i = 0; i < _source_positions.size(); ++i) {
+          if (grid_creator->get_box().inside(_source_positions[i])) {
+            auto grid = grid_creator->get_subgrid(_source_positions[i]);
+            auto cell = (*grid).get_hydro_cell(_source_positions[i]);
+            const HydroVariables &state = cell.get_hydro_variables();
+
+            double cell_num_dens = cell.get_ionization_variables().get_number_density();
+            double cell_temp = cell.get_ionization_variables().get_temperature();
+            double cell_neutral_frac = cell.get_ionization_variables().get_ionic_fraction(ION_H_n);
+
+            double cell_volume = cell.get_volume();
+            double cell_dx = std::pow(cell_volume, 1./3.);
+
+            double stellar_luminosity = _source_luminosities[i];
+            double luminosity_adjust_factor = get_luminosity_adjust(state, cell_num_dens, stellar_luminosity, cell_temp, _source_ages[i], cell_neutral_frac, cell_dx, cell_volume);
+            _source_escaping_luminosities[i] = stellar_luminosity * luminosity_adjust_factor;
+          }
+        }
+      } 
+      if (_output_file_source!= nullptr) {
           const CoordinateVector<> &pos = _source_positions.back();
           *_output_file_source<< _total_time << "\t" << pos.x() << "\t" << pos.y()
                         << "\t" << pos.z() << "\t1\t"
                         << _source_indices.back() << "\t"
-                        << _source_luminosities.back() << "\t"
-                        << m_cur << "\t"
+                        << _source_escaping_luminosities.back() << "\t"
+                        << _source_masses.back() << "\t"
                         << "OSTAR\n";
         }
 
-        mass_generated += m_cur;
-      }
       if (mass_generated == 0) {
         _excess_mass = _excess_mass - mass_to_generate;
         std::cout << "Still over mass to generate, decreased excess to " << _excess_mass << std::endl;
@@ -1583,6 +1830,7 @@ public:
         _source_lifetimes.erase(_source_lifetimes.begin() + i);
         _source_ages.erase(_source_ages.begin() + i);
         _source_luminosities.erase(_source_luminosities.begin() + i);
+        _source_escaping_luminosities.erase(_source_escaping_luminosities.begin() + i);
         _source_masses.erase(_source_masses.begin() + i);
         _spectrum_index.erase(_spectrum_index.begin() + i);
         if (i < _source_indices.size()) {
@@ -1630,6 +1878,7 @@ public:
     //restart_writer.write(_moving_sources_flag);
     restart_writer.write(_update_interval);
     restart_writer.write(_lum_adjust);
+    restart_writer.write(_calculate_physical_luminosity_adjust);
     restart_writer.write(_excess_mass);
     restart_writer.write(_scale_height);
     restart_writer.write(_peak_fraction);
@@ -1639,6 +1888,7 @@ public:
     restart_writer.write(_holmes_sh);
     restart_writer.write(_holmes_lum);
     restart_writer.write(_number_of_holmes);
+    restart_writer.write(_gamma);
     restart_writer.write(type1done);
     restart_writer.write(_total_time);
     restart_writer.write(_holmes_added); 
@@ -1677,6 +1927,14 @@ public:
       restart_writer.write(size);
       for (std::vector< double >::size_type i = 0; i < size; ++i) {
         restart_writer.write(_source_luminosities[i]);
+      }
+
+    }
+    {
+      const auto size = _source_escaping_luminosities.size();
+      restart_writer.write(size);
+      for (std::vector< double >::size_type i = 0; i < size; ++i) {
+        restart_writer.write(_source_escaping_luminosities[i]);
       }
 
     }
@@ -1754,6 +2012,7 @@ public:
         _output_file_source(nullptr), _output_file_lum(nullptr), _output_file_fuv(nullptr), _number_of_updates(0),
         _next_index(0),
         _lum_adjust(restart_reader.read< double >()),
+        _calculate_physical_luminosity_adjust(restart_reader.read< bool >()),
         _excess_mass(restart_reader.read<double>()),
         _scale_height(restart_reader.read<double>()),
         _peak_fraction(restart_reader.read<double>()),
@@ -1763,6 +2022,7 @@ public:
         _holmes_sh(restart_reader.read<double>()),
         _holmes_lum(restart_reader.read<double>()),
         _number_of_holmes(restart_reader.read<uint_fast32_t>()),
+        _gamma(restart_reader.read<double>()),
         _read_file(false), _read_filename(), _time(0.),
         type1done(restart_reader.read<int>()),
         _total_time(restart_reader.read<double>()),
@@ -1808,6 +2068,14 @@ public:
       _source_luminosities.resize(size);
       for (std::vector< double >::size_type i = 0; i < size; ++i) {
         _source_luminosities[i] = restart_reader.read< double >();
+      }
+    }
+    {
+      const std::vector< double >::size_type size =
+          restart_reader.read< std::vector< double >::size_type >();
+      _source_escaping_luminosities.resize(size);
+      for (std::vector< double >::size_type i = 0; i < size; ++i) {
+        _source_escaping_luminosities[i] = restart_reader.read< double >();
       }
     }
     if (extended) {
