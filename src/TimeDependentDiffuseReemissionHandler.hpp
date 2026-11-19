@@ -78,25 +78,34 @@ public:
   set_reemission_probabilities(IonizationVariables &ionization_variables) {
 
     const double T4 = ionization_variables.get_temperature() * 1.e-4;
+    const double temperature = ionization_variables.get_temperature();
 
     /// hydrogen
 
-    // Wood, Mathis & Ercolano (2004), sections 3.3 and 7
-    // equation (24)
-    const double alpha_1_H = 1.58e-13 * std::pow(T4, -0.53);
-    // fit to table 2.1 in Osterbrock & Ferland (2006)
-    const double alpha_A_agn = 4.18e-13 * std::pow(T4, -0.7);
+    /// Hydrogen: Hui & Gnedin (1997) Case A and Case B (valid 1 K < T < 10^9 K)
+    const double T_TR_H = 157807.0; // ionization threshold for H I in K
+    const double lambda_H = 2.0 * T_TR_H / temperature;
+    const double alphaA_H =
+        1.269e-13 * std::pow(lambda_H, 1.503) *
+        std::pow(1.0 + std::pow(lambda_H / 0.522, 0.470), -1.923);
+    const double alphaB_H =
+        2.753e-14 * std::pow(lambda_H, 1.500) *
+        std::pow(1.0 + std::pow(lambda_H / 2.740, 0.407), -2.242);
+
+    const double alpha_1_H = std::max(0.0, alphaA_H - alphaB_H);
+    const double H_LyC = (alphaA_H > 0.0) ? alpha_1_H / alphaA_H : 0.0;
+
     ionization_variables.set_reemission_probability(
-        REEMISSIONPROBABILITY_HYDROGEN, alpha_1_H / alpha_A_agn);
+        REEMISSIONPROBABILITY_HYDROGEN, H_LyC);
 
     /// helium
 
     // Wood, Mathis & Ercolano (2004), sections 3.3 and 7
     // equation (25)
     const double alpha_1_He = 1.54e-13 * std::pow(T4, -0.486);
-    const double alpha_e_2tS = 2.1e-13 * std::pow(T4, -0.381);
-    const double alpha_e_2sS = 2.06e-14 * std::pow(T4, -0.451);
-    const double alpha_e_2sP = 4.17e-14 * std::pow(T4, -0.695);
+    const double alpha_e_2tS = 2.1e-13 * std::pow(T4, -0.778);
+    const double alpha_e_2sS = 2.06e-14 * std::pow(T4, -0.676);
+    const double alpha_e_2sP = 4.17e-14 * std::pow(T4, -0.861);
     // We make sure the sum of all probabilities is 1...
     const double alphaHe = alpha_1_He + alpha_e_2tS + alpha_e_2sS + alpha_e_2sP;
 

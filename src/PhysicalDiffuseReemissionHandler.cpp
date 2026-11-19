@@ -137,9 +137,8 @@ double PhysicalDiffuseReemissionHandler::reemit(
                  REEMISSIONPROBABILITY_HYDROGEN)) {
 
       // sample new frequency from hydrogen Lyman continuum
-    //  new_frequency = _HLyc_spectrum.get_random_frequency(
-      //    random_generator, ionization_variables.get_temperature());
-      new_frequency = 3.28847e15;
+      new_frequency = _HLyc_spectrum.get_random_frequency(
+          random_generator, ionization_variables.get_temperature());
       type = PHOTONTYPE_DIFFUSE_HI;
 
       if (statistics != nullptr) {

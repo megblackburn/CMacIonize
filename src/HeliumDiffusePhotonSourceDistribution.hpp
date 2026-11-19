@@ -39,6 +39,7 @@ class HeliumTwoPhotonContinuumSpectrum;
 class HydrogenLymanContinuumSpectrum;
 class RecombinationRates;
 class CrossSections;
+class Abundances;
 
 /**
  * @brief General interface for photon source distribution functors.

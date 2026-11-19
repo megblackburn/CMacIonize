@@ -32,6 +32,7 @@
 #include "ParameterFile.hpp"
 #include "RecombinationRates.hpp"
 #include "CrossSections.hpp"
+#include "Abundances.hpp"
 
 // non library dependent implementations
 #include "TimeDependentHeliumDiffusePhotonSourceDistribution.hpp"
@@ -52,6 +53,7 @@ public:
   static HeliumDiffusePhotonSourceDistribution *generate(ParameterFile &params,
                                             RecombinationRates &recombination_rates,
                                             CrossSections &cross_sections,
+                                            Abundances &abundances,
                                             Log *log = nullptr) {
 
     const std::string type = params.get_value< std::string >(
@@ -66,7 +68,7 @@ public:
     if (type == "None") {
       return nullptr;
     } else if (type == "TimeDependent") {
-      return new TimeDependentHeliumDiffusePhotonSourceDistribution(params, recombination_rates, cross_sections, log);
+      return new TimeDependentHeliumDiffusePhotonSourceDistribution(params, recombination_rates, cross_sections, abundances,log);
     } else {
       cmac_error("Unknown DiffusePhotonSourceDistribution type: \"%s\".",
                  type.c_str());
@@ -90,12 +92,12 @@ public:
    */
   inline static HeliumDiffusePhotonSourceDistribution *restart(
       RestartReader &restart_reader, RecombinationRates &recombination_rates,
-      CrossSections &cross_sections, Log *log = nullptr,
+      CrossSections &cross_sections, Abundances &abundances, Log *log = nullptr,
       const bool use_tigress_like_injection = true) {
 
     const std::string tag = restart_reader.read< std::string >();
     if (tag == typeid(TimeDependentHeliumDiffusePhotonSourceDistribution).name()) {
-      return new TimeDependentHeliumDiffusePhotonSourceDistribution(restart_reader, recombination_rates, cross_sections, log);
+      return new TimeDependentHeliumDiffusePhotonSourceDistribution(restart_reader, recombination_rates, cross_sections, abundances, log);
     } else {
       cmac_error("Restarting is not supported for distribution type: \"%s\".",
                  tag.c_str());

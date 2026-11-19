@@ -36,6 +36,7 @@
 #include "HydrogenLymanContinuumSpectrum.hpp"
 #include "RecombinationRates.hpp"
 #include "CrossSections.hpp"
+#include "Abundances.hpp"
 
 #include <algorithm>
 #include <cinttypes>
@@ -78,6 +79,9 @@ private:
 
   const CrossSections &_cross_sections;
 
+
+  const Abundances &_abundances;
+
   /*! @brief Helium Lyman continuum spectrum. */
   const HeliumLymanContinuumSpectrum _HeLyc_spectrum;
   const HeliumTwoPhotonContinuumSpectrum _He2pc_spectrum;
@@ -101,10 +105,11 @@ public:
   inline TimeDependentHeliumDiffusePhotonSourceDistribution(
       const RecombinationRates &recombination_rates,
       const CrossSections &cross_sections,
+      const Abundances &abundances,
       const bool restart_flag, const double restart_time,
       const double update_interval,
       Log *log = nullptr)
-      : _recombination_rates(recombination_rates), _cross_sections(cross_sections), _HeLyc_spectrum(cross_sections), _He2pc_spectrum(), _HLyc_spectrum(cross_sections), _restart_flag(restart_flag), _restart_time(restart_time), _update_interval(update_interval), _log(log){
+      : _recombination_rates(recombination_rates), _cross_sections(cross_sections), _abundances(abundances), _HeLyc_spectrum(cross_sections), _He2pc_spectrum(), _HLyc_spectrum(cross_sections), _restart_flag(restart_flag), _restart_time(restart_time), _update_interval(update_interval), _log(log){
 
     
     if (_restart_flag == true) {
@@ -125,8 +130,8 @@ public:
    * @param params ParameterFile to read from.
    * @param log Log to write logging info to.
    */
-  TimeDependentHeliumDiffusePhotonSourceDistribution(ParameterFile &params, RecombinationRates &recombination_rates, CrossSections &cross_sections, Log *log = nullptr)
-      : TimeDependentHeliumDiffusePhotonSourceDistribution(recombination_rates, cross_sections, 
+  TimeDependentHeliumDiffusePhotonSourceDistribution(ParameterFile &params, RecombinationRates &recombination_rates, CrossSections &cross_sections, Abundances &abundances, Log *log = nullptr)
+      : TimeDependentHeliumDiffusePhotonSourceDistribution(recombination_rates, cross_sections, abundances,
         params.get_value< bool >("TaskBasedRadiationHydrodynamicsSimulation:restart flag", false),
         params.get_physical_value< QUANTITY_TIME >("PhotonSourceDistribution:restart time", "0. Myr"),
         params.get_physical_value< QUANTITY_TIME >("TaskBasedRadiationHydrodynamicsSimulation:radiation time", "0.1 Myr"),
@@ -284,7 +289,7 @@ public:
     _total_time += actual_timestep;
     bool updated = false;
 
-    if (_total_time - _last_sf >= _update_interval) {
+   // if (_total_time - _last_sf >= _update_interval) {
       const double delta_time = _total_time - _last_sf;
 
       _total_diffuse_luminosity = 0.0;
@@ -321,21 +326,24 @@ public:
         #pragma omp for schedule(dynamic, 1)
         for (size_t this_igrid = 0; this_igrid < num_subgrids; ++this_igrid) {
           HydroDensitySubGrid &subgrid = *grid_creator->get_subgrid(this_igrid);
+      //    std::cout<<"Looping over grid"<<std::endl;
           
-          for (auto it = subgrid.hydro_begin(); it != subgrid.hydro_end(); ++it) {
-            const double neutral_fraction =
-                it.get_ionization_variables().get_ionic_fraction(ION_He_n);
-            
-            if (neutral_fraction >= 1.0) continue; 
+          for (auto it = subgrid.begin(); it != subgrid.end(); ++it) {
+          //  std::cout<<"Looping over subgrid"<<std::endl;
 
-            const double ionic_fraction = 1.0 - neutral_fraction;
+            const double he_ion_ne = it.get_ionization_variables().get_squared_ionized_fraction(ION_He_n);
+            
+            if (he_ion_ne <= 0.0) continue; 
+
             const double temperature = it.get_ionization_variables().get_temperature();
             const double number_density = it.get_ionization_variables().get_number_density();
-
-            const double n_He_e = number_density * ionic_fraction; // number of electrons free for He recombination
-            const double n_He_p = number_density * ionic_fraction; // number of He+ ions available for recombination
-
-            
+            const double number_density_squared = number_density * number_density;
+            #ifdef VARIABLE_ABUNDANCES
+                const double AHe =
+                    it.get_ionization_variables().get_abundances().get_abundance(ELEMENT_He);
+            #else
+                const double AHe = _abundances.get_abundance(ELEMENT_He);
+            #endif
             
             // Wood, Mathis & Ercolano (2004), sections 3.3 and 7
             // Equation 25
@@ -347,11 +355,11 @@ public:
             const double alpha_e_2sS = 2.06e-14 * std::pow(T4, -0.676);
             const double alpha_e_2sP = 4.17e-14 * std::pow(T4, -0.861);
             // We make sure the sum of all probabilities is 1...
-            const double alphaHe = alpha_1_He + alpha_e_2tS + alpha_e_2sS + alpha_e_2sP;
+            const double alphaHe = (alpha_1_He + alpha_e_2tS + alpha_e_2sS + alpha_e_2sP) * 1.e-6;
 
             const double cell_volume = it.get_volume();
 
-            const double diffuse_photon_rate = n_He_e * n_He_p * alphaHe * 1.e-6 * cell_volume; // convert from cm^-3 s^-1 to m^-3 s^-1
+            const double diffuse_photon_rate = AHe * he_ion_ne * number_density_squared * alphaHe * cell_volume; // dN/dt
             const double number_of_diffuse_photons = diffuse_photon_rate * delta_time;
 
             // replace probabilities with diffuse photon rates for each emission channel using recomb rates in wood et al 2003 3.3.2
@@ -367,9 +375,9 @@ public:
             const double He_Lyalpha_probability = it.get_ionization_variables().get_reemission_probability(REEMISSIONPROBABILITY_HELIUM_LYA);
             const double He_NPEEV_probability = it.get_ionization_variables().get_reemission_probability(REEMISSIONPROBABILITY_HELIUM_NPEEV);
 
-            const double H_LyC_probability = it.get_ionization_variables().get_reemission_probability(REEMISSIONPROBABILITY_HYDROGEN);
+          //  const double H_LyC_probability = it.get_ionization_variables().get_reemission_probability(REEMISSIONPROBABILITY_HYDROGEN);
 
-            double x = _random_generator.get_uniform_random_double();
+            double x = local_rng.get_uniform_random_double();
             
 
             double photon_frequency = 0.0;
@@ -385,7 +393,7 @@ public:
             } else if (x <= He_2PC_probability) {
               // He two-photon continuum
               // 28% of photons have energies capable of ionizing hydrogen, so 56% probability in 2 photons.
-              double x_emit = _random_generator.get_uniform_random_double();
+              double x_emit = local_rng.get_uniform_random_double();
 
               if (x_emit < 0.56) {
                 // emit as He two-photon continuum
@@ -397,33 +405,24 @@ public:
               
             } else if (x <= He_Lyalpha_probability) {
               // He I Lyman alpha
-              photon_frequency = 5.1305e15; // 21.2 eV
 
               // He I Lyman alpha can be absorbed on the spot or converted to He 2-photon continuum emission
 
-              const double sqrtTnH0 = std::sqrt(temperature) * it.get_ionization_variables().get_ionic_fraction(ION_H_n);
-              const double pHots = sqrtTnH0 / (sqrtTnH0 + 77. * it.get_ionization_variables().get_ionic_fraction(ION_He_n));
+              const double xh = it.get_ionization_variables().get_ionic_fraction(ION_H_n);
+              const double he0 = it.get_ionization_variables().get_ionic_fraction(ION_He_n);
+              const double pHots = (xh > 0.0) ? xh / (xh + 77.0 * he0 / std::sqrt(temperature)) : 0.0;
+              
+              double x_hi = local_rng.get_uniform_random_double();
 
-              double x = _random_generator.get_uniform_random_double();
-
-              if (x < pHots) {
+              if (x_hi < pHots) {
                 // photon absorbed on the spot by hydrogen, decide whether to re-emit as H LyC or absorb
 
-                double x_emit = _random_generator.get_uniform_random_double();
+                continue; // these photons have been added to the hydrogen diffuse photon source from the ionisation state solver including He lyman contribution
 
-                if (x_emit <= H_LyC_probability) {
-                  // photon is emitted as Hydrogen Lyman continuum
-                  
-                  photon_frequency = _HLyc_spectrum.get_random_frequency(local_rng, temperature);
-                  
-                } else {
-                  // photon absorbed, no re-emitted photon for this cell
-                  continue;
-                }
               } else {
                 // photon is converted to He 2-photon continuum emission
 
-                double x_emit = _random_generator.get_uniform_random_double();
+                double x_emit = local_rng.get_uniform_random_double();
 
                 if (x_emit < 0.56) {
                   photon_frequency = _He2pc_spectrum.get_random_frequency(local_rng, temperature);
@@ -440,6 +439,7 @@ public:
               std::cout << "No emission for this cell, x = " << x << ", thres_LyC = " << He_LyC_probability << ", thres_NPEEV = " << He_NPEEV_probability << ", thres_2PC = " << He_2PC_probability << ", thres_Lyalpha = " << He_Lyalpha_probability << std::endl;
               continue; // No emission for this cell
             }
+
 
             const CoordinateVector<> cell_position = it.get_cell_midpoint();
 
@@ -464,7 +464,6 @@ public:
           _total_diffuse_photons += local_total_photons;
         }
       }
-      std::cout<< "Time Dependent Diffuse photon source updated with " << _diffuse_source_positions.size() << " sources, total luminosity: " << _total_diffuse_luminosity << " s^-1, total photons: " << _total_diffuse_photons << std::endl;
 
       _snap_diffuse_source_luminosities = _diffuse_source_luminosities;
       _snap_diffuse_source_positions = _diffuse_source_positions;
@@ -473,9 +472,10 @@ public:
 
       _last_sf = _total_time;
       updated = true;
-    }
+  //  }
 
     updated = updated && get_total_diffuse_luminosity() > 0.0;
+    std::cout<< "TimeDependentHeliumDiffusePhotonSourceDistribution::update() called, total diffuse luminosity = " << get_total_diffuse_luminosity() << std::endl;
     return updated;
     
     #else 
@@ -513,9 +513,11 @@ public:
       RestartReader &restart_reader,
       const RecombinationRates &recombination_rates,
       const CrossSections &cross_sections,
+      const Abundances &abundances,
       Log *log = nullptr)
       : _recombination_rates(recombination_rates),
         _cross_sections(cross_sections),
+        _abundances(abundances),
         _HeLyc_spectrum(cross_sections),
         _He2pc_spectrum(),
         _HLyc_spectrum(cross_sections),

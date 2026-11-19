@@ -280,7 +280,7 @@ public:
     _total_time += actual_timestep;
     bool updated = false;
 
-    if (_total_time - _last_sf >= _update_interval) {
+  //  if (_total_time - _last_sf >= _update_interval) {
       const double delta_time = _total_time - _last_sf;
 
       _total_diffuse_luminosity = 0.0;
@@ -318,41 +318,47 @@ public:
         for (size_t this_igrid = 0; this_igrid < num_subgrids; ++this_igrid) {
           HydroDensitySubGrid &subgrid = *grid_creator->get_subgrid(this_igrid);
           
-          for (auto it = subgrid.hydro_begin(); it != subgrid.hydro_end(); ++it) {
-            const double neutral_fraction =
-                it.get_ionization_variables().get_ionic_fraction(ION_H_n);
+          for (auto it = subgrid.begin(); it != subgrid.end(); ++it) {
+          
+
+            const double ionic_fraction_squared = it.get_ionization_variables().get_squared_ionized_fraction(ION_H_n); // (x_H+)^2
             
-            if (neutral_fraction >= 1.0) continue; 
+            if (ionic_fraction_squared <= 0.0) continue;
 
-            const double ionic_fraction = 1.0 - neutral_fraction;
             const double temperature = it.get_ionization_variables().get_temperature();
-            const double number_density = it.get_ionization_variables().get_number_density();
-
-            const double n_e = number_density * ionic_fraction;
-            const double n_Hp = number_density * ionic_fraction; 
+            const double number_density = it.get_ionization_variables().get_number_density(); 
+            const double number_density_squared = number_density * number_density;
 
            // const double alphaH = _recombination_rates.get_recombination_rate(ION_H_n, temperature);
 
            //------------------------------------------------------
            // Find the recombination rate for H I Lyman Continuum 
            // -----------------------------------------------------
-           // Wood, Mathis & Ercolano (2004), sections 3.3 and 7
-           // Equation 24
-            const double T4 = temperature * 1.e-4;
-            const double alpha_1_H = 1.e-6 * 1.58e-13 * std::pow(T4, -0.53); // convert from cm^-3 s^-1 to m^-3 s^-1
+
+            /// Hydrogen: Hui & Gnedin (1997) Case A and Case B (valid 1 K < T < 10^9 K)
+            const double T_TR_H = 157807.0; // ionization threshold for H I in K
+            const double lambda_H = 2.0 * T_TR_H / temperature;
+            const double alphaA_H =
+                1.269e-13 * std::pow(lambda_H, 1.503) *
+                std::pow(1.0 + std::pow(lambda_H / 0.522, 0.470), -1.923);
+            const double alphaB_H =
+                2.753e-14 * std::pow(lambda_H, 1.5) *
+                std::pow(1.0 + std::pow(lambda_H / 2.740, 0.407), -2.242);
+
+            const double alpha_1_H = std::max(0.0, alphaA_H - alphaB_H) * 1.e-6;
+
             const double cell_volume = it.get_volume();
 
            // const double P_LyC = it.get_ionization_variables().get_reemission_probability(REEMISSIONPROBABILITY_HYDROGEN);
 
-            const double diffuse_photon_rate = n_e * n_Hp * alpha_1_H * cell_volume; 
+            const double diffuse_photon_rate = ionic_fraction_squared * number_density_squared * alpha_1_H * cell_volume; 
             const double number_of_diffuse_photons = diffuse_photon_rate * delta_time;
 
    
 
             if (number_of_diffuse_photons < EPSILON_PHOTONS) continue;
 
-            const double photon_frequency = 3.28847e15;// 13.6 eV
-              //    _HLyc_spectrum.get_random_frequency(local_rng, temperature);
+            const double photon_frequency = _HLyc_spectrum.get_random_frequency(local_rng, temperature);
             const CoordinateVector<> cell_position = it.get_cell_midpoint();
 
             local_lums.push_back(diffuse_photon_rate);
@@ -376,7 +382,6 @@ public:
           _total_diffuse_photons += local_total_photons;
         }
       }
-      std::cout<< "Time Dependent Diffuse photon source updated with " << _diffuse_source_positions.size() << " sources, total luminosity: " << _total_diffuse_luminosity << " s^-1, total photons: " << _total_diffuse_photons << std::endl;
 
       _snap_diffuse_source_luminosities = _diffuse_source_luminosities;
       _snap_diffuse_source_positions = _diffuse_source_positions;
@@ -385,7 +390,7 @@ public:
 
       _last_sf = _total_time;
       updated = true;
-    }
+   // }
 
     updated = updated && get_total_diffuse_luminosity() > 0.0;
     return updated;
@@ -395,9 +400,6 @@ public:
 
 
   
-
-
-
 
 
 // --------------------------------------
