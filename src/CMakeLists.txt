@@ -230,6 +230,7 @@ set(LIBSHAREDENGINE_SOURCES
   LineCoolingData.cpp
   MaskedPhotonSourceSpectrum.cpp
   MultiTracker.cpp
+  OptimalRecombinationRates.cpp
   ParameterFile.cpp
   Pegase3PhotonSourceSpectrum.cpp
   PhantomSnapshotDensityFunction.cpp
