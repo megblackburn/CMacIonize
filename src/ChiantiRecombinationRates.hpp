@@ -90,7 +90,7 @@ public:
   ChiantiRecombinationRates(ParameterFile &params)
       : ChiantiRecombinationRates(
         params.get_value< bool >(
-          "DiffuseReemissionHandler:diffuse field", true) ||
+          "DiffuseReemissionHandler:diffuse field", false) ||
         params.get_value< bool >(
       "DiffuseReemissionHandler:time dependent diffuse field",
       false)

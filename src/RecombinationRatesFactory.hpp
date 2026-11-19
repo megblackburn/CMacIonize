@@ -34,6 +34,7 @@
 #include "VernerRecombinationRates.hpp"
 #include "BenjaminRecombinationRates.hpp"
 #include "ChiantiRecombinationRates.hpp"
+#include "OptimalRecombinationRates.hpp"
 
 
 /**
@@ -73,6 +74,8 @@ public:
       return new BenjaminRecombinationRates(params);
     } else if (type == "Chianti") {
       return new ChiantiRecombinationRates(params);
+    } else if (type == "Optimal") {
+      return new OptimalRecombinationRates(params);
     } else {
       cmac_error("Unknown RecombinationRates type: \"%s\"!", type.c_str());
       return nullptr;

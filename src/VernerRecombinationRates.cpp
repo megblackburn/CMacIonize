@@ -42,7 +42,7 @@
 VernerRecombinationRates::VernerRecombinationRates(const bool apply_diffuse_field) : _apply_diffuse_field(apply_diffuse_field) {
   std::ifstream file(VERNERRECOMBINATIONRATESDATALOCATION);
   std::cout << "Setting up recombination rates from Verner" << std::endl;
-  std::cout << "Diffuse field reemission is " << (_apply_diffuse_field ? "enabled" : "disabled") << ", resorting to " << (_apply_diffuse_field ? "case A" : "case B") << std::endl;
+  std::cout << "Diffuse field reemission is " << (_apply_diffuse_field ? "enabled" : "disabled") << ", " << (_apply_diffuse_field ? "case A: Ensure OptimalRecombinationRates are used for H & He for recombination emission consistency. " : "case B: Ensure OptimalRecombinationRates used for H & He to ensure recombination rates are correct.") << std::endl;
   std::cout << "HAS " << NUMBER_OF_IONNAMES << " different ions." << std::endl;
 
   std::string line;
@@ -174,8 +174,10 @@ double VernerRecombinationRates::get_recombination_rate(
 
     if (!_apply_diffuse_field) {
       // in the absence of diffuse field emission need to revert to case B recombination rate -> alpha_A - alpha_1_H
-      const double alpha_1_H = get_hydrogen_ground_state_recombination_rate(temperature);
-      rate -= alpha_1_H;
+      // case B rates come from Hui & Gnedin (1997) and are valid for 1 K < T < 10^9 K
+      const double T_TR = 157807.0; // ionization threshold for hydrogen in K
+      const double lambda = 2 * T_TR / temperature; 
+      rate = 2.753e-14 * std::pow(lambda, 1.5) * std::pow(1. + std::pow(lambda / 2.74, 0.407), -2.242);
     }
     break;
   }
@@ -189,17 +191,25 @@ double VernerRecombinationRates::get_recombination_rate(
     const double T2 = temperature / 4.677e6;
     rate = 9.356e-10 / (std::sqrt(T1) * std::pow(1. + std::sqrt(T1), 0.2108) *
                         std::pow(1. + std::sqrt(T2), 1.7892));
+    if (!_apply_diffuse_field) {
+      // in the absence of diffuse field emission need to revert to case B recombination rate -> alpha_A - alpha_1_He
+      // case B rate for HeI comes from Verner & Ferland (1996) - Benjamin et al. (1999)
+      // He I is not hydrogenic so case B from Benjamin et al. (1999) is more accurate & consistent with the diffuse emission implementation
+      const double alpha_1_He = get_helium_ground_state_recombination_rate(temperature);
+      rate = std::max(0.0, rate - alpha_1_He);
+    }
     break;
   }
 
   case ION_He_p1: {
-    // Verner & Ferland (1996) formula (4) with values from Table 1 (HeII).
-    // Note that we use the first version, which is only valid in the range
-    // [3 K, 10^9 K].
-    const double T1 = temperature / 0.937;
-    const double T2 = temperature / 2.774e6;
-    rate = 1.891e-10 / (std::sqrt(T1) * std::pow(1. + std::sqrt(T1), 0.2476) *
-                        std::pow(1. + std::sqrt(T2), 1.7524));
+    // He II diffuse emission is NOT accounted for and so must resort to case B recombination consistently
+    // He II is hydrogenic so case B is taken from Hui & Gnedin (1997)
+
+    const double T_TR = 631515.0; // ionization threshold for He II in K
+    const double lambda = 2 * T_TR / temperature;
+    rate = 2.0 * 2.753e-14 * std::pow(lambda, 1.5) * std::pow(1. + std::pow(lambda / 2.74, 0.407), -2.242);
+
+    
     break;
   }
 

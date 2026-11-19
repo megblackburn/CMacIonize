@@ -43,7 +43,7 @@
  */
 ChiantiRecombinationRates::ChiantiRecombinationRates(const bool apply_diffuse_field) : _apply_diffuse_field(apply_diffuse_field) {
   std::cout << "Setting up recombination rates from CHIANTI" << std::endl;
-  std::cout << "Diffuse field reemission is " << (_apply_diffuse_field ? "enabled" : "disabled") << ", resorting to " << (_apply_diffuse_field ? "case A" : "case B") << std::endl;
+  std::cout << "Diffuse field reemission is " << (_apply_diffuse_field ? "enabled" : "disabled") << ", " << (_apply_diffuse_field ? "case A: Ensure OptimalRecombinationRates are used for H & He for recombination emission consistency. " : "case B: Ensure OptimalRecombinationRates used for H & He to ensure recombination rates are correct.") << std::endl;
   std::cout << "HAS " << NUMBER_OF_IONNAMES << " different ions." << std::endl;
 
     _recomb_rates.resize(NUMBER_OF_IONNAMES);
@@ -206,12 +206,6 @@ double ChiantiRecombinationRates::get_recombination_rate(
 
   case ION_H_n: {
     rate = get_recombination_rate_chianti(ion,temperature);
-
-    if (!_apply_diffuse_field) {
-      // in the presence of no diffuse field, we must resort to the case B recombination rate -> alpha_A - alpha_1_H
-      double alpha_1_H = get_hydrogen_ground_state_recombination_rate(temperature);
-      rate -= alpha_1_H;
-    }
     break;
   }
 
@@ -222,8 +216,13 @@ double ChiantiRecombinationRates::get_recombination_rate(
   }
 
   case ION_He_p1: {
+    // He II diffuse emission is NOT accounted for and so must resort to case B recombination consistently
+    // He II is hydrogenic so case B is taken from Hui & Gnedin (1997)
+    const double T_TR = 631515.0; // ionization threshold for He II in K
+    const double lambda = 2 * T_TR / temperature;
+    rate = 2.0 * 2.753e-14 * std::pow(lambda, 1.5) * std::pow(1. + std::pow(lambda / 2.74, 0.407), -2.242);
 
-    rate = get_recombination_rate_chianti(ion,temperature);
+    
     break;
   }
 
