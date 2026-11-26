@@ -74,7 +74,7 @@ public:
   void
   calculate_ionization_state(const double jfac, const double hfac,
                              IonizationVariables &ionization_variables, double timestep, bool time_dependent,
-                            bool do_metals) const;
+                            bool do_metals, bool do_time_averaging) const;
 
   /**
    * @brief Update the total luminosity of the sources.
@@ -111,6 +111,12 @@ public:
       const double jHe, const double nH, const double AHe, const double T,
       double &h0, double &he0, double &hep, double gammaH, double gammaHe1, double gammaHe2, double ts);
 
+  
+  static void compute_time_dependent_averaged_hydrogen_helium(
+      const double alphaH, const double alphaHe, const double alphaHe2, const double jH,
+      const double jHe, const double nH, const double AHe, const double T,
+      double &h0, double &he0, double &hep, double &h02, double &he02, double &hep2, double gammaH, double gammaHe1, double gammaHe2, double ts);
+
   static double compute_ionization_state_hydrogen(const double alphaH,
                                                   const double jH,
                                                   const double nH,
@@ -126,6 +132,12 @@ public:
                                                   const double old_xn,
                                                   double ts);
 
+  static std::pair<double, double> compute_time_averaged_hydrogen(const double alphaH,
+                                                  const double jH,
+                                                  const double nH,
+                                                  const double gammaH,
+                                                  const double old_xn,
+                                                  double ts);                                                
   /**
    * @brief Functor used to calculate the ionization state of a single cell.
    */
@@ -171,7 +183,7 @@ public:
       _calculator.calculate_ionization_state(_jfac / cell.get_volume(),
                                              _hfac / cell.get_volume(),
                                              cell.get_ionization_variables(),_timestep, 
-                                             false, true);
+                                             false, true, false);
     }
   };
   template<typename GridType>
@@ -180,7 +192,7 @@ public:
                              std::pair< cellsize_t, cellsize_t > &block, double timestep) const;
   template<typename SubGridType>
   void calculate_ionization_state(const double totweight,
-                                  SubGridType &subgrid, double timestep, bool time_dependent, bool do_metals) const;
+                                  SubGridType &subgrid, double timestep, bool time_dependent, bool do_metals, bool do_time_averaging) const;
 };
 
 #endif // IONIZATIONSTATECALCULATOR_HPP

@@ -321,7 +321,70 @@ inline void driver_free(gsl_odeiv2_driver *driver) {
   }
 }
 
+/**
+ * @brief Direct passthrough to the raw GSL driver allocation API.
+ *
+ * Use this only for solvers that intentionally evolve non-fraction state
+ * components and therefore must not be filtered by the SafeGslOde wrapper.
+ */
+inline gsl_odeiv2_driver *raw_driver_alloc_y_new(
+    const gsl_odeiv2_system *system, const gsl_odeiv2_step_type *step_type,
+    const double initial_step, const double epsabs, const double epsrel) {
+  return ::gsl_odeiv2_driver_alloc_y_new(system, step_type, initial_step,
+                                         epsabs, epsrel);
+}
+
+/**
+ * @brief Direct passthrough to the raw GSL driver apply API.
+ */
+inline int raw_driver_apply(gsl_odeiv2_driver *driver, double *time,
+                            const double target_time, double y[]) {
+  return ::gsl_odeiv2_driver_apply(driver, time, target_time, y);
+}
+
+/**
+ * @brief Direct passthrough to the raw GSL driver free API.
+ */
+inline void raw_driver_free(gsl_odeiv2_driver *driver) {
+  ::gsl_odeiv2_driver_free(driver);
+}
+
+inline int raw_driver_apply_cached(
+    const gsl_odeiv2_system *system, const gsl_odeiv2_step_type *step_type,
+    const double initial_step, const double epsabs, const double epsrel,
+    const unsigned long int nmax, double *time, const double target_time,
+    double y[]) {
+  thread_local gsl_odeiv2_driver *cached_driver = nullptr;
+  thread_local size_t cached_dim = 0;
+  thread_local const gsl_odeiv2_step_type *cached_type = nullptr;
+  thread_local double cached_epsabs = -1.0;
+  thread_local double cached_epsrel = -1.0;
+
+  if (cached_driver == nullptr || cached_dim != system->dimension ||
+      cached_type != step_type || cached_epsabs != epsabs ||
+      cached_epsrel != epsrel) {
+    if (cached_driver != nullptr) {
+      ::gsl_odeiv2_driver_free(cached_driver);
+    }
+    cached_driver = ::gsl_odeiv2_driver_alloc_y_new(
+        system, step_type, initial_step, epsabs, epsrel);
+    cached_dim = system->dimension;
+    cached_type = step_type;
+    cached_epsabs = epsabs;
+    cached_epsrel = epsrel;
+  } else {
+    ::gsl_odeiv2_driver_reset(cached_driver);
+    ::gsl_odeiv2_driver_reset_hstart(cached_driver, initial_step);
+  }
+
+  ::gsl_odeiv2_driver_set_nmax(cached_driver, nmax);
+  return ::gsl_odeiv2_driver_apply(cached_driver, time, target_time, y);
+}
+
+
 } // namespace SafeGslOde
+
+
 
 // IonizationStateCalculator.cpp includes its header before including GSL and
 // contains all current CMacIonize ODE-driver calls.  Map those legacy calls to

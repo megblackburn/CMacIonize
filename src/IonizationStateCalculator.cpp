@@ -103,7 +103,7 @@ IonizationStateCalculator::IonizationStateCalculator(
  */
 void IonizationStateCalculator::calculate_ionization_state(
     const double jfac, const double hfac,
-    IonizationVariables &ionization_variables, double timestep, bool time_dependent, bool do_metals) const {
+    IonizationVariables &ionization_variables, double timestep, bool time_dependent, bool do_metals, bool do_time_averaging) const {
 
 
 
@@ -116,6 +116,19 @@ void IonizationStateCalculator::calculate_ionization_state(
   const double jHe = jfac * ionization_variables.get_mean_intensity(ION_He_n);
   //cmac_assert(jHe >= 0.);
 #endif
+
+  double jH_eff = jH;
+  #ifdef HAS_HELIUM
+    double jHe_eff = jHe;
+  #endif
+  double xi_cr = ionization_variables.get_cosmic_ray_ionization_rate();
+  if (xi_cr > 0.) {
+    jH_eff = jH + 1.67 * xi_cr;
+    #ifdef HAS_HELIUM
+        jHe_eff = jHe + 1.1 * xi_cr;
+    #endif
+  }
+  
 
   // normalize the heating integrals (for explicit heating in RHD)
   const double hH = hfac * ionization_variables.get_heating(HEATINGTERM_H);
@@ -150,6 +163,9 @@ void IonizationStateCalculator::calculate_ionization_state(
     double h0 = 0.;
     double he0 = 0.;
     double hep = 0.;
+
+    double h02 = 0.;
+
     if (AHe != 0.) {
       const double alphaHe =
           _recombination_rates.get_recombination_rate(ION_He_n, T);
@@ -161,12 +177,33 @@ void IonizationStateCalculator::calculate_ionization_state(
       h0 = ionization_variables.get_prev_ionic_fraction(ION_H_n);
       he0 = ionization_variables.get_prev_ionic_fraction(ION_He_n);
       hep = ionization_variables.get_prev_ionic_fraction(ION_He_p1);
-      compute_time_dependent_hydrogen_helium(alphaH, alphaHe,alphaHe2, jH, jHe, ntot,
-                                                AHe, T, h0, he0, hep, gammaH, gammaHe1,
-                                                 gammaHe2,timestep);
 
+      double h02 = 0.0;
+      double he02 = 0.0;
+      double hep2 = 0.0;
+
+      const double max_ne_ratio = 1.0 + 2.0 * AHe;
+      if (do_time_averaging) {
+        compute_time_dependent_averaged_hydrogen_helium(alphaH, alphaHe,alphaHe2, jH_eff, jHe_eff, ntot,
+                                                AHe, T, h0, he0, hep, h02, he02, hep2, gammaH, gammaHe1,
+                                                 gammaHe2,timestep);
+        ionization_variables.set_squared_ionized_fraction(ION_H_n, std::min(max_ne_ratio, std::max(h02, 0.0)));
+        ionization_variables.set_squared_ionized_fraction(ION_He_n, std::min(max_ne_ratio, std::max(he02, 0.0)));
+        
       } else {
-      compute_ionization_states_hydrogen_helium(alphaH, alphaHe,alphaHe2, jH, jHe, ntot,
+        compute_time_dependent_hydrogen_helium(alphaH, alphaHe,alphaHe2, jH_eff, jHe_eff, ntot,
+                                                  AHe, T, h0, he0, hep, gammaH, gammaHe1,
+                                                  gammaHe2,timestep);
+          const double h1 = std::max(0.0, 1.0 - h0);
+          const double hepp = std::max(0.0, 1.0 - he0 - hep);
+          const double ne_over_nH = h1 + hep * AHe + 2.0 * hepp * AHe;
+
+          ionization_variables.set_squared_ionized_fraction(ION_H_n, std::min(max_ne_ratio, std::max(h1 * ne_over_nH, 0.0)));
+          ionization_variables.set_squared_ionized_fraction(ION_He_n, std::min(max_ne_ratio, std::max(hep * ne_over_nH, 0.0)));
+
+        }
+      } else {
+      compute_ionization_states_hydrogen_helium(alphaH, alphaHe,alphaHe2, jH_eff, jHe_eff, ntot,
                                                 AHe, T, h0, he0, hep, gammaH, gammaHe1,
                                                  gammaHe2);
       }
@@ -174,17 +211,32 @@ void IonizationStateCalculator::calculate_ionization_state(
 
     } else {
       if (time_dependent) {
-        h0 = compute_time_dependent_hydrogen(alphaH, jH, ntot, gammaH, ionization_variables.get_prev_ionic_fraction(ION_H_n), timestep);
+        if (do_time_averaging) {
+          std::tie(h0, h02) = compute_time_averaged_hydrogen(alphaH, jH_eff, ntot, gammaH, ionization_variables.get_prev_ionic_fraction(ION_H_n), timestep);
+          ionization_variables.set_squared_ionized_fraction(ION_H_n, std::min(1.0, std::max(h02, 0.0)));
+        } else {
+          h0 = compute_time_dependent_hydrogen(alphaH, jH_eff, ntot, gammaH, ionization_variables.get_prev_ionic_fraction(ION_H_n), timestep);
+          double h1 = 1.0 - h0;
+          ionization_variables.set_squared_ionized_fraction(ION_H_n, std::min(1.0, std::max(h1 * h1, 0.0)));
+        }
       } else {
-         h0 = compute_ionization_state_hydrogen(alphaH, jH, ntot, gammaH, ionization_variables.get_prev_ionic_fraction(ION_H_n), timestep);
+         h0 = compute_ionization_state_hydrogen(alphaH, jH_eff, ntot, gammaH, ionization_variables.get_prev_ionic_fraction(ION_H_n), timestep);
       }
     }
 #else
   double h0;
+  double h02;
     if (time_dependent) {
-      h0 = compute_time_dependent_hydrogen(alphaH, jH, ntot, gammaH, ionization_variables.get_prev_ionic_fraction(ION_H_n), timestep);
+        if (do_time_averaging) {
+          std::tie(h0, h02) = compute_time_averaged_hydrogen(alphaH, jH_eff, ntot, gammaH, ionization_variables.get_prev_ionic_fraction(ION_H_n), timestep);
+          ionization_variables.set_squared_ionized_fraction(ION_H_n, std::min(1.0, std::max(h02, 0.0)));
+        } else {
+          h0 = compute_time_dependent_hydrogen(alphaH, jH_eff, ntot, gammaH, ionization_variables.get_prev_ionic_fraction(ION_H_n), timestep);
+          double h1 = 1.0 - h0;
+          ionization_variables.set_squared_ionized_fraction(ION_H_n, std::min(1.0, std::max(h1 * h1, 0.0)));
+        }
     } else {
-      h0 = compute_ionization_state_hydrogen(alphaH, jH, ntot, gammaH, ionization_variables.get_prev_ionic_fraction(ION_H_n), timestep);
+      h0 = compute_ionization_state_hydrogen(alphaH, jH_eff, ntot, gammaH, ionization_variables.get_prev_ionic_fraction(ION_H_n), timestep);
     }
 #endif
 
@@ -666,7 +718,7 @@ void IonizationStateCalculator::calculate_ionization_state(
  */
 template<typename SubGridType>
 void IonizationStateCalculator::calculate_ionization_state(
-    const double totweight, SubGridType &subgrid, double timestep, bool time_dependent, bool do_metals) const {
+    const double totweight, SubGridType &subgrid, double timestep, bool time_dependent, bool do_metals, bool do_time_averaging) const {
 
   
   double jfac;
@@ -712,7 +764,7 @@ void IonizationStateCalculator::calculate_ionization_state(
     }
     calculate_ionization_state(jfac / cell_volume, hfac / cell_volume,
                                cellit.get_ionization_variables(), timestep,
-                               time_dependent, do_metals);
+                               time_dependent, do_metals, do_time_averaging);
   }
 }
 
@@ -1171,6 +1223,110 @@ double IonizationStateCalculator::compute_time_dependent_hydrogen(
   return xn;
 }
 
+int hydrogen_time_avg_ode_system(double t, const double y[], double f[], void *params) {
+  (void)(t); // Avoid unused parameter warning
+
+  // Extract rate coefficients, density, and inverse timestep from params
+  double *coefficients = static_cast<double*>(params);
+  double k_coll = coefficients[0];
+  double k_photo = coefficients[1];
+  double k_rec = coefficients[2];
+  double n_total = coefficients[3];
+  double inv_ts = coefficients[4];
+
+  // Neutral fraction
+  double x = y[0];
+
+  x = std::min(1.0, std::max(x, 1e-14)); // Ensure x is within [1e-14, 1.0] within RK steps
+  // Ionised fraction
+  double x_ion = 1.0 - x;
+
+  // ODE for the neutral fraction x
+  f[0] = -k_coll * x * (1.0 - x) * n_total - k_photo * x +
+         k_rec * (1.0 - x) * (1.0 - x) * n_total;
+
+  // Preventing negative growth for negative values
+  if (y[0] < 1e-14) {
+    f[0] = std::max(f[0], 0.0);
+  }
+  // Preventing positive growth for values greater than 1
+  else if (y[0] > 1.0) {
+    f[0] = std::min(f[0], 0.0);
+  }
+
+  // Second variable accumulates the time-averaged neutral fraction <x_HI>
+  f[1] = std::min(1.0, std::max(x, 1e-14)) * inv_ts;
+
+  // Third variable accumulates <x_HII^2> for diffuse photon emission
+  f[2] = x_ion * x_ion * inv_ts;
+
+  return GSL_SUCCESS;
+}
+
+std::pair<double, double> IonizationStateCalculator::compute_time_averaged_hydrogen(
+    const double alphaH, const double jH, const double nH, const double gammaH,
+    const double old_xn, double ts) {
+
+  const double x_init = std::min(1.0, std::max(old_xn, 1e-14));
+  const double x_ion_init = 1.0 - x_init;
+
+  if (ts <= 0.0) {
+    return {x_init, x_ion_init * x_ion_init};
+  }
+
+  // Evaluate initial derivative at t = 0: if stationary (f0 == 0), skip as no change
+  const double f0_init = -gammaH * x_init * (1.0 - x_init) * nH - jH * x_init +
+                         alphaH * (1.0 - x_init) * (1.0 - x_init) * nH;
+  if (f0_init == 0.0) {
+    return {x_init, x_ion_init * x_ion_init};
+  }
+
+  double coefficients[5] = {gammaH, jH, alphaH, nH, 1.0 / ts};
+  double y[3] = {x_init, 0.0, 0.0};
+  double t = 0.0;
+
+
+  gsl_odeiv2_system sys = {hydrogen_time_avg_ode_system, nullptr, 3, coefficients};
+
+  const double rate_est = jH + (alphaH + gammaH) * nH;
+  const double h_init = (rate_est > 0.0)
+      ? std::min(ts * 1e-4, 0.05 / rate_est)
+      : ts * 1e-4;
+
+  gsl_odeiv2_driver *driver = SafeGslOde::raw_driver_alloc_y_new(
+      &sys, gsl_odeiv2_step_rkf45, std::max(h_init, 1e-15 * ts), 1e-8, 1e-8);
+
+  gsl_odeiv2_driver_set_nmax(driver, 10000);
+
+  int status = SafeGslOde::raw_driver_apply(driver, &t, ts, y);
+  
+  if (status != GSL_SUCCESS) {
+      cmac_warning("Error in solver! xn = %g",y[0]);
+     // xn = 1e-14;
+  }
+
+  double x_avg = y[1];
+  x_avg = std::max(x_avg, 1e-14);
+  x_avg = std::min(x_avg, 1.0);
+
+  double x2_avg = y[2];
+  x2_avg = std::max(x2_avg, 0.0);
+  x2_avg = std::min(x2_avg, 1.0);
+
+  if (x_avg != x_avg) {
+    cmac_warning("Nan avg H0 in solver. Setting 0.999");
+    x_avg = 0.999;
+    x2_avg = 1.e-6;
+  }
+
+  SafeGslOde::raw_driver_free(driver);
+
+  return {x_avg, x2_avg};
+}
+
+
+
+
 int hydrogen_helium_ode_system(double t, const double y[], double f[], void *params) {
     (void)(t); // Avoid unused parameter warning
 
@@ -1300,6 +1456,211 @@ void IonizationStateCalculator::compute_time_dependent_hydrogen_helium(
 
 
 }
+
+int hydrogen_helium_avg_ode_system(double t, const double y[], double f[], void *params) {
+    (void)(t); // Avoid unused parameter warning
+
+    // Extract rate coefficients and total density from params
+    double *coefficients = static_cast<double*>(params);
+    double alphaH = coefficients[0];
+    double alphaHe = coefficients[1];
+    double alphaHe2 = coefficients[2];
+    double jH = coefficients[3];
+    double jHe = coefficients[4];
+    double nH = coefficients[5];
+    double AHe = coefficients[6];
+    double gammaH = coefficients[7];
+    double gammaHe1 = coefficients[8];
+    double gammaHe2 = coefficients[9];
+    double sqrtT = coefficients[10];
+    double alpha_e_2sP = coefficients[11];
+    double inv_ts = coefficients[12];
+
+
+    // safeguard here as SafeGslOde::finish_element() is not used within time averaging solvers
+
+    // Neutral fraction
+    double xh = std::min(1.0, std::max(y[0], 1e-14));
+    double he0 = std::min(1.0, std::max(y[1], 1e-14));
+    double hep = std::min(1.0, std::max(y[2], 1e-14));
+
+    if (he0 + hep > 1.0) { 
+      const double sum = he0 + hep;
+      he0 /= sum;
+      hep /= sum;
+    }
+
+    double hepp = std::max(0., 1-he0-hep);
+
+    // find ionized fractions
+    double xh_ion = 1.0 - xh;
+    double ne_over_nH = xh_ion + hep*AHe + 2.0 * hepp * AHe;
+    double ne = ne_over_nH * nH;
+
+    // OTS approx for He Lyman alpha photon absorption by H
+    // A valid fully ionized state has xh=he0=0. Avoid 0/0 there.
+    double pHots = xh > 0. ? xh / (xh + 77. * std::max(0., he0) / sqrtT) : 0.;
+
+
+    // ODE for the neutral fraction x
+    f[0] = -gammaH*ne*xh - jH*xh + alphaH*(1-xh)*ne - ne*pHots*hep*alpha_e_2sP*AHe;
+    f[1] = -gammaHe1*ne*he0 - jHe*he0 + alphaHe*ne*hep;
+    f[2] = gammaHe1*ne*he0 + jHe*he0 + alphaHe2*ne*hepp - alphaHe*ne*hep - gammaHe2*ne*hep;
+
+    for (int i = 0; i < 3; ++i) {
+    // Preventing negative growth for negative values
+      if (y[i] < 1e-14) {
+          f[i] = std::max(f[i], 0.0);
+      } 
+      // Preventing positive growth for values greater than 1
+      else if (y[i] > 1.0) {
+              f[i] = std::min(f[i], 0.0);
+      }
+    }
+
+    // accumulate the time-averaged neutral fractions for hydrogen & helium
+    f[3] = xh * inv_ts;
+    f[4] = he0 * inv_ts;
+    f[5] = hep * inv_ts;
+
+    // accumulate <x_HII^2> for diffuse photon emission
+
+    f[6] = xh_ion * ne_over_nH * inv_ts;
+    f[7] = hep * ne_over_nH * inv_ts;
+    f[8] = hepp * ne_over_nH * inv_ts;
+
+    return GSL_SUCCESS;
+}
+
+
+void IonizationStateCalculator::compute_time_dependent_averaged_hydrogen_helium(
+    const double alphaH, const double alphaHe, const double alphaHe2, const double jH,
+    const double jHe, const double nH, const double AHe, const double T,
+    double &h0, double &he0, double &hep, double &h02, double &he02, double &hep2,
+    const double gammaH, const double gammaHe1,
+    const double gammaHe2, double ts) {
+
+  // McCallum et al. (2024b)
+  // Equations 1-3
+
+  // safeguard here as SafeGslOde::finish_element() is not used within time averaging solvers
+  double xh_init = std::min(1.0, std::max(h0, 0.));
+  double he0_init = std::min(1.0, std::max(he0, 0.));
+  double hep_init = std::min(1.0, std::max(hep, 0.));
+
+  if (he0_init + hep_init > 1.0) { 
+    const double sum = he0_init + hep_init;
+    he0_init /= sum;
+    hep_init /= sum;
+  }
+
+  double hepp_init = std::max(0., 1-he0_init-hep_init);
+  double xh_ion_init = 1.0 - xh_init;
+  double ne_over_nH_init = xh_ion_init + hep_init*AHe + 2.0 * hepp_init * AHe;
+
+  if (ts <= 0.0) {
+    h0 = xh_init;
+    he0 = he0_init;
+    hep = hep_init;
+    h02 = xh_ion_init * ne_over_nH_init;
+    he02 = hep_init * ne_over_nH_init;
+    hep2 = hepp_init * ne_over_nH_init;
+    return;
+  }
+  
+  // Wood, Mathis & Ercolano (2004), sections 3.3 and 7
+  // Equation 25
+  double alpha_e_2sP = 4.17e-20 * std::pow(T * 1.e-4, -0.861);
+  double sqrtT = std::sqrt(T);
+
+  const double ne_init = ne_over_nH_init * nH;
+  const double PHots_init = xh_init > 0. ? xh_init / (xh_init + 77. * std::max(0., he0_init) / sqrtT) : 0.;
+
+  const double f0_init = -gammaH*ne_init*xh_init - jH*xh_init + alphaH*(1-xh_init)*ne_init - ne_init*PHots_init*hep_init*alpha_e_2sP*AHe;
+  const double f1_init = -gammaHe1*ne_init*he0_init - jHe*he0_init + alphaHe*ne_init*hep_init;
+  const double f2_init = gammaHe1*ne_init*he0_init + jHe*he0_init + alphaHe2*ne_init*hepp_init - alphaHe*ne_init*hep_init - gammaHe2*ne_init*hep_init;  
+
+
+  if (f0_init == 0.0 && f1_init == 0.0 && f2_init == 0.0) {
+    h0 = xh_init;
+    he0 = he0_init;
+    hep = hep_init;
+    h02 = xh_ion_init * ne_over_nH_init;
+    he02 = hep_init * ne_over_nH_init;
+    hep2 = hepp_init * ne_over_nH_init;
+    return;
+  }
+
+
+  double coefficients[13] = {alphaH, alphaHe, alphaHe2, jH, jHe, nH, AHe, gammaH, gammaHe1, gammaHe2, 
+              sqrtT,alpha_e_2sP, 1./ts};
+
+  double y[9] = {xh_init, he0_init, hep_init, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+
+  double t = 0.0;
+
+  gsl_odeiv2_system sys = {hydrogen_helium_avg_ode_system, nullptr, 9, coefficients};
+
+  // set limits on ODE solver
+
+  const double rate_est = std::max(jH + (alphaH + gammaH) * nH, jHe + (alphaHe + alphaHe2 + gammaHe1 + gammaHe2) * nH);
+  const double h_init = (rate_est > 0.0)
+      ? std::min(ts * 1e-4, 0.05 / rate_est)
+      : ts * 1e-4;
+
+
+  int status = SafeGslOde::raw_driver_apply_cached(
+      &sys, gsl_odeiv2_step_rkf45, std::max(h_init, 1e-15 * ts),
+      1e-8, 1.e-8, 10000, &t, ts, y);
+
+  if (status != GSL_SUCCESS) {
+    std::cout << h0 << " " << he0 << " " << hep << std::endl;
+    std::cout << alphaH << " " << alphaHe << " " << alphaHe2 << " " << jH << " " << jHe << " "
+              << gammaH << " " << gammaHe1 << " " << gammaHe2 << std::endl;
+    std::cout << nH << " " << AHe << " " << T << std::endl;
+    cmac_error("Error in solver!");
+  }
+
+
+
+
+  h0 = std::min(std::max(y[3], 1e-14), 1.0);
+  he0 = std::min(std::max(y[4], 1e-14), 1.0);
+  hep = std::min(std::max(y[5], 1e-14), 1.0);
+
+
+  if (he0 + hep > 1.0) { 
+    const double sum = he0 + hep;
+    he0 /= sum;
+    hep /= sum;
+  }
+
+  const double max_ne_ratio = 1.0 + 2.0 * AHe;
+  h02 = std::min(std::max(y[6], 0.0), max_ne_ratio);
+  he02 = std::min(std::max(y[7], 0.0), max_ne_ratio);
+  hep2 = std::min(std::max(y[8], 0.0), max_ne_ratio);
+
+
+  if (h0 != h0) {
+    cmac_warning("Nan H0 in solver. Setting 0.999");
+    h0 = 0.999;
+    h02 = 1.e-6;
+  }
+  if (he0 != he0) {
+    cmac_warning("Nan He0 in solver. Setting 0.999");
+    he0 = 0.999;
+    he02 = 1.e-6;
+  }
+  if (hep != hep) {
+    cmac_warning("Nan Hep in solver. Setting 0.001");
+    hep = 0.001;
+    hep2 = 0.0;
+  }
+
+
+}
+
+
 
 struct ODEParams {
     // At most four explicitly evolved metal stages. Avoid allocating nested
@@ -1714,5 +2075,5 @@ void IonizationStateCalculator::compute_time_dependent_metals(
     
   }
 template void IonizationStateCalculator::calculate_ionization_state<DensityGrid>(double, DensityGrid&, std::pair<unsigned long, unsigned long>&, double) const;
-template void IonizationStateCalculator::calculate_ionization_state<DensitySubGrid>(double, DensitySubGrid&, double, bool, bool) const;
-template void IonizationStateCalculator::calculate_ionization_state<HydroDensitySubGrid>(double, HydroDensitySubGrid&, double, bool, bool) const;
+template void IonizationStateCalculator::calculate_ionization_state<DensitySubGrid>(double, DensitySubGrid&, double, bool, bool, bool) const;
+template void IonizationStateCalculator::calculate_ionization_state<HydroDensitySubGrid>(double, HydroDensitySubGrid&, double, bool, bool, bool) const;

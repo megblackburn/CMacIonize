@@ -91,6 +91,8 @@ private:
   /*! @brief Temperature (in K). */
   double _temperature;
 
+  double _cosmic_ray_ionization_rate = 0.;
+
   double _dust_density;
 
  // double _fraction_silicon;
@@ -103,7 +105,17 @@ private:
 
   double _prev_ionic_fractions[NUMBER_OF_IONNAMES];
 
+  double _prev_temperature;
+
   double _delta_ionic_fractions[NUMBER_OF_IONNAMES];
+
+  double _time_averaged_squared_ionized_fractions[NUMBER_OF_IONNAMES];
+
+
+
+
+
+
 
   /*! @brief Mean intensity integrals of ionizing radiation (without
    *  normalization factor, in m^3). */
@@ -125,6 +137,11 @@ private:
 
   /*! @brief FUV field heating factor J s^-1*/
   double _FUV_heating_rate = 0.;
+
+  /*! @brief FUV field strength (G0) */
+  double _FUV_field_strength = 0.;
+
+
 
   AtomicValue<uint_fast32_t> _dust_abs;
   AtomicValue<uint_fast32_t> _gas_abs;
@@ -158,14 +175,16 @@ public:
    * @brief (Empty) constructor.
    */
   inline IonizationVariables()
-      : _number_density(0.), _temperature(0.), _cosmic_ray_factor(-1.), _dust_abs(0),
+      : _number_density(0.), _temperature(0.),  _prev_temperature(0.), _cosmic_ray_factor(-1.),   _FUV_heating_rate(0.), _FUV_field_strength(0.), _dust_abs(0),
        _gas_abs(0), _tracker(nullptr) {
         _dust_density = 0.0;
+        _cosmic_ray_ionization_rate = 0.0;
     for (int_fast32_t i = 0; i < NUMBER_OF_IONNAMES; ++i) {
       _ionic_fractions[i] = 0.;
       _mean_intensity[i] = 0.;
       _prev_ionic_fractions[i] = 0;
       _delta_ionic_fractions[i] = 0.;
+      _time_averaged_squared_ionized_fractions[i] = 0.;
     }
     for (int_fast32_t i = 0; i < NUMBER_OF_REEMISSIONPROBABILITIES; ++i) {
       _reemission_probabilities[i] = 0.;
@@ -209,8 +228,12 @@ public:
     // single variables
     _number_density = other._number_density;
     _dust_density = other._dust_density;
+    _cosmic_ray_ionization_rate = other._cosmic_ray_ionization_rate;
   //  _fraction_silicon = other._fraction_silicon;
     _temperature = other._temperature;
+    _prev_temperature = other._prev_temperature;
+    _FUV_heating_rate = other._FUV_heating_rate;
+    _FUV_field_strength = other._FUV_field_strength;
     _cosmic_ray_factor = other._cosmic_ray_factor;
     _dust_abs.set(other._dust_abs.value());
     _gas_abs.set(other._gas_abs.value());
@@ -225,6 +248,11 @@ public:
       _prev_ionic_fractions[i] =
           prune_ionic_fraction(other._prev_ionic_fractions[i]);
       _delta_ionic_fractions[i] = other._delta_ionic_fractions[i];
+      _time_averaged_squared_ionized_fractions[i] =
+        other._time_averaged_squared_ionized_fractions[i];
+
+    
+
 #ifdef DO_OUTPUT_COOLING
       _cooling[i] = other._cooling[i];
 #endif
@@ -254,6 +282,8 @@ public:
           prune_ionic_fraction(other._prev_ionic_fractions[i]);
     }
     _temperature = other._temperature;
+    _prev_temperature = other._prev_temperature;
+
   }
 
   inline void copy_previous_fractions() {
@@ -343,6 +373,22 @@ public:
     _temperature = temperature;
   }
 
+    /**
+   * @brief Get the temperature.
+   *
+   * @return Temperature (in K).
+   */
+  inline double get_cosmic_ray_ionization_rate() const { return _cosmic_ray_ionization_rate; }
+
+  /**
+   * @brief Set the temperature.
+   *
+   * @param temperature New temperature (in K).
+   */
+  inline void set_cosmic_ray_ionization_rate(const double cosmic_ray_ionization_rate) {
+    _cosmic_ray_ionization_rate = cosmic_ray_ionization_rate;
+  }
+
   /**
    * @brief Get the FUV field heating rate.
    *
@@ -359,6 +405,21 @@ public:
     _FUV_heating_rate = FUV_heating_rate;
   }
 
+    /**
+   * @brief Get the FUV field strength.
+   *
+   * @return FUV field strength (in G0).
+   */
+  inline double get_FUV_field_strength() const { return _FUV_field_strength; }
+
+  /**
+   * @brief Set the FUV field strength.
+   *
+   * @param FUV_field_strength New FUV field strength (in G0).
+   */
+  inline void set_FUV_field_strength(const double FUV_field_strength) {
+    _FUV_field_strength = FUV_field_strength;
+  }
 
 
   /**
@@ -375,6 +436,16 @@ public:
     inline double get_prev_ionic_fraction(const int_fast32_t ion) const {
     return prune_ionic_fraction(_prev_ionic_fractions[ion]);
   }
+
+    inline double get_prev_temperature() const {
+      return _prev_temperature;
+    }
+
+  inline double get_squared_ionized_fraction(const int_fast32_t ion) const {
+    return prune_ionic_fraction(_time_averaged_squared_ionized_fractions[ion]);
+  }
+
+
 
   /**
    * @brief Set the ionic fraction of the ion with the given name.
@@ -393,6 +464,10 @@ public:
     _prev_ionic_fractions[ion] = prune_ionic_fraction(ionic_fraction);
   }
 
+    inline void set_prev_temperature(const double temperature) {
+    _prev_temperature = temperature;
+    }
+
   inline double get_delta_ionic_fraction(const int_fast32_t ion) const {
     return _delta_ionic_fractions[ion];
   }
@@ -410,6 +485,14 @@ public:
       _delta_ionic_fractions[i] = 0.;
     }
   }
+
+  inline void set_squared_ionized_fraction(const int_fast32_t ion,
+                                 const double time_averaged_ionized_fraction_squared) {
+    _time_averaged_squared_ionized_fractions[ion] = prune_ionic_fraction(time_averaged_ionized_fraction_squared);
+  }
+
+
+
 
   /**
    * @brief Get the mean intensity integral of the ion with the given name.
