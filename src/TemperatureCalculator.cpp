@@ -33,7 +33,7 @@
 #include "DensitySubGrid.hpp"
 #include "HydroDensitySubGrid.hpp"
 #include "DensityValues.hpp"
-#include "DeRijckeRadiativeCooling.hpp"
+#include "RadiativeCoolingHandler.hpp"
 #include "IonizationStateCalculator.hpp"
 #include "LineCoolingData.hpp"
 #include "PhysicalConstants.hpp"
@@ -81,7 +81,7 @@ TemperatureCalculator::TemperatureCalculator(
     const RecombinationRates &recombination_rates,
     const ChargeTransferRates &charge_transfer_rates,
     const CollisionalRates &collisional_rates,
-    const DeRijckeRadiativeCooling* radiative_cooling, Log *log)
+    const RadiativeCoolingHandler *radiative_cooling, Log *log)
     : _luminosity(luminosity), _abundances(abundances), _pahfac(pahfac),
       _crfac(crfac), _crlim(crlim), _crscale(crscale),
       _line_cooling_data(line_cooling_data),
@@ -147,7 +147,7 @@ TemperatureCalculator::TemperatureCalculator(
     const RecombinationRates &recombination_rates,
     const ChargeTransferRates &charge_transfer_rates,
     const CollisionalRates &collisional_rates,
-    const DeRijckeRadiativeCooling* radiative_cooling,
+    const RadiativeCoolingHandler *radiative_cooling,
     ParameterFile &params,
     Log *log)
     : TemperatureCalculator(
@@ -230,7 +230,7 @@ void TemperatureCalculator::compute_cooling_and_heating_balance(
     const RecombinationRates &recombination_rates,
     const ChargeTransferRates &charge_transfer_rates,
     const CollisionalRates &collisional_rates,
-    const DeRijckeRadiativeCooling* radiative_cooling) {
+    const RadiativeCoolingHandler *radiative_cooling) {
 
   /// step 0: initialize some variables
 
@@ -519,7 +519,11 @@ void TemperatureCalculator::compute_cooling_and_heating_balance(
 #endif
   loss += Lhp + Lhep;
   } else {
-    loss = radiative_cooling->get_cooling_rate(T) * n * n;
+    if (radiative_cooling->is_metal_only()) {
+      loss = radiative_cooling->get_cooling_rate(T) * n * ne;
+    } else {
+      loss = radiative_cooling->get_cooling_rate(T) * n * n;
+    }
   }
 
   // make sure losses are losses and gains are gains
@@ -763,39 +767,45 @@ void TemperatureCalculator::calculate_temperature(
  //   j[ion] = jfac * ionization_variables.get_mean_intensity(ion);
  // }
 
-  double j[NUMBER_OF_IONNAMES];
-  
+  const double j[13] = {
 #ifdef HAS_CARBON
-  j[ION_C_p1]  = jfac * ionization_variables.get_mean_intensity(ION_C_p1);
-  j[ION_C_p2]  = jfac * ionization_variables.get_mean_intensity(ION_C_p2);
+      jfac * ionization_variables.get_mean_intensity(ION_C_p1),
+      jfac * ionization_variables.get_mean_intensity(ION_C_p2),
+#else
+      0., 0.,
 #endif
-
 #ifdef HAS_NITROGEN
-  j[ION_N_n]   = jfac * ionization_variables.get_mean_intensity(ION_N_n);
-  j[ION_N_p1]  = jfac * ionization_variables.get_mean_intensity(ION_N_p1);
-  j[ION_N_p2]  = jfac * ionization_variables.get_mean_intensity(ION_N_p2);
+      jfac * ionization_variables.get_mean_intensity(ION_N_n),
+      jfac * ionization_variables.get_mean_intensity(ION_N_p1),
+      jfac * ionization_variables.get_mean_intensity(ION_N_p2),
+#else
+      0., 0., 0.,
 #endif
-
 #ifdef HAS_OXYGEN
-  j[ION_O_n]   = jfac * ionization_variables.get_mean_intensity(ION_O_n);
-  j[ION_O_p1]  = jfac * ionization_variables.get_mean_intensity(ION_O_p1);
+      jfac * ionization_variables.get_mean_intensity(ION_O_n),
+      jfac * ionization_variables.get_mean_intensity(ION_O_p1),
+#else
+      0., 0.,
 #endif
-
 #ifdef HAS_NEON
-  j[ION_Ne_n]  = jfac * ionization_variables.get_mean_intensity(ION_Ne_n);
-  j[ION_Ne_p1] = jfac * ionization_variables.get_mean_intensity(ION_Ne_p1);
+      jfac * ionization_variables.get_mean_intensity(ION_Ne_n),
+      jfac * ionization_variables.get_mean_intensity(ION_Ne_p1),
+#else
+      0., 0.,
 #endif
-
 #ifdef HAS_SULPHUR
-  j[ION_S_p1]  = jfac * ionization_variables.get_mean_intensity(ION_S_p1);
-  j[ION_S_p2]  = jfac * ionization_variables.get_mean_intensity(ION_S_p2);
-  j[ION_S_p3]  = jfac * ionization_variables.get_mean_intensity(ION_S_p3);
+      jfac * ionization_variables.get_mean_intensity(ION_S_p1),
+      jfac * ionization_variables.get_mean_intensity(ION_S_p2),
+      jfac * ionization_variables.get_mean_intensity(ION_S_p3),
+#else
+      0., 0., 0.,
 #endif
-
 #ifdef HAS_MAGNESIUM
-  j[ION_Mg_p1] = jfac * ionization_variables.get_mean_intensity(ION_Mg_p1);
+      jfac * ionization_variables.get_mean_intensity(ION_Mg_p1)
+#else
+      0.
 #endif
-
+  };
   // normalize the heating integrals
   double h[NUMBER_OF_HEATINGTERMS];
   for (int_fast32_t heating_term = 0; heating_term < NUMBER_OF_HEATINGTERMS;
@@ -936,15 +946,9 @@ void TemperatureCalculator::calculate_temperature(
   T0 = std::min(30000., T0);
 
   // update the ionic fractions and temperature
-  double temp_before = ionization_variables.get_temperature();
-  
+    
   ionization_variables.set_temperature(T0);
 
-  double temp_after = ionization_variables.get_temperature();
-
-  if (temp_before > temp_after){
-    std::cout << "Warning: Temperature has cooled within radiation step. T_before: " << temp_before << ", T_after: " << temp_after << std::endl;
-  }
 
   
 
@@ -1036,7 +1040,7 @@ void TemperatureCalculator::calculate_temperature(
 #ifdef HAS_HELIUM
   ionization_variables.set_mean_intensity(ION_He_n, jHe);
 #endif
-  for (int_fast32_t ion = 0; ion < NUMBER_OF_IONNAMES; ++ion) {
+  for (int_fast32_t ion = 0; ion < 13; ++ion) {
     ionization_variables.set_mean_intensity(ion, j[ion]);
   }
 #endif
@@ -1099,7 +1103,7 @@ void TemperatureCalculator::calculate_temperature(
  template <typename SubGridType>
 void TemperatureCalculator::calculate_temperature(
     const uint_fast32_t loop, const double totweight,
-    SubGridType &subgrid, double timestep, bool time_dependent, bool do_metals) const {
+    SubGridType &subgrid, double timestep, bool time_dependent, bool do_metals, bool do_time_averaging) const {
 
   if (_do_temperature_computation && loop > _minimum_iteration_number) {
     // get the normalization factors for the ionizing intensity and heating
@@ -1116,12 +1120,12 @@ void TemperatureCalculator::calculate_temperature(
           hfac / cellit.get_volume(), cellit.get_cell_midpoint(), timestep);
     }
   } else {
-    _ionization_state_calculator.calculate_ionization_state(totweight, subgrid, timestep, time_dependent, do_metals);
+    _ionization_state_calculator.calculate_ionization_state(totweight, subgrid, timestep, time_dependent, do_metals, do_time_averaging);
   }
 
 
 }
 
 template void TemperatureCalculator::calculate_temperature<DensityGrid>(unsigned long, double, DensityGrid&, std::pair<unsigned long, unsigned long>&, double) const;
-template void TemperatureCalculator::calculate_temperature<DensitySubGrid>(unsigned long, double, DensitySubGrid&, double, bool, bool) const;
-template void TemperatureCalculator::calculate_temperature<HydroDensitySubGrid>(unsigned long, double, HydroDensitySubGrid&, double, bool, bool) const;
+template void TemperatureCalculator::calculate_temperature<DensitySubGrid>(unsigned long, double, DensitySubGrid&, double, bool, bool, bool) const;
+template void TemperatureCalculator::calculate_temperature<HydroDensitySubGrid>(unsigned long, double, HydroDensitySubGrid&, double, bool, bool, bool) const;

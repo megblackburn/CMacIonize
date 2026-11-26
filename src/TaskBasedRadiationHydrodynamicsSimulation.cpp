@@ -26,6 +26,7 @@
 
 #include "TaskBasedRadiationHydrodynamicsSimulation.hpp"
 #include "TaskBasedRadiationRestart.hpp"
+#include "Abundances.hpp"
 #include "AlveliusTurbulenceForcing.hpp"
 #include "BarnesHutTree.hpp"
 #include "ChargeTransferRates.hpp"
@@ -34,7 +35,6 @@
 #include "CommandLineParser.hpp"
 #include "ContinuousPhotonSourceFactory.hpp"
 #include "CrossSectionsFactory.hpp"
-#include "DeRijckeRadiativeCooling.hpp"
 #include "DensityFunctionFactory.hpp"
 #include "DensityGridWriterFactory.hpp"
 #include "DiffuseReemissionHandlerFactory.hpp"
@@ -61,6 +61,7 @@
 #include "PhotonTraversalTaskContext.hpp"
 #include "PhotonTraversalThreadContext.hpp"
 #include "PrematureLaunchTaskContext.hpp"
+#include "RadiativeCoolingHandlerFactory.hpp"
 #include "RecombinationRatesFactory.hpp"
 #include "RestartManager.hpp"
 #include "Scheduler.hpp"
@@ -74,7 +75,7 @@
 #include "TimeLogger.hpp"
 
 #include <memory>
-
+#include <omp.h>
 #include <gsl/gsl_sf_expint.h>
 
 // #include"IonizationVariables.hpp" // mgb 11.10.2025
@@ -775,6 +776,9 @@ void TaskBasedRadiationHydrodynamicsSimulation::add_command_line_parameters(
 }
 
 
+// ----------------------------- //
+// ----- HELPFUL FUNCTIONS -----//
+
 auto calculate_E2_fast = [](const double tau) -> double {
     if (tau <= 1.0) {
 
@@ -787,6 +791,7 @@ auto calculate_E2_fast = [](const double tau) -> double {
         return (std::exp(-tau) / tau) * (numerator / denominator);
     }
 };
+
 
 /**
  * @brief Apply the cooling to the given cell over the given time step.
@@ -815,20 +820,22 @@ auto calculate_E2_fast = [](const double tau) -> double {
 
 inline static void get_thermal_gain_loss(double &gain, double &loss,
                               IonizationVariables &ionization_variables,
-                              const double inverse_volume, const bool _do_FUV_heating, const bool _attenuate_FUV_heating, const double fuv_cell_heating_rate,
+                              const double inverse_volume, const bool _do_FUV_heating, const bool _attenuate_FUV_heating, const double fuv_cell_field_strength,
                               LineCoolingData &line_cooling_data,
                               const LineCoolingTable *line_cooling_table,
+                              CollisionalRates &collisional_rates,
                               double abund[LINECOOLINGDATA_NUMELEMENTS], double AHe,
-                              DeRijckeRadiativeCooling* radiative_cooling, bool use_cooling_tables){
+                              const RadiativeCoolingHandler *radiative_cooling, bool use_cooling_tables, bool diffuse_field_present, double j_weight){
 
 
 double temp = ionization_variables.get_temperature();
 double logT = std::log(temp);
 double sqrtT = std::pow(temp,0.5);
-// get heating
 
- // cmac_warning("heating term = %g, number density = %g, inverse volume = %g, ionic fraction H_n = %g ", ionization_variables.get_heating(HEATINGTERM_H), ionization_variables.get_number_density(), inverse_volume, ionization_variables.get_ionic_fraction(ION_H_n));
 
+// ---------------------------------------- //
+// -------------- HEATING -----------------//
+//-----------------------------------------//
  gain = ionization_variables.get_heating(HEATINGTERM_H) *
                         ionization_variables.get_number_density() /
                         inverse_volume *
@@ -860,7 +867,7 @@ double total_neutral_fraction = h0;
     const double nenhep = ne * hep * n * AHe;
     gain += pHots * 1.21765423e-18 * alpha_e_2sP * nenhep/inverse_volume;
 
-    total_neutral_fraction = (h0 * 4.0 * AHe * he0) / (1.0 + 4.0 * AHe);
+    total_neutral_fraction = (h0 + 4.0 * AHe * he0) / (1.0 + 4.0 * AHe);
 #else
     const double ne = n*(1-h0);
     const double nenhep = 0.0;
@@ -871,7 +878,7 @@ const double nenhp = ne*n*(1-h0);
 if (_do_FUV_heating) {
     const double FUV_solar_neighbourhood_heating_rate = 2.e-26 * 1.0e-7; // J s^-1 per H atom  (Koyama & Inutsuka 2002)
     const double metagalactic_heating_rate = 0.0024; //* metagalactic_attenuation;
-    const double FUV_heating_rate = FUV_solar_neighbourhood_heating_rate * total_neutral_fraction * (metagalactic_heating_rate + fuv_cell_heating_rate); // J s^-1 per H atom
+    const double FUV_heating_rate = FUV_solar_neighbourhood_heating_rate * total_neutral_fraction * (metagalactic_heating_rate + fuv_cell_field_strength); // J s^-1 per H atom
     const double volumetric_fuv_heating = FUV_heating_rate * n; // J s^-1 m^-3
 
     const double fuv_cell_heating = volumetric_fuv_heating / inverse_volume;
@@ -881,67 +888,278 @@ if (_do_FUV_heating) {
     ionization_variables.set_FUV_heating_rate(fuv_cell_heating);
    // std::cout<< "Calculated gain from FUV heating!" << std::endl;
 
+    double xi_cr = ionization_variables.get_cosmic_ray_ionization_rate();
 
+    if (xi_cr > 0.0 && h0 > 1.0e-4) {
+      const double x_e = std::min(1.0, ne / std::max(n, 1.0e-12));
+      const double q_CR_eV = 6.5 + 26.3 * std::sqrt(x_e / (x_e + 0.07)); // Draine 2011
+      const double q_CR_J  = q_CR_eV * 1.602176634e-19; // Convert eV to Joules
+      const double heat_CR = xi_cr * q_CR_J * (n * h0); // J s^-1 m^-3
+      gain += heat_CR / inverse_volume;
+    }
   }
-
-
-
-
-
   gain = std::max(gain,0.0);
 
   cmac_assert_message(gain==gain, "gain=%g,T=%g,h0=%g,ne=%g",gain,temp,h0,ne);
 
-  if (!use_cooling_tables && temp < 50000 && temp > 3000) {
-  //get line cooling
-  const double line_cooling = line_cooling_table == nullptr
-                                  ? line_cooling_data.get_cooling(temp, ne, abund)
-                                  : line_cooling_table->get_cooling(temp, ne, abund);
-  loss = line_cooling * n /inverse_volume;
+  //-----------------------------------------//
+  //--------------- COOLING -----------------//
+  //-----------------------------------------//
 
-  cmac_assert_message(loss==loss, "loss=%g,T=%g,h0=%g,ne=%g",loss,temp,h0,ne);
-    //get brehm cooling
-  loss = std::max(loss, 0.0);
-  double c = 5.5 - logT;
-  double gff = 1.1 + 0.34 * std::exp(-c * c / 3.);
-  loss += 1.42e-40 * gff * sqrtT * (nenhp + nenhep)/inverse_volume;
-  //get recomb cooling
-  const double Lhp = 2.85e-40 * nenhp * sqrtT * (5.914 - 0.5 * logT + 0.01184 * std::cbrt(temp));
+
+  auto sigmoid_weight = [](double T, double T_mid, double dT) {
+    const double x = std::max(-40.0, std::min(40.0, (T - T_mid) / dT));
+    return 1.0 / (1.0 + std::exp(-x));
+  };
+
+  // Analytic [C II]  + [O I] fine-structure cooling
+  auto compute_fine_structure_metals = [&]() {
+    const double n_H0 = n * h0; // m^-3
+    const double Z_scale = 1.0;
+
+    // 1. [C II] 
+    const double q_CII_H0 = 8.0e-16 * std::pow(temp / 100.0, 0.07);
+    const double q_CII_e  = 2.8e-13 * std::pow(temp / 100.0, -0.5);
+    const double A_CII    = 2.29e-6;
+    const double E_CII    = 1.259e-21;
+    const double x_Cplus  = 1.4e-4 * Z_scale * h0;
+    const double r_up_CII = (q_CII_H0 * n_H0 + q_CII_e * ne) * 2.0 * std::exp(-91.2 / temp);
+    const double r_dn_CII = (q_CII_H0 * n_H0 + q_CII_e * ne) + A_CII;
+    const double cool_CII = (x_Cplus * n) * E_CII * A_CII * (r_up_CII / (r_up_CII + r_dn_CII));
+
+    // 2. [O I] (collisional excitation of O^0 by H^0)
+    const double L_OI_H0  = 1.2e-37 * std::pow(temp / 100.0, 0.42) * std::exp(-227.7 / temp);
+    const double cool_OI  = Z_scale * n_H0 * L_OI_H0 * n_H0 / (1.0 + n_H0 / 5.0e11);
+
+    return std::max(0.0, (cool_CII + cool_OI) / inverse_volume);
+  };
+
+
+  // Analytic non-equilibrium H & He cooling (bremsstrahlung + recombination + excitation)
+  auto compute_analytic_H_He_cooling = [&]() {
+
+    // Bremsstrahlung: 
+    double c = 5.5 - logT;
+    double gff = 1.1 + 0.34 * std::exp(-c * c / 3.0);
+
+    // Recombination:
+
+    const double lam_H = 315614.0 / temp;
+    double Lhp = 3.435e-43 * nenhp * temp * std::pow(lam_H, 1.970) /
+                 std::pow(1.0 + std::pow(lam_H / 2.250, 0.376), 3.720);
+    if (diffuse_field_present) {
+      Lhp = 1.778e-42 * nenhp * temp * std::pow(lam_H, 1.965) /
+            std::pow(1.0 + std::pow(lam_H / 0.541, 0.502), 2.697);
+    }
+
 #ifdef HAS_HELIUM
-    const double Lhep = 1.55e-39 * nenhep * std::pow(temp, 0.3647);
+    // He+ Recombination:
+    const double hepp = std::max(0.0, 1.0 - he0 - hep);
+    const double nenhepp = ne * hepp * n * AHe;
+    double Lhep = 1.55e-39 * nenhep * std::pow(temp, 0.3647);
+
+    if (diffuse_field_present) {
+      const double T4 = temp * 1.e-4;
+      const double alpha_1_He = 1.54e-13 * std::pow(T4, -0.486) * 1.e-6; // Hummer & Storey (1998) & Benjamin et al 1999
+      const double kB = PhysicalConstants::get_physical_constant(PHYSICALCONSTANT_BOLTZMANN);
+      // 1.04 from beta_1/alpha_1 in Osterbrock & Ferland (2006) Table 3.5 
+      const double E_kin_1s = 1.04 * kB * temp; 
+      Lhep += E_kin_1s * alpha_1_He * nenhep; 
+    }
+
+    // He++ Recombination:
+    // always case B as no recombination emission tracked
+    const double T_hepp = 0.25 * temp;
+    const double Lhepp = 4.0 * 2.85e-40 * nenhepp * std::sqrt(T_hepp) *
+                         (5.914 - 0.5 * std::log(T_hepp) + 0.01184 * std::cbrt(T_hepp));
+
+    // He+ & He0 collisional excitation cooling (Black (1981) & Cen (1992))
+
+    const double lambda_Heplus = 5.54e-30 * std::pow(temp, -0.397) *
+                                 std::exp(-473638.0 / temp) / (1.0 + std::sqrt(temp * 1.e-5));
+     const double lambda_He0 = 9.38e-35 * sqrtT *
+                              std::exp(-285335.0 / temp) / (1.0 + std::sqrt(temp * 1.e-5));
+    const double loss_Hep_coll_ex = lambda_Heplus * ne * (hep * n * AHe);
+    const double loss_He0_coll_ex = lambda_He0 * ne * (he0 * n * AHe);
+
+    double h_he_loss = 1.42e-40 * gff * sqrtT * (nenhp + nenhep + 4.0 * nenhepp) +
+                       Lhp + Lhep + Lhepp + loss_Hep_coll_ex + loss_He0_coll_ex;
 #else
-    const double Lhep = 0.0;
+    double h_he_loss = 1.42e-40 * gff * sqrtT * nenhp + Lhp;
 #endif
-  
-  loss += (Lhp + Lhep)/inverse_volume;
 
-  loss = std::max(loss,0.0);
+    // H I Lyman-alpha collisional excitation cooling (Kim et al. 2023 Eq. 42)
 
- // was commented out from here ... mgb 10.10.2025
-    // if (ionization_variables.get_heating(HEATINGTERM_He) > 0.0 && n > 0.0) {
-    // std::cout << "PHOTO = " << AHe*ionization_variables.get_heating(HEATINGTERM_He) *
-     //                    ionization_variables.get_number_density() /
-     //                    inverse_volume *
-     //                    ionization_variables.get_ionic_fraction(ION_He_n) << std::endl;
-    // std::cout << "Lyman Alpha = " << pHots * 1.21765423e-18 * alpha_e_2sP * nenhep/inverse_volume << std::endl;
-    // std::cout << "Hydrogen photo = " << ionization_variables.get_heating(HEATINGTERM_H) *
-    //                     ionization_variables.get_number_density() /
-  //                       inverse_volume *
- //                        ionization_variables.get_ionic_fraction(ION_H_n) << std::endl;
-//     std::cout << "Lhep  = " << Lhep/inverse_volume << std::endl;
+      const double T4_lya = temp * 1.0e-4;
+      const double k12_lya = 5.31e-14 * (std::pow(T4_lya, 0.15) / (1.0 + std::pow(T4_lya / 5.0, 0.65))) *
+                            std::exp(-11.84 / T4_lya);
+      const double E21_lya = 1.634688e-18; // 10.2 eV in Joules
 
-      // if (gain != gain) {
-        // cmac_error("GAIN IS NAN");
-      // } 
-      // if (loss != loss) {
-    //     cmac_error("Loss in NAN");
-  //     }
-//  } // to here ... mgb 10.10.2025 
+      h_he_loss += E21_lya * k12_lya * ne * (n * h0);
+
+    return std::max(0.0, h_he_loss / inverse_volume);
+  };
+
+  if (!radiative_cooling->is_metal_only()) {
+    // REVERT TO ORIGINAL COOLING
+    // The DeRijcke cooling rates are being used...
+    // These are from a Cloudy model with a metagalactic UV/X-ray background and include H & He in photoionization equilibrium
+
+    if (!use_cooling_tables && temp < 50000 && temp > 3000) {
+      //get explicitly tracked line cooling
+      const double line_cooling = line_cooling_table == nullptr
+                                      ? line_cooling_data.get_cooling(temp, ne, abund)
+                                      : line_cooling_table->get_cooling(temp, ne, abund);
+        loss = line_cooling * n /inverse_volume;
+
+        cmac_assert_message(loss==loss, "loss=%g,T=%g,h0=%g,ne=%g",loss,temp,h0,ne);
+        //get brehm cooling
+        loss = std::max(loss, 0.0);
+        double c = 5.5 - logT;
+        double gff = 1.1 + 0.34 * std::exp(-c * c / 3.);
+        loss += 1.42e-40 * gff * sqrtT * (nenhp + nenhep)/inverse_volume;
+        //get recomb cooling
+        // this recombination cooling is strictly for case B
+        const double Lhp = 2.85e-40 * nenhp * sqrtT * (5.914 - 0.5 * logT + 0.01184 * std::cbrt(temp));
+      #ifdef HAS_HELIUM
+          const double Lhep = 1.55e-39 * nenhep * std::pow(temp, 0.3647);
+      #else
+          const double Lhep = 0.0;
+      #endif
+        
+        loss += (Lhp + Lhep)/inverse_volume;
+
+        loss = std::max(loss,0.0);
+
+      } else {
+        // use the De Rijcke cooling rates
+        loss = radiative_cooling->get_cooling_rate(temp)*n*n/inverse_volume;
+
+    }
+
   } else {
-    loss = radiative_cooling->get_cooling_rate(temp)*n*n/inverse_volume;
+    // The Cloudy cooling rates are being used...
+    // These are from a Cloudy model with no background UV fields and H (& He) contributions not present (if He is not included -> metals + He only)
+    double metal_loss = 0.;
 
-    cmac_assert_message(loss==loss, "loss=%g,T=%g,n=%g",loss,temp,n);
+    if (use_cooling_tables) {
+      // H-only mode (metal ions not tracked):
+      // 1. [C II] 158 um + [O I] 63 um fine-structure cooling (temp <= 3000 K, gated on FUV or CR heating)
+      // 2. Direct LineCoolingData/Table call above 3000 K 
+      // 3. Smooth sigmoid transition into Cloudy CIE table across 20,000 - 35,000 K (Similar to Kim+23 Eq. 40)
+      const double w_cie = sigmoid_weight(temp, 27500.0, 1875.0);
+
+      double cool_low = 0.0;
+      if (w_cie < 0.9999) {
+        double cool_fs = 0.0;
+        if ((_do_FUV_heating || ionization_variables.get_cosmic_ray_ionization_rate() > 0.0) && temp <= 3000.0) {
+          cool_fs = compute_fine_structure_metals();
+        }
+
+        double cool_neb = 0.0;
+        const double x_hp = std::max(0.0, 1.0 - h0);
+        if (temp > 3000.0) {
+          // Approximate the nebular component for metal cooling lines in the warm gas region based on ionization parameter and spectral hardness.
+          // Future plan is to constrain this based on explicitly tracked cooling in benchmark tests.
+
+          double fixed_abund[LINECOOLINGDATA_NUMELEMENTS] = {0.0};
+          const double Z_scale = 0.67; // Use 0.67 for Lexington metallicities, 1.0 for solar
+
+          // use the jH and hH to estimate the ionisation parameter through excess energy
+          const double jH = ionization_variables.get_mean_intensity(ION_H_n) * j_weight;
+          const double hH = ionization_variables.get_heating(HEATINGTERM_H);
+          const double E_0 = 2.178703e-18; // 13.60 eV in Joules
+          const double cross_section_0 = 6.304e-22; // m^2
+          const double c = PhysicalConstants::get_physical_constant(PHYSICALCONSTANT_LIGHTSPEED);
+
+          const double E_excess = (jH > 0.) ? std::max(0.0, hH / jH) : 0.;
+          const double average_H_cross_section = cross_section_0 * std::pow(E_0 / (E_0 + E_excess), 2.8);
+
+          // find the ionization parameter
+          double U_ion = 0.0;
+          if (ne > 0. && average_H_cross_section > 0.) {
+            U_ion = jH / (average_H_cross_section * ne * c);
+          }
+          const double E_excess_eV = E_excess / 1.602176634e-19; // eV
+          // Use energy excess to estimate the hardness of the radiation field
+          // if < 2.5 eV then no ++ ions, if > 6 eV then fully ++ ions
+          const double f_hardness = std::min(1.0, std::max(0.0, (E_excess_eV - 2.5) / 3.5));
+
+          // ++ fraction is capped at 60%.
+          const double f_pp = 0.60 * f_hardness * (U_ion / (U_ion + 3.0e-3));
+          const double f_p  = 1.0 - f_pp;
+
+          fixed_abund[NII]   = f_p  * x_hp * (6.76e-5 * Z_scale);
+          fixed_abund[NIII]  = f_pp * x_hp * (6.76e-5 * Z_scale);
+          fixed_abund[OII]   = f_p  * x_hp * (4.90e-4 * Z_scale);
+          fixed_abund[OIII]  = f_pp * x_hp * (4.90e-4 * Z_scale);
+          fixed_abund[NeII]  = f_p  * x_hp * (8.51e-5 * Z_scale);
+          fixed_abund[NeIII] = f_pp * x_hp * (8.51e-5 * Z_scale);
+          fixed_abund[SII]   = (1.0 - 0.8 * f_pp) * x_hp * (1.32e-5 * Z_scale);
+          fixed_abund[SIII]  = (0.8 * f_pp)       * x_hp * (1.32e-5 * Z_scale);
+
+          const double line_cool = (line_cooling_table == nullptr)
+                                       ? line_cooling_data.get_cooling(temp, ne, fixed_abund)
+                                       : line_cooling_table->get_cooling(temp, ne, fixed_abund);
+          cool_neb = std::max(0.0, line_cool * n / inverse_volume);
+        }
+
+        cool_low = cool_fs + cool_neb;
+      }
+
+      const double cool_high = (w_cie > 0.0001 && radiative_cooling != nullptr)
+          ? std::max(0.0, radiative_cooling->get_cooling_rate(temp) * n * ne / inverse_volume)
+          : 0.0;
+
+      metal_loss = (1.0 - w_cie) * cool_low + w_cie * cool_high;
+
+    } else {
+      // find the metal cooling loss explicitly from the tracked metal lines
+      const double w_cie = sigmoid_weight(temp, 27500., 1875.);
+
+      double cool_fs = 0.0;
+      if ((_do_FUV_heating || ionization_variables.get_cosmic_ray_ionization_rate() > 0.0) && temp <= 3000.0) {
+        cool_fs = compute_fine_structure_metals();
+      }
+      const double cool_line = (temp > 3000.0 && w_cie < 0.9999)
+          ? (line_cooling_table == nullptr
+                 ? line_cooling_data.get_cooling(temp, ne, abund)
+                 : line_cooling_table->get_cooling(temp, ne, abund)) * n / inverse_volume
+          : 0.0;
+      const double cool_cie = (w_cie > 0.0001 && radiative_cooling != nullptr)
+          ? radiative_cooling->get_cooling_rate(temp) * n * ne / inverse_volume
+          : 0.0;
+
+      metal_loss = cool_fs + (1.0 - w_cie) * cool_line + w_cie * cool_cie;
+    }
+
+    // total loss is then the metal cooling + the H & He contribution
+    // H & He are not included in the Cloudy cooling rates as Cloudy assumes Collisional Ionisation Equilibrium 
+    // we evolve H and He in a time-dependent way and thus require (slightly less accurate) first-order approximations for the H & He cooling.
+    loss = metal_loss + compute_analytic_H_He_cooling();
+    
   }
+  cmac_assert_message(loss == loss, "loss=%g,T=%g,h0=%g,ne=%g", loss, temp, h0, ne);
+
+  // Collisional Ionisation Losses
+  // All forms of cooling must also account for the collisional ionisation losses
+
+  const double chi_H_J = 2.178703e-18; // 13.60 eV in Joules
+  const double gammaH  = collisional_rates.get_collisional_rate(ION_H_n, temp); // m^3 s^-1
+  double coll_ion_loss = chi_H_J * ne * (n * h0) * gammaH;
+
+#ifdef HAS_HELIUM
+  const double chi_He0_J = 3.939336e-18; // 24.59 eV in Joules
+  const double chi_He1_J = 8.718604e-18; // 54.42 eV in Joules
+  const double gammaHe1  = collisional_rates.get_collisional_rate(ION_He_n, temp);
+  const double gammaHe2  = collisional_rates.get_collisional_rate(ION_He_p1, temp);
+  coll_ion_loss += chi_He0_J * ne * (n * AHe * he0) * gammaHe1;
+  coll_ion_loss += chi_He1_J * ne * (n * AHe * hep) * gammaHe2;
+#endif
+
+  loss += coll_ion_loss / inverse_volume;
+  loss = std::max(loss, 0.0);
+
 
 }
 
@@ -949,12 +1167,13 @@ inline static void do_explicit_heat_cool(IonizationVariables &ionization_variabl
                               HydroVariables &hydro_variables,
                               const double inverse_volume, const double nH2V,
                               const double total_dt,
-                              DeRijckeRadiativeCooling* radiative_cooling,
+                              const RadiativeCoolingHandler *radiative_cooling,
                               Hydro &hydro, double _cooling_temp_floor,
                               double gamma_minus_one,
                               LineCoolingData &line_cooling_data,
                               const LineCoolingTable *line_cooling_table,
-                              Abundances &abundances, bool use_cooling_tables, const bool _do_FUV_heating, const bool _attenuate_FUV_heating, const double fuv_cell_heating_rate) {
+                              CollisionalRates &collisional_rates,
+                              Abundances &abundances, bool use_cooling_tables, const bool _do_FUV_heating, const bool _attenuate_FUV_heating, const double fuv_cell_field_strength, const bool diffuse_field_present, double j_weight) {
 
 
   double rho = hydro_variables.get_primitives_density();
@@ -978,20 +1197,14 @@ inline static void do_explicit_heat_cool(IonizationVariables &ionization_variabl
   const double mean_molecular_mass = (1.0)/(2.0 - h0);
 #endif
 
-
-
   //double e_factor = rho*2.0*k/(gamma_minus_one*mh*(1.0+xh))/inverse_volume;
 
   double e_factor = k*rho/(mh*gamma_minus_one*mean_molecular_mass)/inverse_volume;
-
-
-
 
 //get cooling 
 
 double abund[LINECOOLINGDATA_NUMELEMENTS] = {};
   
-
 #ifdef HAS_CARBON
   // carbon
     abund[CII] = abundances.get_abundance(ELEMENT_C) *
@@ -1034,8 +1247,6 @@ double abund[LINECOOLINGDATA_NUMELEMENTS] = {};
                  ionization_variables.get_ionic_fraction(ION_S_p3);
 #endif
 
-
-
 double clock = 0.0;
 double max_frac = 0.001;
 const size_t maximum_substeps = 100000;
@@ -1051,9 +1262,7 @@ double temp;
 
 double current_energy;
 
-
 cmac_assert(ionization_variables.get_temperature() > 0.0);
-
 
 while (clock < total_dt) {
   if (++number_of_substeps > maximum_substeps) {
@@ -1062,26 +1271,27 @@ while (clock < total_dt) {
                  ionization_variables.get_temperature());
     break;
   }
-
-  if (++number_of_substeps > maximum_substeps) {
-    cmac_warning("Heating/cooling exceeded %zu substeps at T=%g K.",
-                 maximum_substeps,
-                 ionization_variables.get_temperature());
-    break;
-  }
-
-
   if (ionization_variables.get_temperature() == 0) {
-    cmac_warning("A cell's temperature went to zero in the heating/cooling function! Hopefully not too many of these.")
+    static std::atomic<bool> printed_zero_temp{false};
+    if (!printed_zero_temp.exchange(true)) {
+      std::cerr << "ZERO TEMP: prev_T="
+                << ionization_variables.get_prev_temperature()
+                << " rho=" << rho
+                << " nH=" << ionization_variables.get_number_density()
+                << " e_factor=" << e_factor
+                << " floor=" << _cooling_temp_floor
+                << " substep=" << number_of_substeps
+                << std::endl;
+    }
     break;
 
   }
 
   time_left = total_dt - clock;
 
-  get_thermal_gain_loss(gain, loss, ionization_variables, inverse_volume, _do_FUV_heating, _attenuate_FUV_heating, fuv_cell_heating_rate,
-                              line_cooling_data, line_cooling_table, abund, AHe,
-                              radiative_cooling, use_cooling_tables);
+  get_thermal_gain_loss(gain, loss, ionization_variables, inverse_volume, _do_FUV_heating, _attenuate_FUV_heating, fuv_cell_field_strength,
+                              line_cooling_data, line_cooling_table, collisional_rates, abund, AHe,
+                              radiative_cooling, use_cooling_tables, diffuse_field_present, j_weight);
 
   
   if (!std::isfinite(gain) || !std::isfinite(loss)){
@@ -1101,7 +1311,6 @@ while (clock < total_dt) {
                  current_energy, temp);
     break;
   }
-
 
   tot_dif = gain - loss;
 
@@ -1133,8 +1342,9 @@ while (clock < total_dt) {
     clock = total_dt;
   }
 
-  cmac_assert_message(dE == dE, "dE=%g, T=%g, gain=%g,loss=%g",dE,temp,gain,loss);
-  hydro.update_energy_variables(ionization_variables, hydro_variables, inverse_volume, dE);
+
+    cmac_assert_message(dE == dE, "dE=%g, T=%g, gain=%g,loss=%g",dE,temp,gain,loss);
+    hydro.update_energy_variables(ionization_variables, hydro_variables, inverse_volume, dE);
 
 }
 
@@ -1147,7 +1357,7 @@ inline static void do_cooling(IonizationVariables &ionization_variables,
                               HydroVariables &hydro_variables,
                               const double inverse_volume, const double nH2V,
                               const double total_dt,
-                              DeRijckeRadiativeCooling* radiative_cooling,
+                              const RadiativeCoolingHandler *radiative_cooling,
                               Hydro &hydro, double _cooling_temp_floor,
                               double gamma_minus_one,
                               LineCoolingData &line_cooling_data,
@@ -1546,6 +1756,11 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
   const bool _time_dependent_diffuse_field_flag = params->get_value< bool >(
       "DiffuseReemissionHandler:time dependent diffuse field",
       false);
+  const bool _diffuse_field_flag = params->get_value< bool >(
+    "DiffuseReemissionHandler:diffuse field", false);
+
+  const bool _diffuse_field_present = _diffuse_field_flag || _time_dependent_diffuse_field_flag; 
+
 
   const bool _skip_hydro_step = params->get_value< bool >(
       "TaskBasedRadiationHydrodynamicsSimulation:skip hydro step", false);
@@ -1660,6 +1875,8 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
   const bool _time_dependent_ionization = params->get_value<bool> ( 
     "TaskBasedRadiationHydrodynamicsSimulation:time dependent ionization", false);
 
+
+
   const bool _advect_ionization = params->get_value< bool >(
       "TaskBasedRadiationHydrodynamicsSimulation:advect ionization", false);
   const bool chemistry_every_hydro_step = params->get_value<bool>(
@@ -1754,7 +1971,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     }
   }
 
-  DeRijckeRadiativeCooling *radiative_cooling = nullptr;
+  RadiativeCoolingHandler *radiative_cooling = nullptr;
   std::ofstream *_cooling_file = nullptr;
   std::ofstream * _fuv_heating_file = nullptr; // mgb edit 24.07.2026
   double FUV_radiation_field = 0.0;
@@ -1802,6 +2019,11 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
   );
 
 
+  const bool _include_cosmic_rays = params->get_value< bool >(
+    "TaskBasedRadiationHydrodynamicsSimulation:include cosmic rays", false
+  );
+
+
   const CoordinateVector< int_fast32_t> number_of_cells = params->get_value< CoordinateVector< int_fast32_t > >(
                 "DensityGrid:number of cells", CoordinateVector< int_fast32_t >(64));
 
@@ -1811,7 +2033,10 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
     _cooling_temp_floor = params->get_physical_value< QUANTITY_TEMPERATURE >(
             "TaskBasedRadiationHydrodynamicsSimulation:cooling temperature floor",
             "10 K");
-    radiative_cooling = new DeRijckeRadiativeCooling();
+    radiative_cooling = RadiativeCoolingHandlerFactory::generate(*params, log);
+    if (!radiative_cooling) {
+      cmac_error("Radiative cooling is enabled, but RadiativeCoolingHandler:type returned nullptr.");
+    }
     _cooling_file = new std::ofstream("CoolingProgression.txt", std::ios_base::out | std::ios_base::app); // mgb edit 20.07.2026 - if file exists, it is appended to
     *_cooling_file << "#time (s)\tTotal lost Energy\n";
     _cooling_file->flush();
@@ -1867,6 +2092,8 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         params->get_value< bool >(
             "SupernovaHandler:TIGRESS like injection", true));
   }
+  
+  Abundances abundances(*params, log);
 
   HydrogenDiffusePhotonSourceDistribution *hydrogendiffusesourcedistribution = nullptr;
   HeliumDiffusePhotonSourceDistribution *heliumdiffusesourcedistribution = nullptr;
@@ -1877,14 +2104,14 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           HydrogenDiffusePhotonSourceDistributionFactory::generate(*params, *recombination_rates, *cross_sections, log);
       #ifdef HAS_HELIUM
       heliumdiffusesourcedistribution =
-          HeliumDiffusePhotonSourceDistributionFactory::generate(*params, *recombination_rates, *cross_sections, log);
+          HeliumDiffusePhotonSourceDistributionFactory::generate(*params, *recombination_rates, *cross_sections, abundances, log);
       #endif
     } else {
       hydrogendiffusesourcedistribution =
           HydrogenDiffusePhotonSourceDistributionFactory::restart(*restart_reader, *recombination_rates, *cross_sections, log);
       #ifdef HAS_HELIUM
       heliumdiffusesourcedistribution =
-          HeliumDiffusePhotonSourceDistributionFactory::restart(*restart_reader, *recombination_rates, *cross_sections, log);
+          HeliumDiffusePhotonSourceDistributionFactory::restart(*restart_reader, *recombination_rates, *cross_sections, abundances, log);
       #endif
     }
   } else {
@@ -1928,7 +2155,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                  "ignored.");
   }
 
-  Abundances abundances(*params, log);
+
 
   // set up output
   std::string output_folder =
@@ -1971,52 +2198,10 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
   TemperatureCalculator *temperature_calculator;
 
-  // mgb 24.09.2026 - Addition of diffuse photon field luminosity
+  const bool _time_average_states = params->get_value< bool >(
+      "TaskBasedRadiationHydrodynamicsSimulation:time average states", true);
+
   
-  if (sourcedistribution == nullptr && hydrogendiffusesourcedistribution == nullptr && heliumdiffusesourcedistribution == nullptr) { 
-    // NO DIFFUSE FIELD OR STELLAR FIELD
-
-    std::cout<< "No stellar or diffuse photon sources provided. Temperature will be calculated assuming no photoionization heating." << std::endl;
-
-    temperature_calculator = new TemperatureCalculator(
-        0.0, abundances, line_cooling_data,
-        *recombination_rates, charge_transfer_rates, collisional_rates,radiative_cooling, *params, log);
-
-  } else if (sourcedistribution != nullptr && hydrogendiffusesourcedistribution == nullptr && heliumdiffusesourcedistribution == nullptr) {
-    // NO DIFFUSE FIELD
-
-    std::cout<< "No diffuse photon sources provided. Temperature will be calculated assuming no photoionization heating. "  << std::endl;
-    temperature_calculator = new TemperatureCalculator(
-        sourcedistribution->get_total_luminosity(), abundances, line_cooling_data,
-        *recombination_rates, charge_transfer_rates, collisional_rates,radiative_cooling, *params, log);
-
-  } else if (sourcedistribution == nullptr && (hydrogendiffusesourcedistribution != nullptr || heliumdiffusesourcedistribution != nullptr)) {
-    // NO STELLAR FIELD
-
-    std::cout<< "No stellar photon sources provided. Temperature will be calculated assuming no photoionization heating. " << std::endl;
-    double diffuse_luminosity = hydrogendiffusesourcedistribution->get_total_diffuse_luminosity();
-    #ifdef HAS_HELIUM
-    diffuse_luminosity += heliumdiffusesourcedistribution->get_total_diffuse_luminosity();
-    #endif  
-
-    temperature_calculator = new TemperatureCalculator(
-        diffuse_luminosity, abundances, line_cooling_data,
-        *recombination_rates, charge_transfer_rates, collisional_rates,radiative_cooling, *params, log);
-        
-  } else {
-    // BOTH STELLAR AND DIFFUSE FIELD
-    std::cout<< "Both stellar and diffuse photon sources provided. Temperature will be calculated assuming no photoionization heating. "  << std::endl;
-
-    double diffuse_luminosity = hydrogendiffusesourcedistribution->get_total_diffuse_luminosity();
-    #ifdef HAS_HELIUM
-    diffuse_luminosity += heliumdiffusesourcedistribution->get_total_diffuse_luminosity();
-    #endif  
-
-    temperature_calculator = new TemperatureCalculator(
-        sourcedistribution->get_total_luminosity()+diffuse_luminosity, abundances, line_cooling_data,
-        *recombination_rates, charge_transfer_rates, collisional_rates,radiative_cooling, *params, log);
-
-  }
 
 
 
@@ -2093,6 +2278,70 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
     density_function->free();
     time_logger.end("grid initialization");
+  }
+
+  // mgb 24.09.2026 - Addition of diffuse photon field luminosity
+  
+  if (sourcedistribution == nullptr && hydrogendiffusesourcedistribution == nullptr && heliumdiffusesourcedistribution == nullptr) { 
+    // NO DIFFUSE FIELD OR STELLAR FIELD
+
+    std::cout<< "No stellar or diffuse photon sources provided." << std::endl;
+
+    temperature_calculator = new TemperatureCalculator(
+        0.0, abundances, line_cooling_data,
+        *recombination_rates, charge_transfer_rates, collisional_rates,radiative_cooling, *params, log);
+
+  } else if (sourcedistribution != nullptr && hydrogendiffusesourcedistribution == nullptr && heliumdiffusesourcedistribution == nullptr) {
+    // NO DIFFUSE FIELD
+
+    std::cout<< "No time dependent diffuse photon sources provided."  << std::endl;
+    temperature_calculator = new TemperatureCalculator(
+        sourcedistribution->get_total_luminosity(), abundances, line_cooling_data,
+        *recombination_rates, charge_transfer_rates, collisional_rates,radiative_cooling, *params, log);
+
+  } else if (sourcedistribution == nullptr && (hydrogendiffusesourcedistribution != nullptr || heliumdiffusesourcedistribution != nullptr)) {
+    // NO STELLAR FIELD
+
+    std::cout<< "No stellar photon sources provided." << std::endl;
+    bool hydrogen_diffuse_updated = hydrogendiffusesourcedistribution->update(grid_creator, 0);
+    double diffuse_luminosity = 0.;
+    if (hydrogen_diffuse_updated) {
+      diffuse_luminosity = hydrogendiffusesourcedistribution->get_total_diffuse_luminosity();
+    }
+    #ifdef HAS_HELIUM
+    bool helium_diffuse_updated = heliumdiffusesourcedistribution->update(grid_creator, 0);
+    if (helium_diffuse_updated) {
+       diffuse_luminosity += heliumdiffusesourcedistribution->get_total_diffuse_luminosity();
+    }
+    #endif  
+
+    temperature_calculator = new TemperatureCalculator(
+        diffuse_luminosity, abundances, line_cooling_data,
+        *recombination_rates, charge_transfer_rates, collisional_rates,radiative_cooling, *params, log);
+        
+  } else {
+    // BOTH STELLAR AND DIFFUSE FIELD
+    std::cout<< "Both stellar and diffuse photon sources provided. "  << std::endl;
+
+    bool hydrogen_diffuse_updated = hydrogendiffusesourcedistribution->update(grid_creator, 0);
+    std::cout<<" Hydrogen diffuse updated: " << hydrogen_diffuse_updated << std::endl;
+    double diffuse_luminosity = 0.;
+    if (hydrogen_diffuse_updated) {
+
+      diffuse_luminosity = hydrogendiffusesourcedistribution->get_total_diffuse_luminosity();
+      std::cout<<" Hydrogen diffuse luminosity: " << diffuse_luminosity << std::endl;
+    }
+    #ifdef HAS_HELIUM
+    bool helium_diffuse_updated = heliumdiffusesourcedistribution->update(grid_creator, 0);
+    if (helium_diffuse_updated) {
+       diffuse_luminosity += heliumdiffusesourcedistribution->get_total_diffuse_luminosity();
+    }
+    #endif  
+
+    temperature_calculator = new TemperatureCalculator(
+        sourcedistribution->get_total_luminosity()+diffuse_luminosity, abundances, line_cooling_data,
+        *recombination_rates, charge_transfer_rates, collisional_rates,radiative_cooling, *params, log);
+
   }
 
   galactic_shearing_box.validate_boundaries(
@@ -2653,17 +2902,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
    //   log->write_status("Getting Total Luminosity: ", sourcedistribution->get_total_luminosity());
 
     const double stellar_luminosity = sourcedistribution->get_total_luminosity();
-    
-    const double diffuse_H_luminosity =
-        hydrogendiffusesourcedistribution != nullptr ?
-            hydrogendiffusesourcedistribution->get_total_diffuse_luminosity() : 0.0;
-    std::cout<< "Diffuse Hydrogen Luminosity: " << diffuse_H_luminosity << std::endl;
-    std::cout<<"Diffuse Hydrogen number of sources: " << (hydrogendiffusesourcedistribution != nullptr ? hydrogendiffusesourcedistribution->get_number_of_diffuse_sources() : 0) << std::endl;
-    double diffuse_He_luminosity = 0.0;
-    #ifdef HAS_HELIUM
-    diffuse_He_luminosity = heliumdiffusesourcedistribution != nullptr ?
-            heliumdiffusesourcedistribution->get_total_diffuse_luminosity() : 0.0;
-    #endif
+
 
     bool has_active_source = false;
     for (photonsourcenumber_t isource = 0;
@@ -2708,18 +2947,24 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
       if (_time_dependent_diffuse_field_flag) {
           time_logger.start("radiation transfer");
 
+          const double t0 = omp_get_wtime();
+          std::cout<<"Starting radiation transfer at time = " << t0 << std::endl;
+
           {
             AtomicValue< size_t > igrid(0);
             start_parallel_timing_block();
   #ifdef HAVE_OPENMP
   #pragma omp parallel default(shared)
   #endif
+            // STORE A COPY OF THE TIMESTEPS ORIGINAL IONIZATION STRUCTURE 
+
             while (igrid.value() < grid_creator->number_of_original_subgrids()) {
               const size_t this_igrid = igrid.post_increment();
               if (this_igrid < grid_creator->number_of_original_subgrids()) {
                 HydroDensitySubGrid &subgrid =
                     *grid_creator->get_subgrid(this_igrid);
 
+                  
                   for (auto cellit = subgrid.begin(); cellit != subgrid.end();
                     ++cellit) {
                     if (_throttle_ion_state || _time_dependent_ionization) {
@@ -2729,111 +2974,25 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                     }
                       
                   }
-                subgrid.update_ionization_variables(hydro,
+                  subgrid.update_ionization_variables(hydro,
                                                     maximum_neutral_fraction); 
-              }
-            }
-            stop_parallel_timing_block();
-          }
 
-          // WEIGHT THE PHOTON NUMBERS BASED ON LUMINOSITY 
-
-          const double total_system_luminosity = stellar_luminosity + diffuse_H_luminosity + diffuse_He_luminosity;
-
-          size_t stellar_packets = 0;
-          size_t diffuse_H_packets = 0;
-          size_t diffuse_He_packets = 0;
-
-
-          if (total_system_luminosity > 0.) {
-            double stellar_weight = stellar_luminosity / total_system_luminosity;
-            double diffuse_H_weight = diffuse_H_luminosity / total_system_luminosity;
-            stellar_packets = static_cast<size_t>(numphoton * stellar_weight);
-            diffuse_H_packets = static_cast<size_t>(numphoton * diffuse_H_weight);
-            if (diffuse_He_luminosity > 0.) {
-              diffuse_He_packets = numphoton - stellar_packets - diffuse_H_packets;
-            } else {
-              diffuse_H_packets = numphoton - stellar_packets;
-            }
-          }
-
-          log->write_status("Stellar Luminosity: ", stellar_luminosity, " Diffuse Hydrogen Luminosity: ", diffuse_H_luminosity, " Diffuse Helium Luminosity: ", diffuse_He_luminosity, " Total Luminosity: ", total_system_luminosity);
-          log->write_status("Stellar Packets: ", stellar_packets, " Diffuse Hydrogen Packets: ", diffuse_H_packets, " Diffuse Helium Packets: ", diffuse_He_packets, " Total Packets: ", stellar_packets + diffuse_H_packets + diffuse_He_packets);
-
-          // DISTRIBUTE STELLAR PHOTON SOURCES
-
-          DistributedPhotonSource<HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> > stellar_photon_source( 
-              stellar_packets, *sourcedistribution, *grid_creator);
-
-          // DISTRIBUTE DIFFUSE PHOTON SOURCES
-
-          DistributedPhotonSource<HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> > diffuse_photon_source(
-              diffuse_H_packets, *hydrogendiffusesourcedistribution, *grid_creator);
-
-          #ifdef HAS_HELIUM
-          DistributedPhotonSource<HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> > helium_diffuse_photon_source(
-              diffuse_He_packets, *heliumdiffusesourcedistribution, *grid_creator);
-          #endif
-
-          {
-            AtomicValue< size_t > igrid(0);
-            start_parallel_timing_block();
-  #ifdef HAVE_OPENMP
-  #pragma omp parallel default(shared)
-  #endif
-            while (igrid.value() < grid_creator->number_of_actual_subgrids()) {
-              const size_t this_igrid = igrid.post_increment();
-              if (this_igrid < grid_creator->number_of_actual_subgrids()) {
-                HydroDensitySubGrid &subgrid =
-                    *grid_creator->get_subgrid(this_igrid);
-                for (int ingb = 0; ingb < TRAVELDIRECTION_NUMBER; ++ingb) {
-                  subgrid.set_active_buffer(ingb, NEIGHBOUR_OUTSIDE);
-                }
               }
             }
             stop_parallel_timing_block();
           }
 
 
+          // START OF ITERATION LOOP
           for (uint_fast32_t iloop = 0; iloop < nloop; ++iloop) {
+
+            
 
             if (log) {
               log->write_status("Starting loop ", iloop, ".");
             }
 
             worktimer.start();
-
-            // reset mean intensity counters
-            {
-              AtomicValue< size_t > igrid(0);
-              start_parallel_timing_block();
-  #ifdef HAVE_OPENMP
-  #pragma omp parallel default(shared)
-  #endif
-              while (igrid.value() < grid_creator->number_of_actual_subgrids()) {
-                const size_t this_igrid = igrid.post_increment();
-                if (this_igrid < grid_creator->number_of_actual_subgrids()) {
-                  auto gridit = grid_creator->get_subgrid(this_igrid);
-                  (*gridit).reset_intensities();
-                }
-              }
-              stop_parallel_timing_block();
-            }
-
-            // update copies
-            grid_creator->update_copy_properties();
-
-            // reset the photon source information
-            stellar_photon_source.reset();
-            diffuse_photon_source.reset();
-            #ifdef HAS_HELIUM
-            helium_diffuse_photon_source.reset();
-            #endif
-
-            // Count all photon tasks from creation until completion. This lets
-            // the scheduler distinguish real work from a stranded buffer or a
-            // permanently locked dependency at the end of an iteration.
-            AtomicValue< uint_fast64_t > pending_photon_tasks(0);
 
             // reset the diffuse field variables
             if (reemission_handler != nullptr) {
@@ -2855,6 +3014,198 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
               }
               stop_parallel_timing_block();
             }
+
+            
+
+            // UPDATE DIFFUSE SOURCES FOR NEXT ITERATION
+
+            bool diffuse_updated = false;
+            if (hydrogendiffusesourcedistribution != nullptr) {
+              diffuse_updated = hydrogendiffusesourcedistribution->update(grid_creator, actual_timestep);
+            }
+
+
+            bool helium_diffuse_updated = false;
+            if (heliumdiffusesourcedistribution != nullptr) {
+              helium_diffuse_updated = heliumdiffusesourcedistribution->update(grid_creator, actual_timestep);
+            }
+
+
+
+              // update subgrid copies
+              std::vector< uint_fast8_t > levels(
+                  grid_creator->number_of_original_subgrids(), 0);
+
+              if (sourcedistribution != nullptr) {
+                const photonsourcenumber_t number_of_sources =
+                    sourcedistribution->get_number_of_sources();
+                for (photonsourcenumber_t isource = 0; isource < number_of_sources;
+                    ++isource) {
+                  const CoordinateVector<> position =
+                      sourcedistribution->get_position(isource);
+                  if (!simulation_box.get_box().inside(position)) {
+                    if (log) {
+                      log->write_warning(
+                          "Ignoring photon source outside the simulation box.");
+                    }
+                    continue;
+                  }
+                  DensitySubGridCreator< HydroDensitySubGrid >::iterator gridit =
+                      grid_creator->get_subgrid(position);
+                  levels[gridit.get_index()] = source_copy_level;
+                }
+              }
+
+
+
+
+              // DIFFUSE SUBGRIDS
+
+              if (hydrogendiffusesourcedistribution != nullptr) {
+                const photonsourcenumber_t number_of_diffuse = hydrogendiffusesourcedistribution->get_number_of_diffuse_sources();
+                for (photonsourcenumber_t isource_d = 0; isource_d < number_of_diffuse; ++isource_d) {
+                  const size_t diffuse_subgrid_index =
+                      hydrogendiffusesourcedistribution->get_diffuse_subgrid_index(isource_d);
+                  levels[diffuse_subgrid_index] = source_copy_level;
+                }
+              }
+
+              if (heliumdiffusesourcedistribution != nullptr) {
+                const photonsourcenumber_t number_of_helium_diffuse = heliumdiffusesourcedistribution->get_number_of_diffuse_sources();
+                for (photonsourcenumber_t isource_h = 0; isource_h < number_of_helium_diffuse; ++isource_h) {
+                  const size_t helium_diffuse_subgrid_index =
+                      heliumdiffusesourcedistribution->get_diffuse_subgrid_index(isource_h);
+                  levels[helium_diffuse_subgrid_index] = source_copy_level;
+                }
+              }
+
+
+
+              // impose copy restrictions
+              {
+                uint_fast8_t max_level = 0;
+                const size_t levelsize = levels.size();
+                for (size_t i = 0; i < levelsize; ++i) {
+                  max_level = std::max(max_level, levels[i]);
+                }
+
+                size_t ngbs[6];
+                while (max_level > 0) {
+                  for (size_t i = 0; i < levelsize; ++i) {
+                    if (levels[i] == max_level) {
+                      const uint_fast8_t numngbs =
+                          grid_creator->get_neighbours(i, ngbs);
+                      for (uint_fast8_t ingb = 0; ingb < numngbs; ++ingb) {
+                        const size_t ngbi = ngbs[ingb];
+                        if (levels[ngbi] < levels[i] - 1) {
+                          levels[ngbi] = levels[i] - 1;
+                        }
+                      }
+                    }
+                  }
+                  --max_level;
+                }
+              }
+              grid_creator->update_copies(levels);
+              // update copies
+            grid_creator->update_copy_properties();
+
+
+            // reset mean intensity counters
+            {
+              AtomicValue< size_t > igrid(0);
+              start_parallel_timing_block();
+  #ifdef HAVE_OPENMP
+  #pragma omp parallel default(shared)
+  #endif
+              while (igrid.value() < grid_creator->number_of_actual_subgrids()) {
+                const size_t this_igrid = igrid.post_increment();
+                if (this_igrid < grid_creator->number_of_actual_subgrids()) {
+                  auto gridit = grid_creator->get_subgrid(this_igrid);
+                  (*gridit).reset_intensities();
+                }
+              }
+              stop_parallel_timing_block();
+            }
+
+
+           {
+              AtomicValue< size_t > igrid(0);
+              start_parallel_timing_block();
+    #ifdef HAVE_OPENMP
+    #pragma omp parallel default(shared)
+    #endif
+              while (igrid.value() < grid_creator->number_of_actual_subgrids()) {
+                const size_t this_igrid = igrid.post_increment();
+                if (this_igrid < grid_creator->number_of_actual_subgrids()) {
+                  HydroDensitySubGrid &subgrid =
+                      *grid_creator->get_subgrid(this_igrid);
+                  for (int ingb = 0; ingb < TRAVELDIRECTION_NUMBER; ++ingb) {
+                    subgrid.set_active_buffer(ingb, NEIGHBOUR_OUTSIDE);
+                  }
+                }
+              }
+              stop_parallel_timing_block();
+            }
+
+            // reset the photon source information
+           // stellar_photon_source.reset();
+           // diffuse_photon_source.reset();
+           // #ifdef HAS_HELIUM
+           // helium_diffuse_photon_source.reset();
+           // #endif
+
+            // Count all photon tasks from creation until completion. This lets
+            // the scheduler distinguish real work from a stranded buffer or a
+            // permanently locked dependency at the end of an iteration.
+            AtomicValue< uint_fast64_t > pending_photon_tasks(0);
+
+
+            // UPDATE LUMINOSITIES & PHOTON WEIGHTS FROM DIFFUSE FIELD UPDATE 
+
+            size_t stellar_packets = 0;
+            size_t diffuse_H_packets = 0;
+            size_t diffuse_He_packets = 0;
+
+
+            double diffuse_H_luminosity = hydrogendiffusesourcedistribution != nullptr ?
+                hydrogendiffusesourcedistribution->get_total_diffuse_luminosity() : 0.0;
+            double diffuse_He_luminosity = heliumdiffusesourcedistribution != nullptr ?
+                heliumdiffusesourcedistribution->get_total_diffuse_luminosity() : 0.0;
+
+            double total_system_luminosity = stellar_luminosity + diffuse_H_luminosity + diffuse_He_luminosity;
+
+            temperature_calculator->update_luminosity(total_system_luminosity);
+
+
+            double stellar_weight = stellar_luminosity / total_system_luminosity;
+            double diffuse_H_weight = diffuse_H_luminosity / total_system_luminosity;
+            stellar_packets = static_cast<size_t>(numphoton * stellar_weight);
+            diffuse_H_packets = static_cast<size_t>(numphoton * diffuse_H_weight);
+
+            if (diffuse_He_luminosity > 0.) {
+              diffuse_He_packets = numphoton - stellar_packets - diffuse_H_packets;
+            } else if (diffuse_H_luminosity > 0.) {
+              diffuse_H_packets = numphoton - stellar_packets;
+            }
+          
+
+          log->write_status("Stellar Luminosity: ", stellar_luminosity, " Diffuse Hydrogen Luminosity: ", diffuse_H_luminosity, " Diffuse Helium Luminosity: ", diffuse_He_luminosity, " Total Luminosity: ", total_system_luminosity);
+
+          // DISTRIBUTE STELLAR PHOTON SOURCES
+
+          DistributedPhotonSource<HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> > stellar_photon_source( 
+              stellar_packets, *sourcedistribution, *grid_creator);
+
+          // DISTRIBUTE DIFFUSE PHOTON SOURCES
+
+          DistributedPhotonSource<HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> > diffuse_photon_source(
+              diffuse_H_packets, *hydrogendiffusesourcedistribution, *grid_creator);
+
+          #ifdef HAS_HELIUM
+          DistributedPhotonSource<HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> > helium_diffuse_photon_source(
+              diffuse_He_packets, *heliumdiffusesourcedistribution, *grid_creator);
+          #endif
 
           // PROCESS & DISPATCH STELLAR SOURCE PHOTONS
 
@@ -3286,11 +3637,6 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
               std::cout << "Number of photons absorbed (dust) = " << statistics->get_num_abs_dust() << std::endl;
               std::cout << "Number of H photons reemitted = " << statistics->get_num_reemitted_H() << std::endl;
               
-              std::cout << "Number of photons absorbed (dense gas) = " << statistics->get_num_abs_dens() << std::endl;
-              std::cout << "Number of photons absorbed (diffuse gas) = " << statistics->get_num_abs_dif() << std::endl;
-              std::cout << "Number of photons escaped (ionizing) = " << statistics->get_num_escaped_ionizing() << std::endl;
-              std::cout << "Number of photons escaped (non-ionizing) = " << statistics->get_num_escaped_nonionizing() << std::endl;
-
             //  statistics->record_and_reset_radiation_step();
             }
           }
@@ -3306,7 +3652,8 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
             {
               AtomicValue< size_t > igrid(0);
               start_parallel_timing_block();
-      std::cout << "PHOTONS SHOT. UPDATING GRID" << std::endl;
+      const double t1 = omp_get_wtime();
+      std::cout << "PHOTONS SHOT (" << (t1-t0) << " s). UPDATING GRID" << std::endl;
   #ifdef HAVE_OPENMP
   #pragma omp parallel default(shared)
   #endif
@@ -3325,11 +3672,11 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                   task.set_type(TASKTYPE_TEMPERATURE_STATE);
                   task.start(get_thread_index());
 
-  #ifndef VARIABLE_ABUNDANCES
-                  // correct the intensity counters for abundance factors
+#ifndef VARIABLE_ABUNDANCES
                   for (auto cellit = (*gridit).begin(); cellit != (*gridit).end();
                       ++cellit) {
                     IonizationVariables &vars = cellit.get_ionization_variables();
+                    // Correct intensity counters for element abundance factors.
                     for (int_fast32_t ion = 1; ion < NUMBER_OF_IONNAMES; ++ion) {
                       const double abundance =
                           abundances.get_abundance(get_element(ion));
@@ -3338,14 +3685,15 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                             ion, vars.get_mean_intensity(ion) / abundance);
                       }
                     }
+#ifdef HAS_HELIUM
+                    vars.set_heating(HEATINGTERM_He,
+                                     vars.get_heating(HEATINGTERM_He) /
+                                         abundances.get_abundance(ELEMENT_He));
+#endif
+                  }
+#endif
                   
-  #endif
-  #ifdef HAS_HELIUM
-                  vars.set_heating(HEATINGTERM_He,
-                                  vars.get_heating(HEATINGTERM_He) /
-                                    abundances.get_abundance(ELEMENT_He));
-  #endif
-              }
+              // UPDATE IONIZATION STATE AFTER PHOTONS SHOT IN ITERATION
                   if (chemistry_every_hydro_step) {
                     size_t local_cell = 0;
                     const double luminosity_per_packet =
@@ -3360,17 +3708,19 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                           jfac, actual_timestep, iloop == nloop-1);
                     }
                   } else if (_time_dependent_ionization) {
+                    // UPDATE IONIZATION STATES
                     if (iloop == nloop -1) {
                       temperature_calculator->calculate_temperature(
-                        iloop, numphoton, *gridit, current_time - lastrad_time, true, true);
+                        iloop, numphoton, *gridit, current_time - lastrad_time, true, true, false);
                         
                     } else {
-                    temperature_calculator->calculate_temperature(
-                        iloop, numphoton, *gridit, current_time - lastrad_time, true, false);
+
+                        temperature_calculator->calculate_temperature(
+                            iloop, numphoton, *gridit, current_time - lastrad_time, true, false, _time_average_states);
                     }
                   } else {
                       temperature_calculator->calculate_temperature(iloop, numphoton,
-                                          *gridit, 0.0, false, true);
+                                          *gridit, 0.0, false, true, false);
 
                   }
 
@@ -3394,7 +3744,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
             }
 
             worktimer.stop();
-          }
+          } // end of iteration loop
 
           time_logger.end("radiation transfer"); 
 
@@ -3406,6 +3756,9 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         //--------------------------------------------------------------
 
         time_logger.start("radiation transfer");
+
+        const double t0 = omp_get_wtime();
+        std::cout<<"Starting radiation transfer at time = " << t0 << std::endl;
 
           {
             AtomicValue< size_t > igrid(0);
@@ -3419,6 +3772,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                 HydroDensitySubGrid &subgrid =
                     *grid_creator->get_subgrid(this_igrid);
 
+                
                   for (auto cellit = subgrid.begin(); cellit != subgrid.end();
                     ++cellit) {
                     if (_throttle_ion_state || _time_dependent_ionization) {
@@ -3428,14 +3782,15 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                     }
                       
                   }
-                subgrid.update_ionization_variables(hydro,
+                  subgrid.update_ionization_variables(hydro,
                                                     maximum_neutral_fraction); 
+
               }
             }
             stop_parallel_timing_block();
           }
 
-          // WEIGHT THE PHOTON NUMBERS BASED ON LUMINOSITY 
+          
 
           const double total_system_luminosity = stellar_luminosity;
 
@@ -3446,8 +3801,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
           DistributedPhotonSource<HydroDensitySubGrid, DensitySubGridCreator<HydroDensitySubGrid> > stellar_photon_source( 
               stellar_packets, *sourcedistribution, *grid_creator);
 
-         
-
+        
           {
             AtomicValue< size_t > igrid(0);
             start_parallel_timing_block();
@@ -3807,11 +4161,6 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
               std::cout << "Number of photons absorbed (all gas) = " << statistics->get_num_absorbed() << std::endl;
               std::cout << "Number of photons absorbed (dust) = " << statistics->get_num_abs_dust() << std::endl;
               std::cout << "Number of H photons reemitted = " << statistics->get_num_reemitted_H() << std::endl;
-              
-              std::cout << "Number of photons absorbed (dense gas) = " << statistics->get_num_abs_dens() << std::endl;
-              std::cout << "Number of photons absorbed (diffuse gas) = " << statistics->get_num_abs_dif() << std::endl;
-              std::cout << "Number of photons escaped (ionizing) = " << statistics->get_num_escaped_ionizing() << std::endl;
-              std::cout << "Number of photons escaped (non-ionizing) = " << statistics->get_num_escaped_nonionizing() << std::endl;
 
             //  statistics->record_and_reset_radiation_step();
             }
@@ -3828,7 +4177,8 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
             {
               AtomicValue< size_t > igrid(0);
               start_parallel_timing_block();
-      std::cout << "PHOTONS SHOT. UPDATING GRID" << std::endl;
+      const double t1 = omp_get_wtime();
+      std::cout << "PHOTONS SHOT (" << (t1- t0) << " s). UPDATING GRID" << std::endl;
   #ifdef HAVE_OPENMP
   #pragma omp parallel default(shared)
   #endif
@@ -3847,11 +4197,12 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                   task.set_type(TASKTYPE_TEMPERATURE_STATE);
                   task.start(get_thread_index());
 
-  #ifndef VARIABLE_ABUNDANCES
-                  // correct the intensity counters for abundance factors
+
+#ifndef VARIABLE_ABUNDANCES
                   for (auto cellit = (*gridit).begin(); cellit != (*gridit).end();
                       ++cellit) {
                     IonizationVariables &vars = cellit.get_ionization_variables();
+                    // Correct intensity counters for element abundance factors.
                     for (int_fast32_t ion = 1; ion < NUMBER_OF_IONNAMES; ++ion) {
                       const double abundance =
                           abundances.get_abundance(get_element(ion));
@@ -3860,14 +4211,14 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                             ion, vars.get_mean_intensity(ion) / abundance);
                       }
                     }
-                  
-  #endif
-  #ifdef HAS_HELIUM
-                  vars.set_heating(HEATINGTERM_He,
-                                  vars.get_heating(HEATINGTERM_He) /
-                                    abundances.get_abundance(ELEMENT_He));
-  #endif
-              }
+#ifdef HAS_HELIUM
+                    vars.set_heating(HEATINGTERM_He,
+                                     vars.get_heating(HEATINGTERM_He) /
+                                         abundances.get_abundance(ELEMENT_He));
+#endif
+                  }
+#endif
+
                   if (chemistry_every_hydro_step) {
                     size_t local_cell = 0;
                     const double luminosity_per_packet =
@@ -3882,19 +4233,23 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
                           jfac, actual_timestep, iloop == nloop-1);
                     }
                   } else if (_time_dependent_ionization) {
+                    // UPDATE IONIZATION STATES
                     if (iloop == nloop -1) {
                       temperature_calculator->calculate_temperature(
-                        iloop, numphoton, *gridit, current_time - lastrad_time, true, true);
+                        iloop, numphoton, *gridit, current_time - lastrad_time, true, true, false);
                         
                     } else {
-                    temperature_calculator->calculate_temperature(
-                        iloop, numphoton, *gridit, current_time - lastrad_time, true, false);
+
+                        temperature_calculator->calculate_temperature(
+                            iloop, numphoton, *gridit, current_time - lastrad_time, true, false, _time_average_states);
                     }
+
                   } else {
                       temperature_calculator->calculate_temperature(iloop, numphoton,
-                                          *gridit, 0.0, false, true);
+                                          *gridit, 0.0, false, true, false);
 
                   }
+                  
 
                   task.stop();
                   cpucycle_tick(task_stop);
@@ -3916,7 +4271,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
             }
 
             worktimer.stop();
-          }
+          } // end of iteration loop
 
           time_logger.end("radiation transfer"); 
       }
@@ -3961,11 +4316,11 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
               } else if (_time_dependent_ionization) {
                   
                temperature_calculator->calculate_temperature( 
-                      0, 0, *gridit, current_time - lastrad_time, true, true);
+                      0, 0, *gridit, current_time - lastrad_time, true, true, false);
 
               } else {
               temperature_calculator->calculate_temperature(0, 0,
-                                                            *gridit,current_time - lastrad_time,false, true);
+                                                            *gridit,current_time - lastrad_time,false, true, false);
               }
             
             }
@@ -4260,9 +4615,9 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
               if (chemistry_every_hydro_step) {
                 // Collisional changes advance under zero radiation fluxes
               } else if (_time_dependent_ionization) {
-                  temperature_calculator->calculate_temperature(0, 0, *gridit, current_time - lastrad_time, true, true);
+                  temperature_calculator->calculate_temperature(0, 0, *gridit, current_time - lastrad_time, true, true, false);
               } else {
-                  temperature_calculator->calculate_temperature(0, 0, *gridit, current_time - lastrad_time, false, true);
+                  temperature_calculator->calculate_temperature(0, 0, *gridit, current_time - lastrad_time, false, true, false);
               }
             }
           }
@@ -4639,6 +4994,9 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
    
 
+    // ------------------------------------------------------------//
+    // -------------- TEMPERATURE CALCULATIONS --------------------//
+
     if (do_rad_cool || do_explicit_temp_calc) { 
       time_logger.start("cooling");
 
@@ -4648,6 +5006,7 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
       /* mgb edit 24.07.2026: Calculate perpendicular column densities */
 
+      // Calculate FUV Heating information
       
       AtomicValue< size_t > igrid(0);
       const bool run_fuv = _do_FUV_heating && ( current_time - cooling_update_time >= _update_interval);
@@ -4812,13 +5171,15 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
             const double nH2 = nH * nH;
             const double temperature_before_calculation = cellit.get_ionization_variables().get_temperature();
 
-            double fuv_cell_heating_rate = 0.0; // Default to 0 when FUV is off or interval is not met
+            double fuv_cell_field_strength = _do_FUV_heating 
+                                              ? cellit.get_ionization_variables().get_FUV_field_strength()
+                                              : 0.; // Default to 0 when FUV is off or interval is not met
 
             if (run_fuv) {
               if (_attenuate_FUV_heating) {
                 if (_attenuate_global) {
                   // Option 1: Uniform slab heating across the domain (matches TIGRESS-classic)
-                  fuv_cell_heating_rate = base_heating_rate;
+                  fuv_cell_field_strength = base_heating_rate;
                 } else {
                   // Option 2: localized z-dependent shielding
                   const double cell_z = cellit.get_cell_midpoint()[2];
@@ -4831,13 +5192,33 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
                   const double midplane_stellar_attenuation = gsl_sf_expint_En(2, tau_local);
 
-                  fuv_cell_heating_rate = base_heating_rate * midplane_stellar_attenuation;
+                  fuv_cell_field_strength = base_heating_rate * midplane_stellar_attenuation;
                 }
               } else {
                 // Option 3: No attenuation
-                fuv_cell_heating_rate = base_heating_rate;
+                fuv_cell_field_strength = base_heating_rate;
+              }
+              cellit.get_ionization_variables().set_FUV_field_strength(fuv_cell_field_strength);
+            }
+
+            // 2. primary CR ionisation rate xi_cr (in s^-1)
+            double xi_cr = 0.0;
+            if (_do_FUV_heating && _include_cosmic_rays) {
+              const double FUV_interstellar_radiation_field = 2.1e-4 * 1e-7 * 1e4;
+              const double G_unatt = (FUV_radiation_field / FUV_interstellar_radiation_field);
+              const double G_att   = fuv_cell_field_strength;
+
+              const double xi_cr0 = 2.0e-16 * G_unatt; // s^-1
+              xi_cr = xi_cr0;
+              if (G_att > 0.0 && G_unatt > G_att) {
+                const double N_eff = 1.0e21 * std::log(G_unatt / G_att); // cm^-2 
+                const double N_0   = 9.35e20; // cm^-2
+                if (N_eff > N_0) {
+                  xi_cr = xi_cr0 * (N_0 / N_eff);
+                }
               }
             }
+            cellit.get_ionization_variables().set_cosmic_ray_ionization_rate(xi_cr);
             
             if (do_rad_cool && !do_explicit_temp_calc) {
               do_cooling(ionization_variables, hydro_variables,
@@ -4847,18 +5228,15 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
 
             }
             if (do_explicit_temp_calc) {
-            //   if (ionization_variables.get_temperature() <  _cooling_temp_floor) {
-            //      hydro.set_temperature(
-            //       cellit.get_ionization_variables(),
-            //       cellit.get_hydro_variables(), cellit.get_volume(),
-            //       _cooling_temp_floor);
-            // }
+
+
+              double j_weight = temperature_calculator->return_luminosity() / numphoton;
               do_explicit_heat_cool(ionization_variables, hydro_variables,  
                         1. / cellit.get_volume(), nH2 * cellit.get_volume(),
                         actual_timestep, radiative_cooling, hydro,
                           _cooling_temp_floor,_gamma-1.,line_cooling_data,
-                          line_cooling_table.get(), abundances,
-                          use_cool_tables, _do_FUV_heating, _attenuate_FUV_heating, fuv_cell_heating_rate);
+                          line_cooling_table.get(), collisional_rates, abundances,
+                          use_cool_tables, _do_FUV_heating, _attenuate_FUV_heating, fuv_cell_field_strength, _diffuse_field_present, j_weight);
 
 
             }
@@ -5062,18 +5440,22 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
       std::cout<< "Updating Photon Sources at time: " << current_time << std::endl;
         bool stellar_updated = false;
         if (sourcedistribution != nullptr) {
-          stellar_updated = sourcedistribution->update(grid_creator, actual_timestep);
+          stellar_updated |= sourcedistribution->update(grid_creator, actual_timestep);
+          stellar_updated |= sourcedistribution->update(grid_creator, recombination_rates, cross_sections, actual_timestep);
+
+          std::cout<< "Stellar Sources Updated: " << stellar_updated << std::endl;
         }
 
         bool diffuse_updated = false;
-        if (hydrogendiffusesourcedistribution != nullptr) {
+        if (hydrogendiffusesourcedistribution != nullptr && radiation_due) {
           diffuse_updated = hydrogendiffusesourcedistribution->update(grid_creator, actual_timestep);
           std::cout<< "Diffuse Sources Updated: " << diffuse_updated << std::endl;
         }
 
         bool helium_diffuse_updated = false;
-        if (heliumdiffusesourcedistribution != nullptr) {
+        if (heliumdiffusesourcedistribution != nullptr && radiation_due) {
           helium_diffuse_updated = heliumdiffusesourcedistribution->update(grid_creator, actual_timestep);
+          std::cout<<" Helium Diffuse Sources Updated: " << helium_diffuse_updated << std::endl;
         }
 
 
@@ -5088,6 +5470,9 @@ int TaskBasedRadiationHydrodynamicsSimulation::do_simulation(
         double total_diffuse_lum = (hydrogendiffusesourcedistribution != nullptr) ? hydrogendiffusesourcedistribution->get_total_diffuse_luminosity() : 0.0;
         double total_helium_diffuse_lum = (heliumdiffusesourcedistribution != nullptr) ? heliumdiffusesourcedistribution->get_total_diffuse_luminosity() : 0.0;
 
+        std::cout<<" Total Stellar Luminosity: " << total_stellar_lum << std::endl;
+        std::cout<<" Total Diffuse Luminosity: " << total_diffuse_lum << std::endl;
+        std::cout<<" Total Helium Diffuse Luminosity: " << total_helium_diffuse_lum << std::endl;
         temperature_calculator->update_luminosity(total_stellar_lum + total_diffuse_lum + total_helium_diffuse_lum);
 
        // if (_moving_sources_flag == true) { // mgb edit

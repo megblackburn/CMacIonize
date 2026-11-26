@@ -20,7 +20,7 @@ class CollisionalRates;
 class LineCoolingData;
 class Log;
 class RecombinationRates;
-class DeRijckeRadiativeCooling;
+class RadiativeCoolingHandler;
 
 /**
  * @brief Class that calculates the temperature for every cell of a grid after
@@ -74,7 +74,7 @@ private:
 
   const CollisionalRates &_collisional_rates;
 
-  const DeRijckeRadiativeCooling* _radiative_cooling;
+  const RadiativeCoolingHandler *_radiative_cooling;
 
   /*! @brief IonizationStateCalculator used for low iteration numbers. */
   IonizationStateCalculator _ionization_state_calculator;
@@ -115,7 +115,7 @@ public:
       const RecombinationRates &recombination_rates,
       const ChargeTransferRates &charge_transfer_rates,
       const CollisionalRates &collisional_rates,
-      const DeRijckeRadiativeCooling* radiative_cooling,
+      const RadiativeCoolingHandler *radiative_cooling,
       Log *log = nullptr);
 
   TemperatureCalculator(double luminosity, const Abundances &abundances,
@@ -123,7 +123,7 @@ public:
                         const RecombinationRates &recombination_rates,
                         const ChargeTransferRates &charge_transfer_rates,
                         const CollisionalRates &collisional_rates,
-                        const DeRijckeRadiativeCooling* radiative_cooling,
+                        const RadiativeCoolingHandler *radiative_cooling,
                         ParameterFile &params, Log *log = nullptr);
 
   static void compute_cooling_and_heating_balance(
@@ -136,7 +136,7 @@ public:
       const RecombinationRates &recombination_rates,
       const ChargeTransferRates &charge_transfer_rates,
       const CollisionalRates &collisional_rates,
-      const DeRijckeRadiativeCooling* radiative_cooling);
+      const RadiativeCoolingHandler *radiative_cooling);
 
   void calculate_temperature(IonizationVariables &ionization_variables,
                              const double jfac, const double hfac,
@@ -151,6 +151,8 @@ public:
     _luminosity = luminosity;
     _ionization_state_calculator.update_luminosity(luminosity);
   }
+
+  inline double return_luminosity() const { return _luminosity; }
 
   /**
    * @brief Functor used to calculate the temperature of a single cell.
@@ -208,7 +210,7 @@ public:
                              std::pair< cellsize_t, cellsize_t > &block, double timestep) const;
   template<typename SubGridType>
   void calculate_temperature(const uint_fast32_t loop, const double totweight,
-                             SubGridType &subgrid, double timestep, bool time_dependent, bool do_metals) const;
+                             SubGridType &subgrid, double timestep, bool time_dependent, bool do_metals, bool do_time_averaging) const;
 
 
 };

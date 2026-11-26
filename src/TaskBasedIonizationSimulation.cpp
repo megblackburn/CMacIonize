@@ -329,6 +329,19 @@ TaskBasedIonizationSimulation::TaskBasedIonizationSimulation(
       "ContinuousPhotonSourceSpectrum", _parameter_file, _log);
 
   _cross_sections = CrossSectionsFactory::generate(_parameter_file, _log);
+
+
+  // the second condition is necessary to deal with old parameter files
+  if (_parameter_file.get_value< bool >(
+          "TaskBasedIonizationSimulation:diffuse field", false) ||
+      _parameter_file.has_value("PhotonSource:diffuse field")) {
+    _reemission_handler = DiffuseReemissionHandlerFactory::generate(
+        *_cross_sections, _parameter_file, _log);
+  } else {
+    _reemission_handler = nullptr;
+  }
+
+  
   _recombination_rates =
       RecombinationRatesFactory::generate(_parameter_file, _log);
 
@@ -387,16 +400,7 @@ TaskBasedIonizationSimulation::TaskBasedIonizationSimulation(
       _charge_transfer_rates, *_collisional_rates,_radiative_cooling, _parameter_file, _log);
 
 
-  // the second condition is necessary to deal with old parameter files
-  if (_parameter_file.get_value< bool >(
-          "TaskBasedIonizationSimulation:diffuse field", false) ||
-      _parameter_file.has_value("PhotonSource:diffuse field")) {
-    _reemission_handler = DiffuseReemissionHandlerFactory::generate(
-        *_cross_sections, _parameter_file, _log);
-  } else {
-    _reemission_handler = nullptr;
-  }
-
+  
   if (_parameter_file.get_value< bool >(
           "TaskBasedIonizationSimulation:enable trackers", false)) {
     _trackers = new TrackerManager(_parameter_file);
@@ -1093,14 +1097,14 @@ void TaskBasedIonizationSimulation::run(
          if (_time_dependent_ionization) {
           if (iloop == _number_of_iterations -1) {
             _temperature_calculator->calculate_temperature(
-              iloop, _number_of_photons, *gridit, _time_dependent_timestep, true, true);
+              iloop, _number_of_photons, *gridit, _time_dependent_timestep, true, true, false);
           } else {
           _temperature_calculator->calculate_temperature(
-              iloop, _number_of_photons, *gridit, _time_dependent_timestep, true, false);
+              iloop, _number_of_photons, *gridit, _time_dependent_timestep, true, false, false);
           }
          } else {
           _temperature_calculator->calculate_temperature(
-              iloop, _number_of_photons, *gridit, 0.0, false, true);
+              iloop, _number_of_photons, *gridit, 0.0, false, true, false);
          }
 
 
