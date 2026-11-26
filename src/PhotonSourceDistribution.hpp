@@ -36,6 +36,8 @@ typedef uint_fast32_t photonsourcenumber_t;
 class RandomGenerator;
 class ExternalPotential;
 class GalacticShearingBox;
+class RecombinationRates;
+class CrossSections;
 
 /**
  * @brief General interface for photon source distribution functors.
@@ -100,6 +102,8 @@ public:
   virtual bool update(DensitySubGridCreator< HydroDensitySubGrid > *grid_creator) {return false;}
 
   virtual bool update(DensitySubGridCreator< HydroDensitySubGrid > *grid_creator, double actual_timestep) {return false;}
+
+  virtual bool update(DensitySubGridCreator< HydroDensitySubGrid > *grid_creator, const RecombinationRates *recombination_rates, const CrossSections *cross_sections, double actual_timestep)  { return false; }
 
 
   virtual void update_fuv_background_sources(DensitySubGridCreator< HydroDensitySubGrid> *grid_creator) {};
