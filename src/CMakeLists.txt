@@ -84,15 +84,26 @@ configure_file(${PROJECT_SOURCE_DIR}/data/DeRijckeCooling.tar.gz
 execute_process(COMMAND ${CMAKE_COMMAND} -E tar xzf ${DR_DATA}
                 WORKING_DIRECTORY ${PROJECT_BINARY_DIR}/data/)
 set(DERIJCKEDATALOCATION ${PROJECT_BINARY_DIR}/data/DeRijckeCooling/)
+message(STATUS "DeRijckeDataLocation.hpp: ${DERIJCKEDATALOCATION}")
+configure_file(${PROJECT_SOURCE_DIR}/src/DeRijckeDataLocation.hpp.in
+               ${PROJECT_BINARY_DIR}/src/DeRijckeDataLocation.hpp @ONLY)
+
 
 # Stellar trajectories for the Swiggum shearing-box development setup.
 configure_file(
   ${PROJECT_SOURCE_DIR}/data/sn_history_july9_imf_sample0_minus100_to_plus20myr.csv.gz
   ${PROJECT_BINARY_DIR}/data/sn_history_july9_imf_sample0_minus100_to_plus20myr.csv.gz
   COPYONLY)
-message(STATUS "DeRijckeDataLocation.hpp: ${DERIJCKEDATALOCATION}")
-configure_file(${PROJECT_SOURCE_DIR}/src/DeRijckeDataLocation.hpp.in
-               ${PROJECT_BINARY_DIR}/src/DeRijckeDataLocation.hpp @ONLY)
+
+
+
+# CloudyDataLocation.hpp
+file(COPY ${PROJECT_SOURCE_DIR}/data/CloudyCooling/
+     DESTINATION ${PROJECT_BINARY_DIR}/data/CloudyCooling/)
+set(CLOUDYDATALOCATION ${PROJECT_BINARY_DIR}/data/CloudyCooling/)
+message(STATUS "CloudyDataLocation.hpp: ${CLOUDYDATALOCATION}")
+configure_file(${PROJECT_SOURCE_DIR}/src/CloudyDataLocation.hpp.in
+               ${PROJECT_BINARY_DIR}/src/CloudyDataLocation.hpp @ONLY)
 
 
 
@@ -212,6 +223,7 @@ set(LIBSHAREDENGINE_SOURCES
   BenjaminRecombinationRates.cpp
   ChargeTransferRates.cpp
   ChiantiRecombinationRates.cpp
+  CloudyRadiativeCooling.cpp
   CollisionalRates.cpp
   CommandLineOption.cpp
   CommandLineParser.cpp

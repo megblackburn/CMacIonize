@@ -27,11 +27,14 @@
 #define DERIJCKERADIATIVECOOLING_HPP
 
 #include "Error.hpp"
+#include "RadiativeCoolingHandler.hpp"
 
 #include <algorithm>
 #include <cinttypes>
 #include <cmath>
 #include <iostream>
+
+
 
 /*! @brief Number of temperature bins. */
 #define DERIJCKERADIATIVECOOLING_NUMTEMPERATURE 351
@@ -42,7 +45,7 @@
  * We currently only implement the high redshift cooling table that is
  * independent of density and does not include an external UVB.
  */
-class DeRijckeRadiativeCooling {
+class DeRijckeRadiativeCooling : public RadiativeCoolingHandler {
 private:
   /*! @brief Temperature values (in K). */
   double _temperatures[DERIJCKERADIATIVECOOLING_NUMTEMPERATURE];
@@ -67,7 +70,7 @@ public:
    * @param temperature Temperature (in K).
    * @return Cooling rate (in J m^3 s^-1).
    */
-  inline double get_cooling_rate(const double temperature) const {
+  inline double get_cooling_rate(const double temperature) const override {
 
 
 
@@ -135,6 +138,10 @@ public:
 
 
 
+  }
+
+  inline bool is_metal_only() const override {
+    return false;
   }
 
   /**
