@@ -16,7 +16,7 @@ inline void radiation_trial(IonizationVariables &cell,
   const double hfac = jfac * PhysicalConstants::get_physical_constant(
                                 PHYSICALCONSTANT_PLANCK);
   IonizationVariables trial = cell;
-  calculator.calculate_ionization_state(jfac, hfac, trial, dt, true, false);
+  calculator.calculate_ionization_state(jfac, hfac, trial, dt, true, false, false);
   for (int ion = 0; ion < NUMBER_OF_IONNAMES; ++ion) {
     cell.set_ionic_fraction(ion, last_iteration
         ? cell.get_prev_ionic_fraction(ion) : trial.get_ionic_fraction(ion));
@@ -36,7 +36,7 @@ inline void radiation_trial(IonizationVariables &cell,
 inline void advance(IonizationVariables &cell,
     const IonizationStateCalculator &calculator, double dt) {
   cell.copy_previous_fractions();
-  calculator.calculate_ionization_state(1., 1., cell, dt, true, true);
+  calculator.calculate_ionization_state(1., 1., cell, dt, true, true, false);
 }
 }
 #endif
