@@ -274,13 +274,12 @@ public:
    * @param simulation_time Current simulation time (in s).
    * @return True if the distribution changed, false otherwise.
    */
-       virtual bool update(DensitySubGridCreator< HydroDensitySubGrid > *grid_creator, 
+    virtual bool update(DensitySubGridCreator< HydroDensitySubGrid > *grid_creator, 
                       double actual_timestep) override {
 
     _total_time += actual_timestep;
     bool updated = false;
 
-  //  if (_total_time - _last_sf >= _update_interval) {
       const double delta_time = _total_time - _last_sf;
 
       _total_diffuse_luminosity = 0.0;
@@ -314,28 +313,23 @@ public:
         RandomGenerator local_rng;
         local_rng.set_seed(thread_seed);
 
+
         #pragma omp for schedule(dynamic, 1)
         for (size_t this_igrid = 0; this_igrid < num_subgrids; ++this_igrid) {
           HydroDensitySubGrid &subgrid = *grid_creator->get_subgrid(this_igrid);
           
           for (auto it = subgrid.begin(); it != subgrid.end(); ++it) {
+
           
 
             const double ionic_fraction_squared = it.get_ionization_variables().get_squared_ionized_fraction(ION_H_n); // (x_H+)^2
-            
             if (ionic_fraction_squared <= 0.0) continue;
 
             const double temperature = it.get_ionization_variables().get_temperature();
             const double number_density = it.get_ionization_variables().get_number_density(); 
             const double number_density_squared = number_density * number_density;
 
-           // const double alphaH = _recombination_rates.get_recombination_rate(ION_H_n, temperature);
-
-           //------------------------------------------------------
-           // Find the recombination rate for H I Lyman Continuum 
-           // -----------------------------------------------------
-
-            /// Hydrogen: Hui & Gnedin (1997) Case A and Case B (valid 1 K < T < 10^9 K)
+          /// Hydrogen: Hui & Gnedin (1997) Case A and Case B
             const double T_TR_H = 157807.0; // ionization threshold for H I in K
             const double lambda_H = 2.0 * T_TR_H / temperature;
             const double alphaA_H =
@@ -348,8 +342,6 @@ public:
             const double alpha_1_H = std::max(0.0, alphaA_H - alphaB_H) * 1.e-6;
 
             const double cell_volume = it.get_volume();
-
-           // const double P_LyC = it.get_ionization_variables().get_reemission_probability(REEMISSIONPROBABILITY_HYDROGEN);
 
             const double diffuse_photon_rate = ionic_fraction_squared * number_density_squared * alpha_1_H * cell_volume; 
             const double number_of_diffuse_photons = diffuse_photon_rate * delta_time;

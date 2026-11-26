@@ -73,7 +73,7 @@ public:
     // 2. Direct condition: Set the global simulation flags under the Hydrodynamics block
     if (type == "TimeDependent") {
       params.add_value("DiffuseReemissionHandler:time dependent diffuse field", "true");
-      params.add_value("DiffuseReemissionHandler:diffuse field", "true");
+      params.add_value("DiffuseReemissionHandler:diffuse field", "false");
     } else if (type == "Physical" || type == "FixedValue") {
       params.add_value("DiffuseReemissionHandler:time dependent diffuse field", "false");
       params.add_value("DiffuseReemissionHandler:diffuse field", "true");

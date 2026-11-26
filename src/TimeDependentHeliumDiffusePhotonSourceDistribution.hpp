@@ -289,7 +289,6 @@ public:
     _total_time += actual_timestep;
     bool updated = false;
 
-   // if (_total_time - _last_sf >= _update_interval) {
       const double delta_time = _total_time - _last_sf;
 
       _total_diffuse_luminosity = 0.0;
@@ -326,10 +325,8 @@ public:
         #pragma omp for schedule(dynamic, 1)
         for (size_t this_igrid = 0; this_igrid < num_subgrids; ++this_igrid) {
           HydroDensitySubGrid &subgrid = *grid_creator->get_subgrid(this_igrid);
-      //    std::cout<<"Looping over grid"<<std::endl;
           
           for (auto it = subgrid.begin(); it != subgrid.end(); ++it) {
-          //  std::cout<<"Looping over subgrid"<<std::endl;
 
             const double he_ion_ne = it.get_ionization_variables().get_squared_ionized_fraction(ION_He_n);
             
@@ -361,11 +358,6 @@ public:
 
             const double diffuse_photon_rate = AHe * he_ion_ne * number_density_squared * alphaHe * cell_volume; // dN/dt
             const double number_of_diffuse_photons = diffuse_photon_rate * delta_time;
-
-            // replace probabilities with diffuse photon rates for each emission channel using recomb rates in wood et al 2003 3.3.2
-            // for 2PC - * 0.56 to represent only ionising photons
-            // Lyalpha - n(He+) * n(e) * alpha_21P * cell_vol
-
 
             if (number_of_diffuse_photons < EPSILON_PHOTONS) continue;
 
@@ -475,7 +467,6 @@ public:
   //  }
 
     updated = updated && get_total_diffuse_luminosity() > 0.0;
-    std::cout<< "TimeDependentHeliumDiffusePhotonSourceDistribution::update() called, total diffuse luminosity = " << get_total_diffuse_luminosity() << std::endl;
     return updated;
     
     #else 
@@ -483,11 +474,6 @@ public:
     return false;
     #endif
   }
-
-
-
-  
-
 
 
 
