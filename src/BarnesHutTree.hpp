@@ -24,82 +24,53 @@
  * @author Bert Vandenbroucke (bv7@st-andrews.ac.uk) ??
  */
 
+#ifndef BARNESHUTTREE_HPP
+#define BARNESHUTTREE_HPP
+
+#include "PhysicalConstants.hpp"
+
+#include <cmath>
+#include <cstdint>
 #include <memory>
 
 class BarnesHutTree {
 public:
-  BarnesHutTree(const CoordinateVector<double> &grid_dimensions,const CoordinateVector<double> box_anchor, double theta)
-      : grid_dimensions(grid_dimensions),box_anchor(box_anchor),_theta(theta) {
+  BarnesHutTree(const CoordinateVector<double> &grid_dimensions,
+                const CoordinateVector<double> box_anchor, const double theta)
+      : _grid_dimensions(grid_dimensions), _box_anchor(box_anchor),
+        _theta(theta),
+        _newton_G(PhysicalConstants::get_physical_constant(
+            PHYSICALCONSTANT_NEWTON_CONSTANT)) {
 
-        if (grid_dimensions[0] == grid_dimensions[1] && grid_dimensions[1] == grid_dimensions[2]) {
-          roots.push_back(new TreeNode(grid_dimensions[0],grid_dimensions/2.0 + box_anchor));
-        } else {
-          double unit_block = grid_dimensions.min();
-          uint_fast32_t need_blocksx = int(grid_dimensions[0]/unit_block);
-          uint_fast32_t need_blocksy = int(grid_dimensions[1]/unit_block);
-          uint_fast32_t need_blocksz = int(grid_dimensions[2]/unit_block);
-          for (uint_fast32_t i=0;i<need_blocksx;i++) {
-            for (uint_fast32_t j=0;j<need_blocksy;j++) {
-              for (uint_fast32_t k=0;k<need_blocksz;k++) {
-                CoordinateVector<double> new_mid((double)i*unit_block - unit_block/2.0,(double)j*unit_block - unit_block/2.0,(double)k*unit_block - unit_block/2.0);
-                roots.push_back(new TreeNode(unit_block,new_mid + box_anchor));
-              }
-            }
-          }
-
-
-        }
-
+    // One cubic root covers the whole domain, also for non-cubic boxes.
+    const double root_dimension = _grid_dimensions.max();
+    const CoordinateVector<double> root_midpoint =
+        _box_anchor + 0.5 * _grid_dimensions;
+    _root = std::unique_ptr< TreeNode >(
+        new TreeNode(root_dimension, root_midpoint));
   }
-
 
   void insert(const HydroDensitySubGrid::hydroiterator &cell) {
-    CoordinateVector<double> cellpos = cell.get_cell_midpoint();
-    for (auto& root : roots) {
-      CoordinateVector<double> nodemax = root->node_midpoint;
-      CoordinateVector<double> nodemin = root->node_midpoint;
-      for (uint_fast32_t i=0;i<3;i++) {
-        nodemax[i] += root->dimensions/2.0;
-        nodemin[i] -= root->dimensions/2.0;
-      }
-      if (cellpos[0] < nodemax[0] && cellpos[0] > nodemin[0] && cellpos[1] < nodemax[1] && cellpos[1] > nodemin[1] &&
-        cellpos[2] < nodemax[2] && cellpos[2] > nodemin[2]) {
-          root->insert(cell);
-          break;
-        }
+    const double cell_mass = cell.get_hydro_variables().get_conserved_mass();
+    if (!(cell_mass > 0.) || !std::isfinite(cell_mass)) {
+      return;
     }
-
+    if (_root) {
+      _root->insert(cell);
+    }
   }
 
-  CoordinateVector<double> compute_gravity(HydroDensitySubGrid::hydroiterator& cell) const {
-    // Compute gravitational acceleration by traversing the octree
-
-    CoordinateVector<double> acceleration(0.0,0.0,0.0);
-    double starting_pot = cell.get_hydro_variables().get_gravitational_potential();
-    for (auto& root : roots) {
-      acceleration += root->compute_gravity_recursive(cell,_theta);
-
+  CoordinateVector<double>
+  compute_gravity(HydroDensitySubGrid::hydroiterator &cell) const {
+    CoordinateVector<double> acceleration(0.0, 0.0, 0.0);
+    if (_root && _root->mass > 0.) {
+      acceleration = _root->compute_gravity_recursive(cell, _theta, _newton_G);
     }
-
-    double end_pot = cell.get_hydro_variables().get_gravitational_potential();
-    cell.get_hydro_variables().set_gravitational_potential(starting_pot + (end_pot-starting_pot)/2.0);
-
-
     return acceleration;
-
-
-
   }
 
-  ~BarnesHutTree() {
+  ~BarnesHutTree() = default;
 
-    for (auto& root : roots) {
-      root->delete_nodes();
-    }
-
-
-
-  }
   class TreeNode {
   public:
     double mass;
@@ -108,47 +79,45 @@ public:
     CoordinateVector<double> node_midpoint;
     std::unique_ptr<TreeNode> children[8];
 
-    TreeNode(const double node_dimensions, const CoordinateVector<double> node_midpoint)
-        : mass(0), center_of_mass(CoordinateVector<double>()), dimensions(node_dimensions), node_midpoint(node_midpoint) {
+    TreeNode(const double node_dimensions,
+             const CoordinateVector<double> node_midpoint)
+        : mass(0.), center_of_mass(CoordinateVector<double>()),
+          dimensions(node_dimensions), node_midpoint(node_midpoint) {
       for (int i = 0; i < 8; ++i) {
         children[i] = nullptr;
       }
     }
 
-    void delete_nodes() {
-      for (int i = 0; i < 8; ++i) {
-        if (children[i]) {
-          children[i]->delete_nodes();
-          children[i].reset();
-
-        }
-      }
-    }
-
     void insert(const HydroDensitySubGrid::hydroiterator &cell) {
-      double resolution = std::pow(cell.get_volume(),1./3.);
-      double cell_mass = cell.get_hydro_variables().get_conserved_mass();
-      center_of_mass = (center_of_mass * mass + cell.get_cell_midpoint() * cell_mass) / (mass + cell_mass);
-      mass += cell_mass;
-
-      if (0.99*dimensions <= resolution) {
-        //this is a single cell node (leaf node)
-        // just add the mass
+      const double cell_mass = cell.get_hydro_variables().get_conserved_mass();
+      if (!(cell_mass > 0.) || !std::isfinite(cell_mass)) {
         return;
-
-      } else if (children[0] == nullptr) {
-        //cell hasnt been subdivided, divide it up, add the mass to this node then insert cell into correct child node
-        subdivide();
-        children[child_index(cell.get_cell_midpoint())]->insert(cell);
-        return;
-
-      } else {
-        // child already exists, add mass here then insert cell into correct one.
-
-        children[child_index(cell.get_cell_midpoint())]->insert(cell);
-        return;
-
       }
+
+      const CoordinateVector<double> cell_position = cell.get_cell_midpoint();
+
+      // Stable COM update that also handles previously empty nodes.
+      if (mass > 0.) {
+        const double total_mass = mass + cell_mass;
+        center_of_mass =
+            (center_of_mass * mass + cell_position * cell_mass) / total_mass;
+        mass = total_mass;
+      } else {
+        center_of_mass = cell_position;
+        mass = cell_mass;
+      }
+
+      const double resolution = std::cbrt(cell.get_volume());
+      if (!(resolution > 0.) || dimensions <= 1.01 * resolution) {
+        // Leaf-scale node: no further subdivision needed.
+        return;
+      }
+
+      if (children[0] == nullptr) {
+        subdivide();
+      }
+
+      children[child_index(cell_position)]->insert(cell);
     }
 
     int child_index(const CoordinateVector<double> &position) const {
@@ -161,49 +130,70 @@ public:
 
     void subdivide() {
       for (int i = 0; i < 8; ++i) {
-        double child_dimensions = dimensions / 2;
-        CoordinateVector<double> child_midpoint = node_midpoint + CoordinateVector<double>((i & 1 ? 1 : -1) * child_dimensions / 2,
-                                                                                           (i & 2 ? 1 : -1) * child_dimensions / 2,
-                                                                                           (i & 4 ? 1 : -1) * child_dimensions / 2);
+        const double child_dimensions = dimensions / 2.;
+        CoordinateVector<double> child_midpoint =
+            node_midpoint +
+            CoordinateVector<double>((i & 1 ? 1. : -1.) * child_dimensions / 2.,
+                                     (i & 2 ? 1. : -1.) * child_dimensions / 2.,
+                                     (i & 4 ? 1. : -1.) * child_dimensions / 2.);
         children[i].reset(new TreeNode(child_dimensions, child_midpoint));
       }
     }
 
+    CoordinateVector<double>
+    compute_gravity_recursive(HydroDensitySubGrid::hydroiterator &cell,
+                              const double theta,
+                              const double newton_G) const {
+      if (!(mass > 0.)) {
+        return CoordinateVector<double>(0.0, 0.0, 0.0);
+      }
 
-    CoordinateVector<double> compute_gravity_recursive(HydroDensitySubGrid::hydroiterator& cell, double theta) {
-      CoordinateVector<double> position = cell.get_cell_midpoint();
-      double distance = (position-node_midpoint).norm();
+      const CoordinateVector<double> position = cell.get_cell_midpoint();
+      const CoordinateVector<double> r = center_of_mass - position;
+      const double r2 = r.norm2();
+      const bool is_leaf = (children[0] == nullptr);
 
+      // Avoid singular self-force; tie the cut-off to local cell size.
+      const double cell_size = std::cbrt(cell.get_volume());
+      const double softening = 0.25 * cell_size;
+      const double softening2 = softening * softening;
 
-      if (dimensions/distance <= theta || children[0] == nullptr) {
-        if (distance < 1.e-2) {
-          //dont let cell interact with itself
-          return 0.0;
+      if (is_leaf || (r2 > 0. && dimensions * dimensions <= theta * theta * r2)) {
+        if (r2 <= softening2) {
+          return CoordinateVector<double>(0.0, 0.0, 0.0);
         }
-        double force = 6.6743e-11 * mass / std::pow(distance, 3);
-        double pot = -6.6743e-11*mass*cell.get_hydro_variables().get_conserved_mass()/std::abs(distance);
-        cell.get_hydro_variables().set_gravitational_potential(cell.get_hydro_variables().get_gravitational_potential() + pot);
-        return (center_of_mass - position) * force;
+
+        const double inv_r = 1. / std::sqrt(r2);
+        const double inv_r3 = inv_r * inv_r * inv_r;
+        const double cell_mass = cell.get_hydro_variables().get_conserved_mass();
+
+        // Store pair-wise potential energy with 1/2 factor to avoid double counting.
+        const double potential = -0.5 * newton_G * mass * cell_mass * inv_r;
+        cell.get_hydro_variables().set_gravitational_potential(
+            cell.get_hydro_variables().get_gravitational_potential() +
+            potential);
+
+        return newton_G * mass * r * inv_r3;
       } else {
-          CoordinateVector<double> acceleration(0, 0, 0);
-          for (const auto& child : children) {
-            if (child) {
-              acceleration += child->compute_gravity_recursive(cell, theta);
-            }
+        CoordinateVector<double> acceleration(0., 0., 0.);
+        for (const auto &child : children) {
+          if (child) {
+            acceleration +=
+                child->compute_gravity_recursive(cell, theta, newton_G);
           }
-          return acceleration;
+        }
+        return acceleration;
       }
     }
 
   };
 
 private:
-  std::vector<TreeNode*> roots;
-  CoordinateVector<double> grid_dimensions;
-  CoordinateVector<double> box_anchor;
+  std::unique_ptr< TreeNode > _root;
+  CoordinateVector<double> _grid_dimensions;
+  CoordinateVector<double> _box_anchor;
   double _theta;
-
-
-
-
+  double _newton_G;
 };
+
+#endif
